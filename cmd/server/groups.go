@@ -107,6 +107,10 @@ func groupCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, err.Error())
 		return
 	}
+	// Auto-create claude-* variant for Claude Code compatibility
+	claudeID := "claude-" + id
+	db.DB.Exec(`INSERT OR IGNORE INTO groups (id, name, icon, race_mode, selected_keys, selected_models, race_count, max_keys)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, claudeID, "claude-"+body.Name, body.Icon, body.RaceMode, selectedKeysJSON, selectedModelsJSON, raceCount, maxKeys)
 	writeJSON(w, map[string]interface{}{
 		"id": id, "name": body.Name, "icon": body.Icon,
 		"round_robin": true, "race_mode": body.RaceMode,

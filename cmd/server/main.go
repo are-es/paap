@@ -18,11 +18,11 @@ import (
 
 // Shared HTTP client with connection pooling + keepalive
 var sharedHTTPClient = &http.Client{
-	Timeout: 90 * time.Second,
+	Timeout: 180 * time.Second,
 	Transport: &http.Transport{
 		MaxIdleConns:        100,
 		MaxIdleConnsPerHost: 20,
-		IdleConnTimeout:     90 * time.Second,
+		IdleConnTimeout:     180 * time.Second,
 		DialContext: (&net.Dialer{
 			Timeout:   10 * time.Second,
 			KeepAlive: 30 * time.Second,

@@ -45,3 +45,6 @@ Thumbs.db
 
 # Database files
 data/*.db*
+
+# Graphify output
+graphify-out/

@@ -218,45 +218,70 @@ func ClientUsesRTK(messages []map[string]interface{}) bool {
 			if strings.Contains(args, `"command":`) {
 				// Extract command from JSON args
 				if strings.Contains(args, `"rtk `) || strings.Contains(args, `"rtk"`) {
-					log.Printf("[PAAP] Detected client RTK usage in tool call")
+					log.Printf("[PAAP] Detected client RTK usage in tool call: %s", args[:min(100, len(args))])
 					return true
 				}
 			}
 		}
 	}
 	
+	log.Printf("[PAAP] No client RTK detected in %d messages", len(messages))
 	return false
 }
 
-// CompressToolOutputs compresses all tool result messages in the messages array
+// CompressToolOutputs compresses all tool result messages in parallel
 func CompressToolOutputs(messages []map[string]interface{}, level string) []map[string]interface{} {
 	if !IsRTKAvailable() {
 		return messages
 	}
 
-	compressed := 0
+	// Collect indices of tool messages to compress
+	type task struct {
+		index   int
+		content string
+	}
+	var tasks []task
 	for i, msg := range messages {
 		role, _ := msg["role"].(string)
 		if role != "tool" {
 			continue
 		}
-
-		// Get content
 		content, ok := msg["content"].(string)
-		if !ok {
+		if !ok || len(content) < 200 {
 			continue
 		}
+		tasks = append(tasks, task{i, content})
+	}
 
-		// Compress
-		newContent := CompressToolOutput(content, level)
-		if newContent != content {
-			messages[i]["content"] = newContent
+	if len(tasks) == 0 {
+		return messages
+	}
+
+	// Run RTK compressions in parallel
+	type result struct {
+		index      int
+		compressed string
+	}
+	results := make(chan result, len(tasks))
+	for _, t := range tasks {
+		go func(t task) {
+			compressed := CompressToolOutput(t.content, level)
+			results <- result{t.index, compressed}
+		}(t)
+	}
+
+	// Collect results
+	compressed := 0
+	for range tasks {
+		r := <-results
+		if r.compressed != messages[r.index]["content"].(string) {
+			messages[r.index]["content"] = r.compressed
 			compressed++
 		}
 	}
 
 	if compressed > 0 {
-		log.Printf("[PAAP] RTK compressed %d tool outputs", compressed)
+		log.Printf("[PAAP] RTK compressed %d tool outputs (parallel)", compressed)
 	}
 
 	return messages

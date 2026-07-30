@@ -78,7 +78,7 @@ func autoDisableKey(keyID, keyName string, statusCode int, errBody string) bool 
 func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Skip auth for local connections if configured
-		if getSettingStr("skip_auth_local", "false") == "true" {
+		if getSettingStrCached("skip_auth_local", "false") == "true" {
 			remoteAddr := r.RemoteAddr
 			if strings.HasPrefix(remoteAddr, "127.0.0.1:") || strings.HasPrefix(remoteAddr, "[::1]:") || remoteAddr == "::1" {
 				next(w, r)
@@ -131,6 +131,7 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	startTime := time.Now()
+paapOverheadStart := time.Now()
 
 	// Parse full request body as map — forward ALL OpenAI-compatible params
 	// (tools, tool_choice, response_format, reasoning_effort, etc.)
@@ -159,10 +160,10 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 	// max_tokens: pass through from client, don't override
 
 	// ── Global Prompt Injection (before compression) ───────────
-	piEnabled := getSettingStr("prompt_injection_enabled", "false") == "true"
+	piEnabled := getSettingStrCached("prompt_injection_enabled", "false") == "true"
 	if piEnabled {
-		piText := getSettingStr("prompt_injection_text", "")
-		piPosition := getSettingStr("prompt_injection_position", "prepend")
+		piText := getSettingStrCached("prompt_injection_text", "")
+		piPosition := getSettingStrCached("prompt_injection_position", "prepend")
 		if piText != "" {
 			if msgs, ok := rawBody["messages"].([]interface{}); ok {
 				var msgMaps []map[string]interface{}
@@ -186,7 +187,7 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 
 
 	// ── Compression Mode Injection ───────────────────────────────
-	compressionMode := getSettingStr("compression_mode", "")
+	compressionMode := getSettingStrCached("compression_mode", "")
 	if compressionMode != "" {
 		// Support per-mode levels: "caveman:ultra,ponytail:full"
 		modes := strings.Split(compressionMode, ",")
@@ -231,7 +232,7 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// ── RTK Tool Output Compression ──────────────────────────
-	rtkEnabled := getSettingStr("rtk_enabled", "true") == "true"
+	rtkEnabled := getSettingStrCached("rtk_enabled", "true") == "true"
 	if rtkEnabled && IsRTKAvailable() {
 		if msgs, ok := rawBody["messages"].([]interface{}); ok {
 			var msgMaps []map[string]interface{}
@@ -244,8 +245,8 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 							for _, tc := range toolCalls {
 								if tcMap, ok := tc.(map[string]interface{}); ok {
 									if fn, ok := tcMap["function"].(map[string]interface{}); ok {
-										if args, ok := fn["arguments"].(string); ok {
-											log.Printf("[PAAP] Tool call: %s args=%s", fn["name"], args[:min(100, len(args))])
+										if _, ok := fn["arguments"].(string); ok {
+											// Check for RTK usage in args
 										}
 									}
 								}
@@ -259,7 +260,7 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 			if ClientUsesRTK(msgMaps) {
 				log.Printf("[PAAP] Client already uses RTK — skipping PAAP RTK compression")
 			} else {
-				rtkLevel := getSettingStr("rtk_level", "full")
+				rtkLevel := getSettingStrCached("rtk_level", "full")
 				msgMaps = CompressToolOutputs(msgMaps, rtkLevel)
 			}
 			rawBody["messages"] = func() []interface{} {
@@ -272,16 +273,15 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// ── Caveman Content Compression ─────────────────────────
-	cavemanCompressEnabled := getSettingStr("caveman_compress_enabled", "true") == "true"
+	cavemanCompressEnabled := getSettingStrCached("caveman_compress_enabled", "true") == "true"
 	if cavemanCompressEnabled {
 		if msgs, ok := rawBody["messages"].([]interface{}); ok {
-			compressor := NewCavemanCompressor()
-			cavemanLevel := getSettingStr("compression_level", "full")
+			cavemanLevel := getSettingStrCached("compression_level", "full")
 			for _, m := range msgs {
 				if mm, ok := m.(map[string]interface{}); ok {
 					if role, _ := mm["role"].(string); role == "tool" || role == "assistant" {
 						if content, ok := mm["content"].(string); ok && len(content) > 100 {
-							compressed := compressor.Compress(content, cavemanLevel)
+							compressed := defaultCompressor.Compress(content, cavemanLevel)
 							savings := EstimateSavings(content, compressed)
 							if savings > 10 {
 								mm["content"] = compressed
@@ -437,6 +437,8 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 	// Execute upstream request with auto-disable + fallback
 	resp, err := client.Do(req)
 	latencyMs := time.Since(startTime).Milliseconds()
+paapOverheadMs := time.Since(paapOverheadStart).Milliseconds()
+	log.Printf("[PAAP] PAAP overhead: %dms (before provider request)", paapOverheadMs)
 
 	if isMerlin {
 		if err != nil {
@@ -488,6 +490,7 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 	defer resp.Body.Close()
 
 	// On non-200: increment fail_count, auto-disable after 3 consecutive failures
+	
 	if resp.StatusCode != 200 {
 		// Read error body for diagnostics before closing
 		errBody, _ := io.ReadAll(resp.Body)
@@ -601,10 +604,10 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 // handleGroupRace dispatches to the correct routing mode based on group settings
 func handleGroupRace(w http.ResponseWriter, r *http.Request, modelName, groupName string, rawBody map[string]interface{}) {
 	// Global prompt injection (before group-level)
-	piEnabled := getSettingStr("prompt_injection_enabled", "false") == "true"
+	piEnabled := getSettingStrCached("prompt_injection_enabled", "false") == "true"
 	if piEnabled {
-		piText := getSettingStr("prompt_injection_text", "")
-		piPos := getSettingStr("prompt_injection_position", "prepend")
+		piText := getSettingStrCached("prompt_injection_text", "")
+		piPos := getSettingStrCached("prompt_injection_position", "prepend")
 		if piText != "" {
 			if msgs, ok := rawBody["messages"].([]interface{}); ok {
 				var msgMaps []map[string]interface{}
@@ -658,10 +661,10 @@ func handleGroupRaceAll(w http.ResponseWriter, r *http.Request, modelName, group
 	raceID := genID()
 
 	// Global prompt injection (before group-level)
-	piEnabled := getSettingStr("prompt_injection_enabled", "false") == "true"
+	piEnabled := getSettingStrCached("prompt_injection_enabled", "false") == "true"
 	if piEnabled {
-		piText := getSettingStr("prompt_injection_text", "")
-		piPos := getSettingStr("prompt_injection_position", "prepend")
+		piText := getSettingStrCached("prompt_injection_text", "")
+		piPos := getSettingStrCached("prompt_injection_position", "prepend")
 		if piText != "" {
 			if msgs, ok := rawBody["messages"].([]interface{}); ok {
 				var msgMaps []map[string]interface{}
@@ -826,7 +829,7 @@ func handleGroupRaceAll(w http.ResponseWriter, r *http.Request, modelName, group
 
 	// Check stealth mode setting
 	var stealthMode int
-	stealthStr := getSettingStr("stealth_mode", "1")
+	stealthStr := getSettingStrCached("stealth_mode", "1")
 	fmt.Sscanf(stealthStr, "%d", &stealthMode)
 
 	var ctx context.Context

@@ -16,6 +16,9 @@ type CompressionRule struct {
 	Replacement string
 }
 
+// Singleton — compile regex once, reuse per request
+var defaultCompressor = NewCavemanCompressor()
+
 // NewCavemanCompressor creates a compressor with default rules
 func NewCavemanCompressor() *CavemanCompressor {
 	c := &CavemanCompressor{}

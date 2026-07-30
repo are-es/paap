@@ -279,13 +279,20 @@ func migrate() error {
 	DB.Exec(`INSERT OR IGNORE INTO system_settings (key, value) VALUES ('prompt_injection_position', 'prepend')`)
 
 	// === Seed claude-* prefixed groups for Claude Code (existing feature) ===
-	DB.Exec(`INSERT OR IGNORE INTO groups (id, name, round_robin) SELECT 'claude-' || id, 'claude-' || name, round_robin FROM groups WHERE name NOT LIKE 'claude-%'`)
-	DB.Exec(`INSERT OR IGNORE INTO group_models (id, group_id, provider_id, model_id, position)
-		SELECT 'claude-' || gm.id, 'claude-' || gm.group_id, gm.provider_id, gm.model_id, gm.position
-		FROM group_models gm
-		JOIN groups g ON gm.group_id = g.id
-		WHERE g.name NOT LIKE 'claude-%'
-		AND NOT EXISTS (SELECT 1 FROM group_models WHERE id = 'claude-' || gm.id)`)
+	// Only seed if no claude-* groups exist at all (first-time setup)
+	// This prevents re-creating deleted claude-* groups on restart
+	var claudeCount int
+	DB.QueryRow("SELECT COUNT(*) FROM groups WHERE name LIKE 'claude-%'").Scan(&claudeCount)
+	if claudeCount == 0 {
+		// First time — seed claude-* groups from existing non-claude groups
+		DB.Exec(`INSERT OR IGNORE INTO groups (id, name, round_robin) SELECT 'claude-' || id, 'claude-' || name, round_robin FROM groups WHERE name NOT LIKE 'claude-%'`)
+		DB.Exec(`INSERT OR IGNORE INTO group_models (id, group_id, provider_id, model_id, position)
+			SELECT 'claude-' || gm.id, 'claude-' || gm.group_id, gm.provider_id, gm.model_id, gm.position
+			FROM group_models gm
+			JOIN groups g ON gm.group_id = g.id
+			WHERE g.name NOT LIKE 'claude-%'
+			AND NOT EXISTS (SELECT 1 FROM group_models WHERE id = 'claude-' || gm.id)`)
+	}
 
 	// === T02: Delete old seed providers ===
 	// TokenGO: explicitly removed per task spec

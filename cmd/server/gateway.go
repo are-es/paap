@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/dolvin/paap/internal/db"
 )
@@ -82,6 +84,7 @@ func gatewayKeyRoutes(w http.ResponseWriter, r *http.Request) {
 func setSetting(key, value string) {
 	db.DB.Exec(`INSERT INTO system_settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
 		ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`, key, value)
+	InvalidateSettingsCache()
 }
 
 func getSettingStr(key, defaultVal string) string {
@@ -91,6 +94,41 @@ func getSettingStr(key, defaultVal string) string {
 		return defaultVal
 	}
 	return val
+}
+
+// ── Settings Cache (5s TTL) ───────────────────────────────
+var (
+	settingsCache    = map[string]cacheEntry{}
+	settingsCacheMu  sync.RWMutex
+	settingsCacheTTL = 5 * time.Second
+)
+
+type cacheEntry struct {
+	value     string
+	expiresAt time.Time
+}
+
+func getSettingStrCached(key, defaultVal string) string {
+	now := time.Now()
+	settingsCacheMu.RLock()
+	entry, ok := settingsCache[key]
+	settingsCacheMu.RUnlock()
+	if ok && now.Before(entry.expiresAt) {
+		return entry.value
+	}
+	// Cache miss — fetch from DB
+	val := getSettingStr(key, defaultVal)
+	settingsCacheMu.Lock()
+	settingsCache[key] = cacheEntry{value: val, expiresAt: now.Add(settingsCacheTTL)}
+	settingsCacheMu.Unlock()
+	return val
+}
+
+// InvalidateSettingsCache forces next read to hit DB (call after setSetting)
+func InvalidateSettingsCache() {
+	settingsCacheMu.Lock()
+	settingsCache = map[string]cacheEntry{}
+	settingsCacheMu.Unlock()
 }
 
 func getSettingInt(key string, defaultVal int) int {
