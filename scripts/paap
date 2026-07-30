@@ -8,7 +8,7 @@ PAAP_DIR="/mnt/hdd/ares-workspace/paap"
 PAAP_DATA="$HOME/.paap"
 PAAP_PORT="${PAAP_PORT:-9090}"
 PID_FILE="$PAAP_DATA/paap.pid"
-REPO="https://github.com/youruser/paap.git"
+REPO="https://github.com/are-es/paap.git"
 
 # Colors
 RED='\033[0;31m'
@@ -133,7 +133,7 @@ cmd_update() {
   
   if [ ! -d "$PAAP_DIR/.git" ]; then
     echo -e "${RED}❌ Not a git repo. Reinstall with:${NC}"
-    echo "   curl -fsSL https://raw.githubusercontent.com/youruser/paap/main/install.sh | sh"
+    echo "   curl -fsSL https://raw.githubusercontent.com/are-es/paap/main/install.sh | sh"
     return 1
   fi
   

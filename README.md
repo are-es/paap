@@ -5,7 +5,7 @@ Self-hosted API gateway for LLM requests. One endpoint, 40+ providers.
 ## Quick Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/youruser/paap/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/are-es/paap/main/install.sh | sh
 ```
 
 ## What it does
@@ -22,7 +22,7 @@ curl -fsSL https://raw.githubusercontent.com/youruser/paap/main/install.sh | sh
 
 ```bash
 # Clone
-git clone https://github.com/youruser/paap.git ~/.paap/paap
+git clone https://github.com/are-es/paap.git ~/.paap/paap
 cd ~/.paap/paap
 
 # Build backend

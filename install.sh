@@ -2,9 +2,9 @@
 set -e
 
 # PAAP — Pangkalan API Installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/youruser/paap/main/install.sh | sh
+# Usage: curl -fsSL https://raw.githubusercontent.com/are-es/paap/main/install.sh | sh
 
-REPO="https://github.com/youruser/paap.git"
+REPO="https://github.com/are-es/paap.git"
 INSTALL_DIR="$HOME/.paap"
 PORT="${PAAP_PORT:-9090}"
 
