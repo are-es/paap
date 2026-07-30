@@ -544,7 +544,7 @@ func handleAnigravityStreaming(w http.ResponseWriter, resp *http.Response) {
 			}
 		}
 
-		// Convert finish_reason
+		// Convert finish_reason - only used in the final chunk
 		var openaiFinish *string
 		if lastFinishReason != "" {
 			mapped := mapGeminiFinishReason(lastFinishReason)
@@ -554,7 +554,7 @@ func handleAnigravityStreaming(w http.ResponseWriter, resp *http.Response) {
 		// Process parts - text and function calls
 		if len(geminiChunk.Candidates) > 0 {
 			for _, part := range geminiChunk.Candidates[0].Content.Parts {
-				// Text chunk
+				// Text chunk - NO finish_reason on intermediate chunks
 				if part.Text != "" {
 					chunk := map[string]interface{}{
 						"id":      fmt.Sprintf("anigravity-%d", time.Now().UnixMilli()),
@@ -565,23 +565,16 @@ func handleAnigravityStreaming(w http.ResponseWriter, resp *http.Response) {
 							{
 								"index":         0,
 								"delta":         map[string]interface{}{"content": part.Text},
-								"finish_reason": openaiFinish,
+								"finish_reason": nil,
 							},
 						},
-					}
-					if lastUsage != nil {
-						chunk["usage"] = map[string]interface{}{
-							"prompt_tokens":     lastUsage.PromptTokenCount,
-							"completion_tokens": lastUsage.CandidatesTokenCount,
-							"total_tokens":      lastUsage.TotalTokenCount,
-						}
 					}
 					chunkBytes, _ := json.Marshal(chunk)
 					fmt.Fprintf(w, "data: %s\n\n", string(chunkBytes))
 					flusher.Flush()
 				}
 
-				// Function call chunk
+				// Function call chunk - NO finish_reason on intermediate chunks
 				if part.FunctionCall != nil {
 					argsJSON, _ := json.Marshal(part.FunctionCall.Args)
 					chunk := map[string]interface{}{
@@ -605,16 +598,9 @@ func handleAnigravityStreaming(w http.ResponseWriter, resp *http.Response) {
 										},
 									},
 								},
-								"finish_reason": openaiFinish,
+								"finish_reason": nil,
 							},
 						},
-					}
-					if lastUsage != nil {
-						chunk["usage"] = map[string]interface{}{
-							"prompt_tokens":     lastUsage.PromptTokenCount,
-							"completion_tokens": lastUsage.CandidatesTokenCount,
-							"total_tokens":      lastUsage.TotalTokenCount,
-						}
 					}
 					chunkBytes, _ := json.Marshal(chunk)
 					fmt.Fprintf(w, "data: %s\n\n", string(chunkBytes))
@@ -624,7 +610,31 @@ func handleAnigravityStreaming(w http.ResponseWriter, resp *http.Response) {
 			}
 		}
 
+		// Send final chunk with finish_reason only when stream is actually done
 		if lastFinishReason != "" {
+			finalChunk := map[string]interface{}{
+				"id":      fmt.Sprintf("anigravity-%d", time.Now().UnixMilli()),
+				"object":  "chat.completion.chunk",
+				"created": time.Now().Unix(),
+				"model":   "anigravity",
+				"choices": []map[string]interface{}{
+					{
+						"index":         0,
+						"delta":         map[string]interface{}{},
+						"finish_reason": openaiFinish,
+					},
+				},
+			}
+			if lastUsage != nil {
+				finalChunk["usage"] = map[string]interface{}{
+					"prompt_tokens":     lastUsage.PromptTokenCount,
+					"completion_tokens": lastUsage.CandidatesTokenCount,
+					"total_tokens":      lastUsage.TotalTokenCount,
+				}
+			}
+			chunkBytes, _ := json.Marshal(finalChunk)
+			fmt.Fprintf(w, "data: %s\n\n", string(chunkBytes))
+			flusher.Flush()
 			break
 		}
 	}
