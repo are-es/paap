@@ -238,10 +238,30 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 			for _, m := range msgs {
 				if mm, ok := m.(map[string]interface{}); ok {
 					msgMaps = append(msgMaps, mm)
+					// Log tool calls to detect if client uses RTK
+					if role, _ := mm["role"].(string); role == "assistant" {
+						if toolCalls, ok := mm["tool_calls"].([]interface{}); ok {
+							for _, tc := range toolCalls {
+								if tcMap, ok := tc.(map[string]interface{}); ok {
+									if fn, ok := tcMap["function"].(map[string]interface{}); ok {
+										if args, ok := fn["arguments"].(string); ok {
+											log.Printf("[PAAP] Tool call: %s args=%s", fn["name"], args[:min(100, len(args))])
+										}
+									}
+								}
+							}
+						}
+					}
 				}
 			}
-			rtkLevel := getSettingStr("rtk_level", "full")
-			msgMaps = CompressToolOutputs(msgMaps, rtkLevel)
+			
+			// Check if client already uses RTK
+			if ClientUsesRTK(msgMaps) {
+				log.Printf("[PAAP] Client already uses RTK — skipping PAAP RTK compression")
+			} else {
+				rtkLevel := getSettingStr("rtk_level", "full")
+				msgMaps = CompressToolOutputs(msgMaps, rtkLevel)
+			}
 			rawBody["messages"] = func() []interface{} {
 				out := make([]interface{}, len(msgMaps))
 				for i, m := range msgMaps {
