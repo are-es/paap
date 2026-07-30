@@ -303,7 +303,7 @@ export const api = {
   },
 
   clearLogs: () =>
-    fetch("/api/logs", { method: "POST" }),
+    fetch("/api/logs", { method: "DELETE" }),
 
   getCost: () => fetchApi<CostSummary>("/api/logs/cost"),
 
