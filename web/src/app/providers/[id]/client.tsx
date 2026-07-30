@@ -689,45 +689,48 @@ function ModelsSection({ providerId }: { providerId: string }) {
     </NeonCollapse>
   );
 }
-
 function PlaygroundSection({ providerId }: { providerId: string }) {
-  const [keyId, setKeyId] = useState<string | undefined>();
-  const [model, setModel] = useState("");
-  const [prompt, setPrompt] = useState("hi");
-  const [results, setResults] = useState<{ status: number; latency_ms: number; res: string; key?: string }[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+const [keyId, setKeyId] = useState<string>();
+const [model, setModel] = useState("");
+const [prompt, setPrompt] = useState("hi");
+const [results, setResults] = useState<PlaygroundResult[] | null>(null);
+const [error, setError] = useState<string | null>(null);
+const queryClient = useQueryClient();
 
-  const keysQuery = useQuery({ queryKey: ["keys", providerId], queryFn: () => api.getKeys(providerId) });
-  const modelsQuery = useQuery({ queryKey: ["models", providerId], queryFn: () => api.getModels(providerId) });
+const keysQuery = useQuery({ queryKey: ["keys", providerId], queryFn: () => api.getKeys(providerId) });
+const modelsQuery = useQuery({ queryKey: ["models", providerId], queryFn: () => api.getModels(providerId) });
+const connectionsQuery = useQuery({ queryKey: ["connections", providerId], queryFn: () => api.getConnections(providerId) });
 
-  const testMutation = useMutation({
-    mutationFn: () => api.runPlayground(providerId, { key_id: keyId, model_id: model, prompt }),
-    onSuccess: (data: PlaygroundResult & { results?: PlaygroundResult[] }) => {
-      setError(null);
-      if (data.results && Array.isArray(data.results)) {
-        setResults(data.results);
-      } else {
-        setResults([{ status: data.status, latency_ms: data.latency_ms, res: data.res, key: data.key || "" }]);
-      }
-    },
-    onError: (err: Error) => { setError(err.message); setResults(null); },
-  });
+const testMutation = useMutation({
+mutationFn: () => api.runPlayground(providerId, { key_id: keyId, model_id: model, prompt }),
+onSuccess: (data: PlaygroundResult & { results?: PlaygroundResult[] }) => {
+setError(null);
+if (data.results && Array.isArray(data.results)) {
+setResults(data.results);
+} else {
+setResults([{ status: data.status, latency_ms: data.latency_ms, res: data.res, key: data.key || "" }]);
+}
+},
+onError: (err: Error) => { setError(err.message); setResults(null); },
+});
 
-  const activeKeys = keysQuery.data?.filter((k) => k.is_active) ?? [];
-  const selectedModels = modelsQuery.data?.filter((m) => m.selected) ?? [];
+const activeKeys = keysQuery.data?.filter((k) => k.is_active) ?? [];
+const activeConnections = connectionsQuery.data?.filter((c) => c.is_active) ?? [];
+const selectedModels = modelsQuery.data?.filter((m) => m.selected) ?? [];
 
-  return (
-    <NeonCollapse title="Playground" icon={<Play className="w-4 h-4" />} accentColor="amber">
-      <div className="space-y-3 mt-3">
-        <div className="grid grid-cols-2 gap-3">
-          <select
-            value={keyId ?? ""}
-            onChange={(e) => setKeyId(e.target.value || undefined)}
-            className="px-3 py-2 rounded-lg border border-input bg-background text-sm focus:outline-none focus:border-neon-amber/50"
-          >
-            <option value="">All Keys</option>
-            {activeKeys.map((k) => <option key={k.id} value={k.id}>{k.name || k.key.slice(0, 12) + "..."}</option>)}
-          </select>
+return (
+<NeonCollapse title="Playground" icon={<Play className="w-4 h-4" />} accentColor="amber">
+<div className="space-y-3 mt-3">
+<div className="grid grid-cols-2 gap-3">
+<select
+value={keyId ?? ""}
+onChange={(e) => setKeyId(e.target.value || undefined)}
+className="px-3 py-2 rounded-lg border border-input bg-background text-sm focus:outline-none focus:border-neon-amber/50"
+>
+<option value="">All Keys</option>
+{activeKeys.map((k) => <option key={k.id} value={k.id}>{k.name || k.key.slice(0, 12) + "..."}</option>)}
+{activeConnections.map((c) => <option key={c.id} value={c.id}>{c.name || c.email || c.id}</option>)}
+</select>
           <select
             value={model}
             onChange={(e) => setModel(e.target.value)}

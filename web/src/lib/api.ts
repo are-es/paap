@@ -240,7 +240,7 @@ export const api = {
 
   deleteConnection: (providerId: number | string, connId: number) =>
     fetch(`/api/providers/${providerId}/connections/${connId}`, {
-      method: "POST",
+      method: "DELETE",
     }),
 
   // --- Models ---
