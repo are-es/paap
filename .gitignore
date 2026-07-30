@@ -42,3 +42,6 @@ Thumbs.db
 # Agent development files
 .agent/
 .claude/
+
+# Database files
+data/*.db*

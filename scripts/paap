@@ -4,7 +4,7 @@
 
 set -e
 
-PAAP_DIR="$HOME/.paap/paap"
+PAAP_DIR="/mnt/hdd/ares-workspace/paap"
 PAAP_DATA="$HOME/.paap"
 PAAP_PORT="${PAAP_PORT:-9090}"
 PID_FILE="$PAAP_DATA/paap.pid"
