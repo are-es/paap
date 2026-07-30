@@ -61,6 +61,7 @@ func anigravityRequest(w http.ResponseWriter, r *http.Request, model string, raw
 				"role": "user",
 				"parts": []map[string]interface{}{
 					{"functionResponse": map[string]interface{}{
+						"id":       toolCallID,
 						"name":     funcName,
 						"response": map[string]interface{}{"result": content},
 					}},
@@ -84,6 +85,10 @@ func anigravityRequest(w http.ResponseWriter, r *http.Request, model string, raw
 					if tm, ok := t.(map[string]interface{}); ok {
 						if fn, ok := tm["function"].(map[string]interface{}); ok {
 							funcName, _ := fn["name"].(string)
+							toolCallID, _ := tm["id"].(string)
+							if toolCallID == "" {
+								toolCallID = "call_" + funcName
+							}
 							var args map[string]interface{}
 							if argsStr, ok := fn["arguments"].(string); ok {
 								json.Unmarshal([]byte(argsStr), &args)
@@ -92,7 +97,9 @@ func anigravityRequest(w http.ResponseWriter, r *http.Request, model string, raw
 								args = map[string]interface{}{}
 							}
 							parts = append(parts, map[string]interface{}{
+								"thoughtSignature": "EuwGCukGAXLI2nxwZIq54WWSoL/YN0P3TsDZ7zRnLi8g0S4aVr2HUGxvaHKySuY6HAVzcE0GPGjXrytLIldxthSvfxgUlJh6Qa9Z+Oj5QZBlYdg6HaJ6yuY5R7waE6rdwBsRf7Ft2j3DJ9rMi9qhWFqApewYtPhls3VHtuvND3l8Rm09+lbAXQs6KKWEWrxNLKTBkfpMgXhRERc/TQRMZu1twAablm6/Zk1tsYRvfWKLsNbeKF+CCojJdXJKvnR/8Ouuoa+Y2Ti20hcW7aZIIjZDFYPU//k6Ybmhg69J/imbFai2ckhfLaisqdDkdoIiBJScTOUvYqP6AE9d4MsydSC+UlhIMk4hoP76R8vUSCZRMkjOaDXstf/QoVZKbt94wyRZgAJ1G0BqI8L5ow86kLpA4wJEtxsRGymOE4bKUvApveBakYDNM9APkf+LbtbzWSseGjoZcSlycF9iN8Q2XNYKRrHbv3Lr5Y8JjdH/5y/6SHkNehTEZugaeGnSPSyCTWto1kQgHpxdWmhkLfJGNUGLmue7Mesj4TSms4J33mRpYVhNB/J333FCqIP0hr/E7BkkjEn7yZ4X7SQlh+xKPurapsnHRwiKmtsilmEFrnTE9iQr+pMr6M29qqFNv1tr5yumbaJw8JW9sB15tNsRv+dW6BjNanbsKz7HCgKUBc8tGy+7YuhXzAfViyRefcjK7eZW0Fbyt7AbybJTKz78W8NH7ye6LAwzOebXpeZ4D43fNIt8bKh26qgduSQv/7o+pAflkuqHZ99YWgHQ8h8OkZFi3eOiSYjsjhdZ/czWOdoPI/OnqIldzMPF5YlrKBLFX8VhRKVmqgsmWf5PHGulHhMkVlS+XG2UIseGy69ARa93D78Gsa+1n1kJr7EEB7Rh+27vUMxVYLdz1yMSvE5nalTAlg/ZeG8+XQ0cHuAI3KbQpHW2Q++RdXfm5JzD5WdJZUU+Zn8t8UUn85BH4RxZLeE0qJikgSsKoYVBc6YhiMjhPgkR95ReimY4Z0xCJdRo1gjexOFeODZMpQF6Yxnoic7IrdgsFA3iePTbFnPp3IAM1fAThWhXJUn3QInUOTd5o1qmTmn6REbL15g/JQNl+dqUoPkhleeb2V3kjqp1okmO3wMZbPknR3S1LZNmlS72/iBQUm+n2b/RCn4PjmM2",
 								"functionCall": map[string]interface{}{
+									"id":   toolCallID,
 									"name": funcName,
 									"args": args,
 								},
