@@ -762,7 +762,7 @@ func providerTestPrompt(w http.ResponseWriter, r *http.Request, providerID strin
 			reqBody, _ = json.Marshal(map[string]interface{}{
 				"model":      body.ModelID,
 				"messages":   []map[string]string{{"role": "user", "content": body.Prompt}},
-				"max_tokens": 5,
+				"max_tokens": 1000,
 			})
 		}
 
