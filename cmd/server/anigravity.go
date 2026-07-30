@@ -275,8 +275,8 @@ func testAnigravityRequest(model, prompt, accessToken string) (string, int64, er
 		"userAgent":   "antigravity",
 		"requestType": "chat",
 		"requestId":   requestID,
-		"sessionId":   sessionID,
 		"request": map[string]interface{}{
+			"sessionId": sessionID,
 			"contents": []map[string]interface{}{
 				{"role": "user", "parts": []map[string]interface{}{{"text": prompt}}},
 			},
