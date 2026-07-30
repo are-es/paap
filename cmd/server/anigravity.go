@@ -459,14 +459,17 @@ func handleAnigravityNonStreaming(w http.ResponseWriter, resp *http.Response) {
 	json.NewEncoder(w).Encode(openaiResp)
 
 	// Log the request
-	var logConnID string
-	db.DB.QueryRow("SELECT id FROM provider_connections WHERE provider_id='builtin-anigravity' AND is_active=1 LIMIT 1").Scan(&logConnID)
+	var logConnID, logConnName string
+	db.DB.QueryRow("SELECT id, COALESCE(email, name, '') FROM provider_connections WHERE provider_id='builtin-anigravity' AND is_active=1 LIMIT 1").Scan(&logConnID, &logConnName)
+	if logConnName == "" {
+		logConnName = "anigravity-connection"
+	}
 	promptTokens, completionTokens := 0, 0
 	if geminiResp.UsageMetadata != nil {
 		promptTokens = geminiResp.UsageMetadata.PromptTokenCount
 		completionTokens = geminiResp.UsageMetadata.CandidatesTokenCount
 	}
-	logProxyRequest("builtin-anigravity", "Anigravity CLI", "anigravity", logConnID, "anigravity-connection", "", "",
+	logProxyRequest("builtin-anigravity", "Anigravity CLI", "anigravity", logConnID, logConnName, "", "",
 		200, promptTokens, completionTokens, 0, "")
 }
 
