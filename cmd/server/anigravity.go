@@ -248,6 +248,9 @@ func anigravityRequest(w http.ResponseWriter, r *http.Request, model string, raw
 	req.Header.Set("User-Agent", "antigravity/ide/2.1.1 linux/amd64")
 
 	client := sharedHTTPClient
+	if isStream {
+		client = streamingHTTPClient
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		writeError(w, 502, "anigravity request failed: "+err.Error())

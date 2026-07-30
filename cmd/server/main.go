@@ -31,6 +31,20 @@ var sharedHTTPClient = &http.Client{
 	},
 }
 
+// Streaming HTTP client — no timeout for long-running streams
+var streamingHTTPClient = &http.Client{
+	Transport: &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 20,
+		IdleConnTimeout:     300 * time.Second,
+		DialContext: (&net.Dialer{
+			Timeout:   10 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		TLSHandshakeTimeout: 10 * time.Second,
+	},
+}
+
 func main() {
 	home, _ := os.UserHomeDir()
 	dataDir := filepath.Join(home, ".paap")
