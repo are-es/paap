@@ -1,3 +1,4 @@
+// Server component — exports generateStaticParams for static export
 import { ProviderSetupClient } from "./client";
 
 export function generateStaticParams() {
@@ -10,6 +11,10 @@ export function generateStaticParams() {
     { id: "builtin-ollamacloud" },
     { id: "builtin-openrouter" },
     { id: "builtin-xiaomi" },
+    { id: "grok-cli" },
+    { id: "meta-default" },
+    { id: "tokengo-default" },
+
   ];
 }
 

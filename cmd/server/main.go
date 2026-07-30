@@ -120,9 +120,11 @@ func main() {
 
 	// ── System ──────────────────────────────────────────────
 	mux.HandleFunc("/api/settings", settingsHandler)
-	mux.HandleFunc("/api/clear-all", clearAll)
 	mux.HandleFunc("/api/system/shutdown", systemShutdown)
 	mux.HandleFunc("/api/system/restart", systemRestart)
+	mux.HandleFunc("/api/backup", backupDatabase)
+	mux.HandleFunc("/api/restore", restoreDatabase)
+	mux.HandleFunc("/api/clear-all", clearAllData)
 	mux.HandleFunc("/api/usage/summary", usageSummary)
 
 	// ── Compression routes removed (engine still used by routing) ──
