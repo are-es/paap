@@ -214,13 +214,15 @@ func anigravityRequest(w http.ResponseWriter, r *http.Request, model string, raw
 	requestID := fmt.Sprintf("agent/%s/%d/%s/%d", convUUID, time.Now().UnixMilli(), trajUUID, step)
 	sessionID := generateUUID()
 
+	// Add sessionId inside request (not top level)
+	geminiReq["sessionId"] = sessionID
+
 	fullBody := map[string]interface{}{
 		"project":     projectID,
 		"model":       model,
 		"userAgent":   "antigravity",
 		"requestType": "chat",
 		"requestId":   requestID,
-		"sessionId":   sessionID,
 		"request":     geminiReq,
 	}
 
