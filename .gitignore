@@ -1,0 +1,44 @@
+# Build artifacts
+bin/
+web/out/
+web/.next/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Dependencies
+node_modules/
+vendor/
+
+# Database
+*.db
+*.db-journal
+*.db-wal
+
+# Logs
+*.log
+logs/
+
+# Environment
+.env
+.env.local
+.env.production
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# PAAP data
+~/.paap/
+
+# Agent development files
+.agent/
+.claude/

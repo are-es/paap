@@ -1,0 +1,267 @@
+#!/bin/bash
+# PAAP CLI — Pangkalan API Command Line Interface
+# Usage: paap <command> [options]
+
+set -e
+
+PAAP_DIR="$HOME/.paap/paap"
+PAAP_DATA="$HOME/.paap"
+PAAP_PORT="${PAAP_PORT:-9090}"
+PID_FILE="$PAAP_DATA/paap.pid"
+REPO="https://github.com/youruser/paap.git"
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+# Helper: check if running
+is_running() {
+  if [ -f "$PID_FILE" ]; then
+    PID=$(cat "$PID_FILE")
+    if kill -0 "$PID" 2>/dev/null; then
+      return 0
+    fi
+  fi
+  if systemctl is-active --quiet paap 2>/dev/null; then
+    return 0
+  fi
+  return 1
+}
+
+# Helper: get PID
+get_pid() {
+  if [ -f "$PID_FILE" ]; then
+    cat "$PID_FILE"
+  else
+    pgrep -f "paap-server" 2>/dev/null | head -1
+  fi
+}
+
+# Commands
+cmd_start() {
+  local PORT="${1:-$PAAP_PORT}"
+  echo -e "${BLUE}Starting PAAP on port $PORT...${NC}"
+  if is_running; then
+    echo -e "${YELLOW}PAAP already running (PID: $(get_pid))${NC}"
+    return 0
+  fi
+  
+  cd "$PAAP_DIR"
+  if [ -f "bin/paap-server" ]; then
+    PAAP_PORT=$PORT PAAP_DATA=$PAAP_DATA ./bin/paap-server &
+    echo $! > "$PID_FILE"
+    sleep 2
+    if is_running; then
+      echo -e "${GREEN}✅ PAAP started${NC}"
+      echo -e "   PID:     $(cat $PID_FILE)"
+      echo -e "   Port:    $PORT"
+      echo -e "   URL:     http://localhost:$PORT"
+      echo -e "   BaseURL: http://localhost:$PORT/v1"
+    else
+      echo -e "${RED}❌ Failed to start. Check logs: $PAAP_DATA/paap.log${NC}"
+      return 1
+    fi
+  else
+    echo -e "${RED}❌ Binary not found. Run: paap build${NC}"
+    return 1
+  fi
+}
+
+cmd_stop() {
+  echo -e "${BLUE}Stopping PAAP...${NC}"
+  if ! is_running; then
+    echo -e "${YELLOW}PAAP not running${NC}"
+    return 0
+  fi
+  
+  PID=$(get_pid)
+  if [ -n "$PID" ]; then
+    kill "$PID" 2>/dev/null || true
+    rm -f "$PID_FILE"
+    echo -e "${GREEN}✅ PAAP stopped${NC}"
+  fi
+}
+
+cmd_restart() {
+  local PORT="${1:-$PAAP_PORT}"
+  cmd_stop
+  sleep 1
+  cmd_start "$PORT"
+}
+
+cmd_status() {
+  if is_running; then
+    PID=$(get_pid)
+    echo -e "${GREEN}✅ PAAP running${NC}"
+    echo -e "   PID:     $PID"
+    echo -e "   Port:    $PAAP_PORT"
+    echo -e "   URL:     http://localhost:$PAAP_PORT"
+    echo -e "   BaseURL: http://localhost:$PAAP_PORT/v1"
+    echo -e "   Data:    $PAAP_DATA"
+    
+    HEALTH=$(curl -s "http://localhost:$PAAP_PORT/api/health" 2>/dev/null)
+    if [ $? -eq 0 ]; then
+      echo -e "   Health:  ${GREEN}OK${NC}"
+    else
+      echo -e "   Health:  ${RED}FAILED${NC}"
+    fi
+  else
+    echo -e "${RED}❌ PAAP not running${NC}"
+  fi
+}
+
+cmd_build() {
+  echo -e "${BLUE}Building PAAP...${NC}"
+  cd "$PAAP_DIR"
+  
+  echo -e "${YELLOW}Building backend...${NC}"
+  CGO_ENABLED=1 go build -o bin/paap-server ./cmd/server/
+  echo -e "${GREEN}✅ Backend built${NC}"
+  
+  echo -e "${YELLOW}Building frontend...${NC}"
+  cd web
+  npm run build
+  cd ..
+  echo -e "${GREEN}✅ Frontend built${NC}"
+}
+
+cmd_update() {
+  echo -e "${BLUE}Updating PAAP...${NC}"
+  
+  if [ ! -d "$PAAP_DIR/.git" ]; then
+    echo -e "${RED}❌ Not a git repo. Reinstall with:${NC}"
+    echo "   curl -fsSL https://raw.githubusercontent.com/youruser/paap/main/install.sh | sh"
+    return 1
+  fi
+  
+  cd "$PAAP_DIR"
+  
+  # Save current version
+  OLD_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+  
+  # Pull latest
+  echo -e "${YELLOW}Pulling latest changes...${NC}"
+  git pull origin main 2>/dev/null || git pull origin master 2>/dev/null || {
+    echo -e "${RED}❌ Failed to pull. Check your internet connection.${NC}"
+    return 1
+  }
+  
+  NEW_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+  
+  if [ "$OLD_COMMIT" = "$NEW_COMMIT" ]; then
+    echo -e "${GREEN}✅ Already up to date ($OLD_COMMIT)${NC}"
+    return 0
+  fi
+  
+  echo -e "${GREEN}✅ Updated: $OLD_COMMIT → $NEW_COMMIT${NC}"
+  
+  # Auto-build
+  echo ""
+  echo -e "${YELLOW}Building...${NC}"
+  cmd_build
+  
+  # Restart if was running
+  if is_running; then
+    echo ""
+    echo -e "${YELLOW}Restarting...${NC}"
+    cmd_restart
+  fi
+  
+  echo ""
+  echo -e "${GREEN}✅ PAAP updated and ready!${NC}"
+}
+
+cmd_logs() {
+  if [ -f "$PAAP_DATA/paap.log" ]; then
+    tail -f "$PAAP_DATA/paap.log"
+  else
+    echo -e "${RED}❌ No log file found${NC}"
+    return 1
+  fi
+}
+
+cmd_health() {
+  HEALTH=$(curl -s "http://localhost:$PAAP_PORT/api/health" 2>/dev/null)
+  if [ $? -eq 0 ]; then
+    echo "$HEALTH" | python3 -m json.tool 2>/dev/null || echo "$HEALTH"
+  else
+    echo -e "${RED}❌ PAAP not running or health check failed${NC}"
+    return 1
+  fi
+}
+
+cmd_providers() {
+  curl -s "http://localhost:$PAAP_PORT/api/providers" 2>/dev/null | python3 -m json.tool 2>/dev/null || echo -e "${RED}❌ Failed to get providers${NC}"
+}
+
+cmd_keys() {
+  PROVIDER_ID="${1:-}"
+  if [ -z "$PROVIDER_ID" ]; then
+    echo "Usage: paap keys <provider_id>"
+    return 1
+  fi
+  curl -s "http://localhost:$PAAP_PORT/api/providers/$PROVIDER_ID/keys" 2>/dev/null | python3 -m json.tool 2>/dev/null || echo -e "${RED}❌ Failed to get keys${NC}"
+}
+
+cmd_version() {
+  if [ -d "$PAAP_DIR/.git" ]; then
+    cd "$PAAP_DIR"
+    COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+    DATE=$(git log -1 --format=%ci 2>/dev/null | cut -d' ' -f1 || echo "unknown")
+    echo -e "${BLUE}PAAP Version${NC}"
+    echo -e "   Commit:  $COMMIT"
+    echo -e "   Date:    $DATE"
+    echo -e "   Branch:  $(git branch --show-current 2>/dev/null || echo 'unknown')"
+  else
+    echo -e "${YELLOW}Not a git repo — version unknown${NC}"
+  fi
+}
+
+cmd_help() {
+  echo "PAAP — Pangkalan API Gateway"
+  echo ""
+  echo "Usage: paap <command> [options]"
+  echo ""
+  echo "Commands:"
+  echo "  start [PORT]          Start PAAP server (default: 9090)"
+  echo "  stop                  Stop PAAP server"
+  echo "  restart [PORT]        Restart PAAP server"
+  echo "  status                Show server status"
+  echo "  build                 Build backend + frontend"
+  echo "  update                Pull latest + build + restart"
+  echo "  version               Show current version"
+  echo "  logs                  Tail server logs"
+  echo "  health                Health check"
+  echo "  providers             List providers"
+  echo "  keys <id>             List keys for provider"
+  echo "  help                  Show this help"
+  echo ""
+  echo "Examples:"
+  echo "  paap start            Start on default port 9090"
+  echo "  paap start 8081       Start on port 8081"
+  echo "  paap update           Pull latest + rebuild + restart"
+  echo "  paap version          Show current commit"
+  echo ""
+  echo "Environment:"
+  echo "  PAAP_PORT   Server port (default: 9090)"
+  echo "  PAAP_DATA   Data directory (default: ~/.paap)"
+}
+
+# Main
+case "${1:-help}" in
+  start)    shift; cmd_start "$@" ;;
+  stop)     cmd_stop ;;
+  restart)  shift; cmd_restart "$@" ;;
+  status)   cmd_status ;;
+  build)    cmd_build ;;
+  update)   cmd_update ;;
+  version)  cmd_version ;;
+  logs)     cmd_logs ;;
+  health)   cmd_health ;;
+  providers) cmd_providers ;;
+  keys)     cmd_keys "$2" ;;
+  help|*)   cmd_help ;;
+esac

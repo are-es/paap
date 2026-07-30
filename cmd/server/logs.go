@@ -1,0 +1,731 @@
+package main
+
+import (
+	"database/sql"
+	"encoding/csv"
+	"encoding/json"
+	"fmt"
+	"log"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/dolvin/paap/internal/db"
+)
+
+// ── Sub-router for /api/logs/* ──────────────────────────────
+
+func logRoutes(w http.ResponseWriter, r *http.Request) {
+	trimmed := strings.TrimPrefix(r.URL.Path, "/api/logs/")
+	switch trimmed {
+	case "cost":
+		logCostSummary(w, r)
+	case "export":
+		logExport(w, r)
+	default:
+		writeError(w, 404, "unknown logs endpoint")
+	}
+}
+
+// ── GET /api/logs — list with filters + pagination ──────────
+
+func logList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		writeError(w, 405, "method not allowed")
+		return
+	}
+	q := r.URL.Query()
+
+	// Pagination
+	page := 1
+	if p := q.Get("page"); p != "" {
+		if v, err := strconv.Atoi(p); err == nil && v > 0 {
+			page = v
+		}
+	}
+	perPage := 1000
+	if l := q.Get("per_page"); l != "" {
+		if v, err := strconv.Atoi(l); err == nil && v > 0 {
+			perPage = v
+			if perPage > 1000 {
+				perPage = 1000
+			}
+		}
+	}
+	offset := (page - 1) * perPage
+
+	// Build WHERE clause
+	var conds []string
+	var args []interface{}
+
+	if p := q.Get("provider"); p != "" {
+		conds = append(conds, "provider_id = ?")
+		args = append(args, p)
+	}
+	if m := q.Get("model"); m != "" {
+		conds = append(conds, "model_id = ?")
+		args = append(args, m)
+	}
+	if s := q.Get("status"); s != "" {
+		switch s {
+		case "success":
+			conds = append(conds, "status_code = 200")
+		case "error":
+			conds = append(conds, "(status_code IS NULL OR status_code != 200)")
+		}
+	}
+	if from := q.Get("from"); from != "" {
+		conds = append(conds, "timestamp >= ?")
+		args = append(args, from)
+	}
+	if to := q.Get("to"); to != "" {
+		conds = append(conds, "timestamp <= ?")
+		args = append(args, to)
+	}
+	if search := q.Get("search"); search != "" {
+		conds = append(conds, "(provider_name LIKE ? OR model_id LIKE ? OR key_name LIKE ? OR error LIKE ?)")
+		like := "%" + search + "%"
+		args = append(args, like, like, like, like)
+	}
+
+	where := ""
+	if len(conds) > 0 {
+		where = " WHERE " + strings.Join(conds, " AND ")
+	}
+
+	// Count total
+	var total int
+	countArgs := make([]interface{}, len(args))
+	copy(countArgs, args)
+	db.DB.QueryRow("SELECT COUNT(*) FROM logs"+where, countArgs...).Scan(&total)
+
+	// Fetch page
+	query := `SELECT id, timestamp, COALESCE(provider_id,''), COALESCE(provider_name,''),
+		COALESCE(model_id,''), COALESCE(key_id,''), COALESCE(key_name,''),
+		COALESCE(group_name,''), COALESCE(framework,''),
+		status_code, COALESCE(race_status,''), COALESCE(race_id,''),
+		tokens_in, tokens_out, latency_ms, cost_usd,
+		COALESCE(compression_ratio,0), COALESCE(skills_used,'[]'),
+		COALESCE(error,''), COALESCE(proxy_used,'')
+		FROM logs` + where + " ORDER BY timestamp DESC LIMIT ? OFFSET ?"
+	args = append(args, perPage, offset)
+
+	rows, err := db.DB.Query(query, args...)
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	defer rows.Close()
+
+	var list []map[string]interface{}
+	for rows.Next() {
+		var id, tokensIn, tokensOut, latency int
+		var ts, providerID, providerName, modelID, keyID, keyName string
+		var groupName, framework, raceStatus, raceID string
+		var skillsUsed, errMsg, proxyUsed string
+		var statusCode *int
+		var cost, compRatio float64
+
+		rows.Scan(&id, &ts, &providerID, &providerName, &modelID, &keyID, &keyName,
+			&groupName, &framework, &statusCode, &raceStatus, &raceID,
+			&tokensIn, &tokensOut, &latency, &cost, &compRatio, &skillsUsed,
+			&errMsg, &proxyUsed)
+
+		list = append(list, map[string]interface{}{
+			"id": id, "timestamp": ts,
+			"provider_id": providerID, "provider_name": providerName,
+			"model_id": modelID, "key_id": keyID, "key_name": keyName,
+			"group_name": groupName, "framework": framework,
+			"status_code": statusCode, "race_status": raceStatus, "race_id": raceID,
+			"tokens_in": tokensIn, "tokens_out": tokensOut,
+			"latency_ms": latency, "cost_usd": cost,
+			"compression_ratio": compRatio, "skills_used": skillsUsed,
+			"error": errMsg, "proxy_used": proxyUsed,
+		})
+	}
+	if list == nil {
+		list = []map[string]interface{}{}
+	}
+	writeJSON(w, map[string]interface{}{
+		"data":        list,
+		"total":       total,
+		"page":        page,
+		"per_page":    perPage,
+		"total_pages": (total + perPage - 1) / perPage,
+	})
+}
+
+// ── DELETE /api/logs — clear logs ONLY, cost_summary untouched
+
+func logClear(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "DELETE" {
+		writeError(w, 405, "method not allowed")
+		return
+	}
+	_, err := db.DB.Exec("DELETE FROM logs")
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, map[string]interface{}{
+		"status":  "cleared",
+		"message": "All logs deleted. Cost summary preserved.",
+	})
+}
+
+// ── DELETE /api/clear-all — clear logs + usage_stats (NOT cost_summary)
+
+func clearAll(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "DELETE" {
+		writeError(w, 405, "method not allowed")
+		return
+	}
+	tables := []string{"logs", "usage_stats"}
+	for _, t := range tables {
+		if _, err := db.DB.Exec("DELETE FROM " + t); err != nil {
+			writeError(w, 500, fmt.Sprintf("failed to clear %s: %v", t, err))
+			return
+		}
+	}
+	writeJSON(w, map[string]string{"status": "cleared", "message": "All logs and usage data deleted"})
+}
+
+// ── GET /api/logs/cost — aggregated cost summary ────────────
+
+func logCostSummary(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		writeError(w, 405, "method not allowed")
+		return
+	}
+
+	// Time period aggregations
+	type periodSummary struct {
+		ReqCount   int     `json:"req_count"`
+		CostUSD    float64 `json:"cost_usd"`
+		TokensIn   int     `json:"tokens_in"`
+		TokensOut  int     `json:"tokens_out"`
+	}
+	periods := map[string]string{
+		"today":  "date = date('now')",
+		"7d":     "date >= date('now', '-7 days')",
+		"30d":    "date >= date('now', '-30 days')",
+		"all":    "1=1",
+	}
+	summary := map[string]periodSummary{}
+	for name, cond := range periods {
+		var ps periodSummary
+		db.DB.QueryRow(fmt.Sprintf(
+			"SELECT COALESCE(SUM(req_count),0), COALESCE(SUM(total_cost_usd),0), COALESCE(SUM(total_tokens_in),0), COALESCE(SUM(total_tokens_out),0) FROM cost_summary WHERE %s", cond,
+		)).Scan(&ps.ReqCount, &ps.CostUSD, &ps.TokensIn, &ps.TokensOut)
+		summary[name] = ps
+	}
+
+	// Per-provider breakdown
+	pRows, err := db.DB.Query(`SELECT COALESCE(provider_name,''), COALESCE(provider_id,''),
+		SUM(req_count), SUM(total_cost_usd), SUM(total_tokens_in), SUM(total_tokens_out)
+		FROM cost_summary GROUP BY provider_id ORDER BY SUM(total_cost_usd) DESC`)
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	defer pRows.Close()
+	var byProvider []map[string]interface{}
+	for pRows.Next() {
+		var name, id string
+		var reqs, tin, tout int
+		var cost float64
+		pRows.Scan(&name, &id, &reqs, &cost, &tin, &tout)
+		byProvider = append(byProvider, map[string]interface{}{
+			"provider_name": name, "provider_id": id,
+			"req_count": reqs, "cost_usd": cost,
+			"tokens_in": tin, "tokens_out": tout,
+		})
+	}
+	if byProvider == nil {
+		byProvider = []map[string]interface{}{}
+	}
+
+	// Per-model breakdown
+	mRows, err := db.DB.Query(`SELECT COALESCE(model_id,''), COALESCE(provider_name,''),
+		SUM(req_count), SUM(total_cost_usd), SUM(total_tokens_in), SUM(total_tokens_out)
+		FROM cost_summary GROUP BY model_id ORDER BY SUM(total_cost_usd) DESC`)
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	defer mRows.Close()
+	var byModel []map[string]interface{}
+	for mRows.Next() {
+		var modelID, providerName string
+		var reqs, tin, tout int
+		var cost float64
+		mRows.Scan(&modelID, &providerName, &reqs, &cost, &tin, &tout)
+		byModel = append(byModel, map[string]interface{}{
+			"model_id": modelID, "provider_name": providerName,
+			"req_count": reqs, "cost_usd": cost,
+			"tokens_in": tin, "tokens_out": tout,
+		})
+	}
+	if byModel == nil {
+		byModel = []map[string]interface{}{}
+	}
+
+	writeJSON(w, map[string]interface{}{
+		"summary":     summary,
+		"by_provider": byProvider,
+		"by_model":    byModel,
+	})
+}
+
+// ── GET /api/logs/export?format=csv|json ────────────────────
+
+func logExport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		writeError(w, 405, "method not allowed")
+		return
+	}
+	format := r.URL.Query().Get("format")
+	if format == "" {
+		format = "json"
+	}
+
+	// Reuse same filters as logList
+	var conds []string
+	var args []interface{}
+	if p := r.URL.Query().Get("provider"); p != "" {
+		conds = append(conds, "provider_id = ?")
+		args = append(args, p)
+	}
+	if m := r.URL.Query().Get("model"); m != "" {
+		conds = append(conds, "model_id = ?")
+		args = append(args, m)
+	}
+	if s := r.URL.Query().Get("status"); s != "" {
+		if s == "success" {
+			conds = append(conds, "status_code = 200")
+		} else if s == "error" {
+			conds = append(conds, "(status_code IS NULL OR status_code != 200)")
+		}
+	}
+	if from := r.URL.Query().Get("from"); from != "" {
+		conds = append(conds, "timestamp >= ?")
+		args = append(args, from)
+	}
+	if to := r.URL.Query().Get("to"); to != "" {
+		conds = append(conds, "timestamp <= ?")
+		args = append(args, to)
+	}
+	if search := r.URL.Query().Get("search"); search != "" {
+		conds = append(conds, "(provider_name LIKE ? OR model_id LIKE ? OR key_name LIKE ? OR error LIKE ?)")
+		like := "%" + search + "%"
+		args = append(args, like, like, like, like)
+	}
+
+	where := ""
+	if len(conds) > 0 {
+		where = " WHERE " + strings.Join(conds, " AND ")
+	}
+
+	rows, err := db.DB.Query(`SELECT id, timestamp, COALESCE(provider_id,''), COALESCE(provider_name,''),
+		COALESCE(model_id,''), COALESCE(key_name,''), COALESCE(group_name,''),
+		status_code, COALESCE(race_status,''),
+		tokens_in, tokens_out, latency_ms, cost_usd,
+		COALESCE(compression_ratio,0), COALESCE(skills_used,'[]'),
+		COALESCE(error,''), COALESCE(proxy_used,'')
+		FROM logs`+where+" ORDER BY timestamp DESC", args...)
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	defer rows.Close()
+
+	type logRow struct {
+		ID               int
+		Timestamp        string
+		ProviderID       string
+		ProviderName     string
+		ModelID          string
+		KeyName          string
+		GroupName        string
+		StatusCode       *int
+		RaceStatus       string
+		TokensIn         int
+		TokensOut        int
+		LatencyMs        int
+		CostUSD          float64
+		CompressionRatio float64
+		SkillsUsed       string
+		Error            string
+		ProxyUsed        string
+	}
+
+	var data []logRow
+	for rows.Next() {
+		var row logRow
+		rows.Scan(&row.ID, &row.Timestamp, &row.ProviderID, &row.ProviderName,
+			&row.ModelID, &row.KeyName, &row.GroupName,
+			&row.StatusCode, &row.RaceStatus,
+			&row.TokensIn, &row.TokensOut, &row.LatencyMs, &row.CostUSD,
+			&row.CompressionRatio, &row.SkillsUsed,
+			&row.Error, &row.ProxyUsed)
+		data = append(data, row)
+	}
+
+	if format == "csv" {
+		w.Header().Set("Content-Type", "text/csv")
+		w.Header().Set("Content-Disposition", "attachment; filename=\"paap-logs-export.csv\"")
+		writer := csv.NewWriter(w)
+		writer.Write([]string{
+			"id", "timestamp", "provider_id", "provider_name", "model_id",
+			"key_name", "group_name", "status_code", "race_status",
+			"tokens_in", "tokens_out", "latency_ms", "cost_usd",
+			"compression_ratio", "skills_used", "error", "proxy_used",
+		})
+		for _, row := range data {
+			statusStr := ""
+			if row.StatusCode != nil {
+				statusStr = strconv.Itoa(*row.StatusCode)
+			}
+			writer.Write([]string{
+				strconv.Itoa(row.ID), row.Timestamp, row.ProviderID, row.ProviderName,
+				row.ModelID, row.KeyName, row.GroupName,
+				statusStr, row.RaceStatus,
+				strconv.Itoa(row.TokensIn), strconv.Itoa(row.TokensOut),
+				strconv.Itoa(row.LatencyMs), fmt.Sprintf("%.6f", row.CostUSD),
+				fmt.Sprintf("%.2f", row.CompressionRatio), row.SkillsUsed,
+				row.Error, row.ProxyUsed,
+			})
+		}
+		writer.Flush()
+		return
+	}
+
+	// Default: JSON
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", "attachment; filename=\"paap-logs-export.json\"")
+	var list []map[string]interface{}
+	for _, row := range data {
+		list = append(list, map[string]interface{}{
+			"id": row.ID, "timestamp": row.Timestamp,
+			"provider_id": row.ProviderID, "provider_name": row.ProviderName,
+			"model_id": row.ModelID, "key_name": row.KeyName,
+			"group_name": row.GroupName,
+			"status_code": row.StatusCode, "race_status": row.RaceStatus,
+			"tokens_in": row.TokensIn, "tokens_out": row.TokensOut,
+			"latency_ms": row.LatencyMs, "cost_usd": row.CostUSD,
+			"compression_ratio": row.CompressionRatio, "skills_used": row.SkillsUsed,
+			"error": row.Error, "proxy_used": row.ProxyUsed,
+		})
+	}
+	if list == nil {
+		list = []map[string]interface{}{}
+	}
+	json.NewEncoder(w).Encode(list)
+}
+
+// ── Model pricing (per 1M tokens) ───────────────────────────
+
+var modelPricing = map[string][2]float64{
+	// Xiaomi
+	"mimo-v2.5":     {0.14, 0.28},
+	"mimo-v2.5-pro": {0.435, 0.87},
+	// DeepSeek
+	"deepseek-v4-flash": {0.14, 0.28},
+	"deepseek-v4-pro":   {0.435, 0.87},
+	// Kimchi
+	"minimax-m3": {0.51, 2.04},
+	// Google AI Studio
+	"gemini-2.5-flash": {0.15, 0.60},
+	"gemini-2.5-pro":   {1.25, 10.00},
+	// Meta Model API — Muse Spark 1.1
+	"muse-spark-1.1": {1.25, 4.25},
+	// TokenGO models (per 1M tokens)
+	"deepseek/deepseek-v4-flash": {0.098, 0.196},
+	"deepseek/deepseek-v4-pro":   {0.435, 0.87},
+	"moonshotai/kimi-k2.6":       {0.61, 3.07},
+	"z-ai/glm-5.1":               {0.88, 2.80},
+	"deepseek/deepseek-v3.1":     {0.19, 0.71},
+	"deepseek/deepseek-v3.2":     {0.217, 0.326},
+	"minimax/minimax-m2.5":       {0.14, 0.81},
+	"qwen/qwen3.5-397b-a17b":    {0.40, 2.65},
+	"z-ai/glm-5":                 {0.48, 1.54},
+	"z-ai/glm-5.2":               {1.26, 3.96},
+}
+
+func calculateCost(modelID string, tokensIn, tokensOut int) float64 {
+	if pricing, ok := modelPricing[modelID]; ok {
+		return (float64(tokensIn)/1_000_000)*pricing[0] + (float64(tokensOut)/1_000_000)*pricing[1]
+	}
+	lower := strings.ToLower(modelID)
+	if strings.Contains(lower, "muse-spark") || strings.Contains(lower, "muse") || (strings.Contains(lower, "llama") && strings.Contains(lower, "meta")) {
+		return (float64(tokensIn)/1_000_000)*1.25 + (float64(tokensOut)/1_000_000)*4.25
+	}
+	if strings.HasSuffix(modelID, ":free") {
+		return 0
+	}
+	if strings.HasPrefix(modelID, "@cf/") {
+		return 0
+	}
+	if strings.Contains(lower, "pro") || strings.Contains(lower, "opus") || strings.Contains(lower, "ultra") {
+		return (float64(tokensIn)/1_000_000)*1.0 + (float64(tokensOut)/1_000_000)*3.0
+	}
+	return (float64(tokensIn)/1_000_000)*0.14 + (float64(tokensOut)/1_000_000)*0.28
+}
+
+// ── Log writer — inserts log + updates usage_stats + cost_summary
+
+func logProxyRequest(providerID, providerName, modelID, keyID, keyName, groupName, proxyUsed string, statusCode, tokensIn, tokensOut int, latencyMs int64, errMsg string) {
+	cost := calculateCost(modelID, tokensIn, tokensOut)
+
+	// Log to file for debugging
+	LogResponse(statusCode, latencyMs, tokensIn, tokensOut, providerName, keyName, "", errMsg, 0)
+
+	// Insert into logs
+	_, err := db.DB.Exec(`INSERT INTO logs
+		(provider_id, provider_name, model_id, key_id, key_name, group_name, framework, status_code, tokens_in, tokens_out, latency_ms, cost_usd, error, proxy_used)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		providerID, providerName, modelID, keyID, keyName, groupName, "openai", statusCode, tokensIn, tokensOut, latencyMs, cost, errMsg, proxyUsed)
+	if err != nil {
+		log.Printf("Failed to log request: %v", err)
+	}
+
+	// Auto-clear: keep only newest 1000 logs (cost_summary untouched)
+	var count int
+	db.DB.QueryRow("SELECT COUNT(*) FROM logs").Scan(&count)
+	if count > 1000 {
+		db.DB.Exec(`DELETE FROM logs WHERE id NOT IN (SELECT id FROM logs ORDER BY created_at DESC LIMIT 1000)`)
+		log.Printf("[PAAP] Auto-cleared logs: %d → 1000", count)
+	}
+
+	// Update usage_stats (existing — survives log clear)
+	isSuccess := 0
+	if statusCode == 200 {
+		isSuccess = 1
+	}
+	isError := 0
+	if errMsg != "" || (statusCode != 0 && statusCode != 200) {
+		isError = 1
+	}
+	today := time.Now().UTC().Format("2006-01-02")
+	db.DB.Exec(`INSERT INTO usage_stats (date, provider_id, provider_name, model_id, request_count, success_count, error_count, tokens_in, tokens_out, total_cost_usd, avg_latency_ms)
+		VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(date, provider_id, model_id) DO UPDATE SET
+			request_count = request_count + 1,
+			success_count = success_count + excluded.success_count,
+			error_count = error_count + excluded.error_count,
+			tokens_in = tokens_in + excluded.tokens_in,
+			tokens_out = tokens_out + excluded.tokens_out,
+			total_cost_usd = total_cost_usd + excluded.total_cost_usd,
+			avg_latency_ms = (avg_latency_ms * request_count + excluded.avg_latency_ms) / (request_count + 1)`,
+		today, providerID, providerName, modelID, isSuccess, isError, tokensIn, tokensOut, cost, latencyMs)
+
+	// Update cost_summary (survives log clear — separate from logs table)
+	tx, txErr := db.DB.Begin()
+	if txErr != nil {
+		log.Printf("Failed to begin cost_summary tx: %v", txErr)
+		return
+	}
+	var existing int
+	tx.QueryRow("SELECT COUNT(*) FROM cost_summary WHERE date=? AND provider_id=? AND model_id=?",
+		today, providerID, modelID).Scan(&existing)
+	if existing > 0 {
+		tx.Exec(`UPDATE cost_summary SET
+			req_count = req_count + 1,
+			total_cost_usd = total_cost_usd + ?,
+			total_tokens_in = total_tokens_in + ?,
+			total_tokens_out = total_tokens_out + ?
+			WHERE date = ? AND provider_id = ? AND model_id = ?`,
+			cost, tokensIn, tokensOut, today, providerID, modelID)
+	} else {
+		tx.Exec(`INSERT INTO cost_summary (id, date, provider_id, provider_name, model_id, req_count, total_cost_usd, total_tokens_in, total_tokens_out)
+			VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)`,
+			genID(), today, providerID, providerName, modelID, cost, tokensIn, tokensOut)
+	}
+	if err := tx.Commit(); err != nil {
+		log.Printf("Failed to update cost_summary: %v", err)
+	}
+}
+
+// ── Race task logger ────────────────────────────────────────
+
+func logRaceTask(raceID, groupName string, totalModels, totalTasks int, provider, model, keyName, status string, tokensIn, tokensOut int, latencyMs int64, proxyUsed, errMsg string) {
+	// Determine status_code: 200 for winner, 0 for cancelled/error
+	statusCode := 0
+	if status == "winner" || status == "completed" {
+		statusCode = 200
+	}
+	_, dbErr := db.DB.Exec(`INSERT INTO logs
+		(provider_id, provider_name, model_id, key_id, key_name, group_name, framework, status_code, race_status, race_id, tokens_in, tokens_out, latency_ms, cost_usd, error, proxy_used)
+		VALUES (?, ?, ?, '', ?, ?, 'race', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		provider, provider, model, keyName, groupName, statusCode, status, raceID, tokensIn, tokensOut, latencyMs, calculateCost(model, tokensIn, tokensOut), errMsg, proxyUsed)
+	if dbErr != nil {
+		log.Printf("Failed to log race task: %v", dbErr)
+	}
+}
+
+// ── modelList: /v1/models (OpenAI-compatible) ───────────────
+
+func modelList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		writeError(w, 405, "method not allowed")
+		return
+	}
+	var models []map[string]interface{}
+
+	// 1) Groups as virtual models
+	gRows, err := db.DB.Query("SELECT name FROM groups ORDER BY name")
+	if err == nil {
+		defer gRows.Close()
+		for gRows.Next() {
+			var gName string
+			gRows.Scan(&gName)
+			models = append(models, map[string]interface{}{
+				"id": gName, "object": "model", "owned_by": "paap",
+			})
+		}
+	}
+
+	// 2) Individual selected models from providers
+	mRows, err := db.DB.Query("SELECT m.id, m.model_id, p.id as provider_id, p.name as provider_name FROM models m JOIN providers p ON m.provider_id=p.id WHERE m.is_selected=1 AND p.is_active=1 ORDER BY p.name, m.model_id")
+	if err == nil {
+		defer mRows.Close()
+		for mRows.Next() {
+			var id, modelID, providerID, providerName string
+			mRows.Scan(&id, &modelID, &providerID, &providerName)
+			displayID := modelID
+			if strings.HasPrefix(id, "claude-") {
+				displayID = id
+			}
+			slug := strings.ToLower(providerName)
+			slug = strings.ReplaceAll(slug, " ", "-")
+			slug = strings.ReplaceAll(slug, "_", "-")
+			fqModelID := slug + "/" + displayID
+			models = append(models, map[string]interface{}{
+				"id": fqModelID, "object": "model", "owned_by": strings.ToLower(providerName),
+			})
+		}
+	}
+
+	if models == nil {
+		models = []map[string]interface{}{}
+	}
+	writeJSON(w, map[string]interface{}{
+		"object": "list",
+		"data":   models,
+	})
+}
+
+// ── modelListDB: /api/models ────────────────────────────────
+
+func modelListDB(w http.ResponseWriter, r *http.Request) {
+	providerID := r.URL.Query().Get("provider_id")
+	var rows *sql.Rows
+	var err error
+	if providerID != "" {
+		rows, err = db.DB.Query("SELECT m.id, m.model_id, m.provider_id, p.name as provider_name FROM models m JOIN providers p ON m.provider_id=p.id WHERE m.provider_id=? ORDER BY m.model_id", providerID)
+	} else {
+		rows, err = db.DB.Query("SELECT m.id, m.model_id, m.provider_id, p.name as provider_name FROM models m JOIN providers p ON m.provider_id=p.id WHERE m.is_selected=1 ORDER BY p.name, m.model_id")
+	}
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	defer rows.Close()
+	var list []map[string]interface{}
+	for rows.Next() {
+		var id, modelID, pID, pName string
+		rows.Scan(&id, &modelID, &pID, &pName)
+		list = append(list, map[string]interface{}{
+			"id": id, "model_id": modelID, "provider_id": pID, "provider_name": pName,
+		})
+	}
+	if list == nil {
+		list = []map[string]interface{}{}
+	}
+	writeJSON(w, list)
+}
+
+// ── usageSummary: /api/usage/summary ────────────────────────
+
+func usageSummary(w http.ResponseWriter, r *http.Request) {
+	from := r.URL.Query().Get("from")
+	to := r.URL.Query().Get("to")
+	groupBy := r.URL.Query().Get("group_by")
+
+	query := `SELECT date, provider_name, model_id, request_count, success_count, error_count,
+		tokens_in, tokens_out, total_cost_usd, avg_latency_ms FROM usage_stats`
+	var args []interface{}
+	var conds []string
+
+	if from != "" {
+		conds = append(conds, "date >= ?")
+		args = append(args, from)
+	}
+	if to != "" {
+		conds = append(conds, "date <= ?")
+		args = append(args, to)
+	}
+	if len(conds) > 0 {
+		query += " WHERE " + strings.Join(conds, " AND ")
+	}
+
+	switch groupBy {
+	case "provider":
+		query = `SELECT provider_name, '' as model_id, SUM(request_count), SUM(success_count), SUM(error_count),
+			SUM(tokens_in), SUM(tokens_out), SUM(total_cost_usd), AVG(avg_latency_ms) FROM usage_stats`
+		if len(conds) > 0 {
+			query += " WHERE " + strings.Join(conds, " AND ")
+		}
+		query += " GROUP BY provider_name ORDER BY SUM(total_cost_usd) DESC"
+	case "model":
+		query = `SELECT provider_name, model_id, SUM(request_count), SUM(success_count), SUM(error_count),
+			SUM(tokens_in), SUM(tokens_out), SUM(total_cost_usd), AVG(avg_latency_ms) FROM usage_stats`
+		if len(conds) > 0 {
+			query += " WHERE " + strings.Join(conds, " AND ")
+		}
+		query += " GROUP BY provider_name, model_id ORDER BY SUM(total_cost_usd) DESC"
+	default:
+		query += " ORDER BY date DESC, total_cost_usd DESC"
+	}
+
+	rows, err := db.DB.Query(query, args...)
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	defer rows.Close()
+
+	var list []map[string]interface{}
+	var totalReqs, totalSuccess, totalErrors, totalIn, totalOut int
+	var totalCost float64
+
+	for rows.Next() {
+		var date, providerName, modelID string
+		var reqs, success, errors, tin, tout, avgLatency int
+		var cost float64
+		rows.Scan(&date, &providerName, &modelID, &reqs, &success, &errors, &tin, &tout, &cost, &avgLatency)
+		list = append(list, map[string]interface{}{
+			"date": date, "provider_name": providerName, "model_id": modelID,
+			"request_count": reqs, "success_count": success, "error_count": errors,
+			"tokens_in": tin, "tokens_out": tout, "total_cost_usd": cost, "avg_latency_ms": avgLatency,
+		})
+		totalReqs += reqs
+		totalSuccess += success
+		totalErrors += errors
+		totalIn += tin
+		totalOut += tout
+		totalCost += cost
+	}
+	if list == nil {
+		list = []map[string]interface{}{}
+	}
+	writeJSON(w, map[string]interface{}{
+		"entries": list,
+		"totals": map[string]interface{}{
+			"request_count": totalReqs, "success_count": totalSuccess,
+			"error_count": totalErrors, "tokens_in": totalIn, "tokens_out": totalOut,
+			"total_cost_usd": totalCost,
+		},
+	})
+}
