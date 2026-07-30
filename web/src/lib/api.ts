@@ -340,7 +340,7 @@ export const api = {
     }),
 
   deleteGroup: (id: string) =>
-    fetch(`/api/groups/${id}`, { method: "POST" }),
+    fetch(`/api/groups/${id}`, { method: "DELETE" }),
 
   addGroupModel: (groupId: string, payload: { provider_id: string; model_id: string }) =>
     fetchApi<GroupModel>(`/api/groups/${groupId}/models`, {
