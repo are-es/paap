@@ -2,7 +2,7 @@
 set -e
 
 # PAAP — Pangkalan API Installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/are-es/paap/main/install.sh | sh
+# Usage: curl -fsSL https://raw.githubusercontent.com/are-es/paap/master/install.sh | sh
 
 REPO="https://github.com/are-es/paap.git"
 INSTALL_DIR="$HOME/.paap"
