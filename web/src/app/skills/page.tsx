@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import * as React from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type SettingsData } from "@/lib/api";
 import { Zap, Save, Gauge } from "lucide-react";
@@ -85,30 +86,51 @@ export default function SkillsPage() {
     refetchInterval: headroomEnabled ? 10_000 : false,
   });
 
-  if (settingsQuery.data && !injectionLoaded) {
+  // Sync local form state from server whenever settings are (re)fetched.
+  // Previously this was guarded by !injectionLoaded, so toggles that wrote to
+  // the server and then invalidated the query would never re-sync, making it
+  // look like the toggle "bounced back" on refresh.
+  const prevSettingsRef = React.useRef<string>("");
+  if (settingsQuery.data) {
     const d = settingsQuery.data as SettingsData;
-    if (d.prompt_injection_enabled !== undefined) {
-      setInjectionEnabled(Boolean(d.prompt_injection_enabled));
+    const sig = JSON.stringify({
+      en: d.prompt_injection_enabled,
+      txt: d.prompt_injection_text,
+      pos: d.prompt_injection_position,
+      mode: d.compression_mode,
+    });
+    if (sig !== prevSettingsRef.current) {
+      prevSettingsRef.current = sig;
+      if (d.prompt_injection_enabled !== undefined) {
+        const v = d.prompt_injection_enabled;
+        setInjectionEnabled(v === true || String(v) === "true");
+      }
+      if (d.prompt_injection_text !== undefined) {
+        setInjectionText(String(d.prompt_injection_text || ""));
+      }
+      if (d.prompt_injection_position !== undefined) {
+        setInjectionPosition((d.prompt_injection_position as "prepend" | "append") || "prepend");
+      }
+      if (d.compression_mode) {
+        setActiveModes(parseModes(String(d.compression_mode)));
+      }
+      setInjectionLoaded(true);
     }
-    if (d.prompt_injection_text !== undefined) {
-      setInjectionText(String(d.prompt_injection_text || ""));
-    }
-    if (d.prompt_injection_position !== undefined) {
-      setInjectionPosition((d.prompt_injection_position as "prepend" | "append") || "prepend");
-    }
-    if (d.compression_mode) {
-      setActiveModes(parseModes(String(d.compression_mode)));
-    }
-    setInjectionLoaded(true);
   }
 
-  const saveInjection = async () => {
+  const saveInjection = async (nextEnabled?: boolean, nextText?: string, nextPos?: "prepend" | "append") => {
     await api.updateSettings({
-      prompt_injection_enabled: injectionEnabled,
-      prompt_injection_text: injectionText,
-      prompt_injection_position: injectionPosition,
+      prompt_injection_enabled: nextEnabled ?? injectionEnabled,
+      prompt_injection_text: nextText ?? injectionText,
+      prompt_injection_position: nextPos ?? injectionPosition,
     });
     queryClient.invalidateQueries({ queryKey: ["settings"] });
+  };
+
+  const toggleInjection = async () => {
+    const next = !injectionEnabled;
+    setInjectionEnabled(next);
+    await saveInjection(next);
   };
 
   const toggleMode = async (modeId: string) => {
@@ -146,7 +168,7 @@ export default function SkillsPage() {
 
       <div className="space-y-4">
         {/* SYSTEM PROMPT */}
-        <div className="bg-card border border-border rounded-lg p-4">
+        <div className="bg-primary/[0.04] border border-primary/15 rounded-lg p-4">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-sm font-medium">System Prompt</h2>
             <div className="flex items-center gap-3">
@@ -159,7 +181,7 @@ export default function SkillsPage() {
                 <option value="append">Append</option>
               </select>
               <button
-                onClick={() => setInjectionEnabled(!injectionEnabled)}
+                onClick={toggleInjection}
                 className={cn(
                   "w-9 h-5 rounded-full relative transition-colors",
                   injectionEnabled ? "bg-green-500" : "bg-foreground/15"
@@ -189,7 +211,7 @@ export default function SkillsPage() {
 
           <div className="flex justify-end">
             <button
-              onClick={saveInjection}
+              onClick={() => saveInjection()}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded border border-primary/20 text-primary bg-primary/5 hover:bg-primary/10 transition-colors font-medium"
             >
               <Save className="w-3 h-3" />
@@ -199,7 +221,7 @@ export default function SkillsPage() {
         </div>
 
         {/* COMPRESSION MODE */}
-        <div className="bg-card border border-border rounded-lg p-4">
+        <div className="bg-primary/[0.04] border border-primary/15 rounded-lg p-4">
           <div className="flex items-center gap-2 mb-4">
             <Zap className="w-4 h-4 text-muted-foreground" />
             <span className="text-sm font-medium">Compression Mode</span>
@@ -270,7 +292,7 @@ export default function SkillsPage() {
         </div>
 
         {/* HEADROOM */}
-        <div className="bg-card border border-border rounded-lg p-4">
+        <div className="bg-primary/[0.04] border border-primary/15 rounded-lg p-4">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <Gauge className="w-4 h-4 text-muted-foreground" />
@@ -311,9 +333,18 @@ export default function SkillsPage() {
                     <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
                     {headroomQuery.data.hint}
                   </span>
-                  <pre className="px-2.5 py-1.5 text-[11px] rounded border border-input bg-muted/50 font-mono overflow-x-auto">
-                    {headroomQuery.data.command}
-                  </pre>
+                  <div className="flex items-center gap-2">
+                    <pre className="flex-1 px-2.5 py-1.5 text-[11px] rounded border border-input bg-muted/50 font-mono overflow-x-auto">
+                      {headroomQuery.data.command}
+                    </pre>
+                    <button
+                      onClick={() => navigator.clipboard.writeText(headroomQuery.data?.command || "")}
+                      className="shrink-0 inline-flex items-center justify-center w-7 h-7 rounded border border-border bg-background hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                      title="Copy command"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v3"/></svg>
+                    </button>
+                  </div>
                   <p className="text-[10px] text-muted-foreground">
                     Jalankan di terminal. PAAP mendeteksi sendiri dalam ~30 detik, tanpa restart.
                   </p>

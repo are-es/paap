@@ -18,38 +18,12 @@ interface NodeLayout {
   angle: number;
 }
 
-interface Star {
-  x: number;
-  y: number;
-  r: number;
-  baseAlpha: number;
-  speed: number;
-  phase: number;
-  color: string;
-}
-
-interface Nebula {
-  x: number;
-  y: number;
-  r: number;
-  color: string;
-}
-
-const STAR_COLORS = [
-  "#ffffff", "#ffffff", "#ffffff",
-  "#e8eaff", "#c8d4ff", "#a8c0ff",
-  "#b0f0ff", "#80dfff", "#60d0f0",
-  "#ffe8c0", "#ffd090", "#ffc070",
-];
-
 const NEON_CYAN = "#22d3ee";
-const NEON_MAGENTA = "#e879f9";
-const NEON_PURPLE = "#a78bfa";
 
 const ICON_SIZE = 48;
 const ICON_SIZE_SM = 40;
 const ICON_SIZE_MIN = 22;
-const RING_PADDING = 28; // clears the outer ping halo (inset -12) + edge breathing room
+const RING_PADDING = 28;
 const CURVE_OFFSET = 50;
 
 function providerColor(provider: Provider): string {
@@ -73,41 +47,6 @@ function getRings(count: number): { r: number; max: number }[] {
   return [{ r: 140, max: 5 }, { r: 240, max: 6 }, { r: 340, max: 8 }];
 }
 
-function generateStars(w: number, h: number): Star[] {
-  const stars: Star[] = [];
-  for (let i = 0; i < 200; i++) {
-    stars.push({
-      x: Math.random() * w,
-      y: Math.random() * h,
-      r: 0.5 + Math.random() * 2,
-      baseAlpha: 0.2 + Math.random() * 0.6,
-      speed: 0.5 + Math.random() * 2,
-      phase: Math.random() * Math.PI * 2,
-      color: STAR_COLORS[Math.floor(Math.random() * STAR_COLORS.length)],
-    });
-  }
-  for (let i = 0; i < 4; i++) {
-    stars.push({
-      x: Math.random() * w,
-      y: Math.random() * h,
-      r: 2.5 + Math.random() * 1.5,
-      baseAlpha: 0.6 + Math.random() * 0.3,
-      speed: 0.3 + Math.random() * 0.5,
-      phase: Math.random() * Math.PI * 2,
-      color: "#ffffff",
-    });
-  }
-  return stars;
-}
-
-function generateNebulae(w: number, h: number): Nebula[] {
-  return [
-    { x: w * 0.2, y: h * 0.3, r: Math.min(w, h) * 0.25, color: NEON_CYAN },
-    { x: w * 0.75, y: h * 0.65, r: Math.min(w, h) * 0.2, color: NEON_MAGENTA },
-    { x: w * 0.5, y: h * 0.15, r: Math.min(w, h) * 0.18, color: NEON_PURPLE },
-  ];
-}
-
 function curvedPath(nx: number, ny: number, cx: number, cy: number, seed: number): string {
   const mx = (nx + cx) / 2;
   const my = (ny + cy) / 2;
@@ -125,19 +64,10 @@ function curvedPath(nx: number, ny: number, cx: number, cy: number, seed: number
 
 export function ProviderTopology({ providers }: ProviderTopologyProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const animRef = useRef<number>(0);
-  const starsRef = useRef<Star[]>([]);
-  const nebulaeRef = useRef<Nebula[]>([]);
   const [activeProviders, setActiveProviders] = useState<Set<string>>(new Set());
-  const activeProvidersRef = useRef<Set<string>>(new Set());
   const [tooltip, setTooltip] = useState<{ name: string; keys: number; status: string; x: number; y: number } | null>(null);
   const [dims, setDims] = useState({ w: 900, h: 620 });
   const [tick, setTick] = useState(0);
-
-  useEffect(() => {
-    activeProvidersRef.current = activeProviders;
-  }, [activeProviders]);
 
   useEffect(() => {
     const id = setInterval(() => setTick((t) => t + 1), 50);
@@ -180,71 +110,6 @@ export function ProviderTopology({ providers }: ProviderTopologyProps) {
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = dims.w * dpr;
-    canvas.height = dims.h * dpr;
-    canvas.style.width = `${dims.w}px`;
-    canvas.style.height = `${dims.h}px`;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-    starsRef.current = generateStars(dims.w, dims.h);
-    nebulaeRef.current = generateNebulae(dims.w, dims.h);
-
-    let lastTime = 0;
-    const interval = 1000 / 30;
-
-    const draw = (time: number) => {
-      animRef.current = requestAnimationFrame(draw);
-      const delta = time - lastTime;
-      if (delta < interval) return;
-      lastTime = time - (delta % interval);
-
-      ctx.clearRect(0, 0, dims.w, dims.h);
-
-      const canvasBg = "#0a0715";
-      ctx.fillStyle = canvasBg;
-      ctx.fillRect(0, 0, dims.w, dims.h);
-
-      for (const neb of nebulaeRef.current) {
-        const grad = ctx.createRadialGradient(neb.x, neb.y, 0, neb.x, neb.y, neb.r);
-        grad.addColorStop(0, neb.color + "18");
-        grad.addColorStop(0.5, neb.color + "08");
-        grad.addColorStop(1, "transparent");
-        ctx.fillStyle = grad;
-        ctx.fillRect(neb.x - neb.r, neb.y - neb.r, neb.r * 2, neb.r * 2);
-      }
-
-      const t = time / 1000;
-      for (const star of starsRef.current) {
-        const alpha = star.baseAlpha * (0.5 + 0.5 * Math.sin(t * star.speed + star.phase));
-        ctx.beginPath();
-        ctx.arc(star.x, star.y, star.r, 0, Math.PI * 2);
-        ctx.fillStyle = star.color;
-        ctx.globalAlpha = alpha;
-        ctx.fill();
-
-        if (star.r > 2.5) {
-          const glow = ctx.createRadialGradient(star.x, star.y, 0, star.x, star.y, star.r * 4);
-          glow.addColorStop(0, star.color + "40");
-          glow.addColorStop(1, "transparent");
-          ctx.fillStyle = glow;
-          ctx.globalAlpha = alpha * 0.5;
-          ctx.fillRect(star.x - star.r * 4, star.y - star.r * 4, star.r * 8, star.r * 8);
-        }
-      }
-      ctx.globalAlpha = 1;
-    };
-
-    animRef.current = requestAnimationFrame(draw);
-    return () => cancelAnimationFrame(animRef.current);
-  }, [dims.w, dims.h]);
 
   const onlineProviders = providers.filter((p) => p.status !== "offline");
   const rawRings = useMemo(() => getRings(onlineProviders.length), [onlineProviders.length]);
@@ -310,14 +175,17 @@ export function ProviderTopology({ providers }: ProviderTopologyProps) {
 
       <div
         ref={containerRef}
-        className="rounded-2xl border border-white/5 min-h-[480px] relative overflow-hidden"
-        style={{ background: "#0a0715" }}
+        className="rounded-2xl border border-border bg-background min-h-[480px] relative overflow-hidden"
+        style={{
+          backgroundImage: `
+            linear-gradient(var(--border) 1px, transparent 1px),
+            linear-gradient(90deg, var(--border) 1px, transparent 1px)
+          `,
+          backgroundSize: "28px 28px",
+        }}
       >
-        <canvas
-          ref={canvasRef}
-          className="absolute inset-0 w-full h-full z-0"
-          style={{ pointerEvents: "none" }}
-        />
+        {/* radial fade to center — keeps orbit nodes in focus */}
+        <div className="absolute inset-0 pointer-events-none bg-background/80" style={{ maskImage: "radial-gradient(ellipse at center, transparent 30%, black 75%)", WebkitMaskImage: "radial-gradient(ellipse at center, transparent 30%, black 75%)" }} />
 
         <svg className="absolute inset-0 w-full h-full pointer-events-none z-[1]">
           <defs>

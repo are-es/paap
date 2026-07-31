@@ -2,8 +2,8 @@ package main
 
 import (
 	"bufio"
-	"crypto/rand"
 	"bytes"
+	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
@@ -12,6 +12,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -68,9 +69,15 @@ func getProviderProxy(providerID string) string {
 			return ""
 		}
 		defer rows.Close()
-		var proxies []struct{ addr, proxyType string; port int }
+		var proxies []struct {
+			addr, proxyType string
+			port            int
+		}
 		for rows.Next() {
-			var p struct{ addr, proxyType string; port int }
+			var p struct {
+				addr, proxyType string
+				port            int
+			}
 			rows.Scan(&p.addr, &p.port, &p.proxyType)
 			proxies = append(proxies, p)
 		}
@@ -97,9 +104,15 @@ func getProviderProxy(providerID string) string {
 	`)
 	if err == nil {
 		defer rows.Close()
-		var proxies []struct{ addr, proxyType string; port int }
+		var proxies []struct {
+			addr, proxyType string
+			port            int
+		}
 		for rows.Next() {
-			var p struct{ addr, proxyType string; port int }
+			var p struct {
+				addr, proxyType string
+				port            int
+			}
 			rows.Scan(&p.addr, &p.port, &p.proxyType)
 			proxies = append(proxies, p)
 		}
@@ -188,15 +201,20 @@ func providerList(w http.ResponseWriter, r *http.Request) {
 			"id": id, "name": name, "base_url": baseURL, "icon": icon,
 			"is_active": isActive == 1, "round_robin": roundRobin == 1,
 			"proxy_id": proxyID, "proxy_enabled": proxyEnabled == 1,
-			"created_at": createdAt,
+			"created_at":    createdAt,
 			"provider_type": providerType, "auth_type": authType,
-			"builtin_id": builtinID,
+			"builtin_id":          builtinID,
 			"round_robin_enabled": roundRobinEnabled == 1,
-			"supports_anthropic": supportsAnthropic == 1,
-			"key_count":        totalKeys,
-			"active_key_count": activeKeys,
-			"model_count":      modelCount,
-			"status":           func() string { if isActive == 1 && activeKeys > 0 { return "online" }; return "offline" }(),
+			"supports_anthropic":  supportsAnthropic == 1,
+			"key_count":           totalKeys,
+			"active_key_count":    activeKeys,
+			"model_count":         modelCount,
+			"status": func() string {
+				if isActive == 1 && activeKeys > 0 {
+					return "online"
+				}
+				return "offline"
+			}(),
 		})
 	}
 	if list == nil {
@@ -290,15 +308,16 @@ func providerRoutes(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if _, ok := rawBody["keys"]; ok {
-				// Bulk add: { keys: ["key1", "key2", ...] }
+				// Bulk add: { keys: ["key1", "key2", ...], names?: [...] }
 				var keysBody struct {
-					Keys []string `json:"keys"`
+					Keys  []string `json:"keys"`
+					Names []string `json:"names"`
 				}
-				if err := json.Unmarshal(rawBody["keys"], &keysBody.Keys); err != nil {
+				if err := json.Unmarshal(raw, &keysBody); err != nil {
 					writeError(w, 400, "invalid keys array")
 					return
 				}
-				providerKeyBulkAdd(w, r, id, keysBody.Keys)
+				providerKeyBulkAdd(w, r, id, keysBody.Keys, keysBody.Names)
 			} else {
 				// Single add: { key: "..." } — restore body, downstream re-parses it
 				r.Body = io.NopCloser(bytes.NewReader(raw))
@@ -319,7 +338,6 @@ func providerRoutes(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 405, "method not allowed")
 		return
 	}
-
 
 	// /api/providers/:id/keys/enable-all
 	if len(parts) == 3 && parts[1] == "keys" && parts[2] == "enable-all" {
@@ -478,7 +496,9 @@ func providerRoutes(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			v := 0
-			if *body.Enabled { v = 1 }
+			if *body.Enabled {
+				v = 1
+			}
 			_, err := db.DB.Exec("UPDATE providers SET round_robin_enabled=?, updated_at=? WHERE id=?",
 				v, time.Now().UTC().Format(time.RFC3339), id)
 			if err != nil {
@@ -544,13 +564,18 @@ func providerGet(w http.ResponseWriter, r *http.Request, id string) {
 		"id": id, "name": name, "base_url": baseURL, "icon": icon,
 		"is_active": isActive == 1, "round_robin": roundRobin == 1,
 		"proxy_id": proxyID, "proxy_enabled": proxyEnabled == 1,
-		"created_at": createdAt,
+		"created_at":    createdAt,
 		"provider_type": providerType, "auth_type": authType,
-		"builtin_id": builtinID,
+		"builtin_id":          builtinID,
 		"round_robin_enabled": roundRobinEnabled == 1,
-		"key_count":        totalKeys,
-		"active_key_count": activeKeys,
-		"status":           func() string { if isActive == 1 && activeKeys > 0 { return "online" }; return "offline" }(),
+		"key_count":           totalKeys,
+		"active_key_count":    activeKeys,
+		"status": func() string {
+			if isActive == 1 && activeKeys > 0 {
+				return "online"
+			}
+			return "offline"
+		}(),
 	})
 }
 
@@ -583,13 +608,17 @@ func providerUpdate(w http.ResponseWriter, r *http.Request, id string) {
 	}
 	if body.IsActive != nil {
 		v := 0
-		if *body.IsActive { v = 1 }
+		if *body.IsActive {
+			v = 1
+		}
 		sets = append(sets, "is_active=?")
 		args = append(args, v)
 	}
 	if body.RoundRobin != nil {
 		v := 0
-		if *body.RoundRobin { v = 1 }
+		if *body.RoundRobin {
+			v = 1
+		}
 		sets = append(sets, "round_robin=?")
 		args = append(args, v)
 	}
@@ -641,7 +670,9 @@ func providerPatch(w http.ResponseWriter, r *http.Request, id string) {
 	}
 	if body.RoundRobin != nil {
 		v := 0
-		if *body.RoundRobin { v = 1 }
+		if *body.RoundRobin {
+			v = 1
+		}
 		_, err := db.DB.Exec("UPDATE providers SET round_robin=?, updated_at=? WHERE id=?", v, time.Now().UTC().Format(time.RFC3339), id)
 		if err != nil {
 			writeError(w, 500, err.Error())
@@ -653,8 +684,8 @@ func providerPatch(w http.ResponseWriter, r *http.Request, id string) {
 
 func providerPatchProxy(w http.ResponseWriter, r *http.Request, id string) {
 	var body struct {
-		ProxyID     *string `json:"proxy_id"`
-		ProxyEnabled *bool  `json:"proxy_enabled"`
+		ProxyID      *string `json:"proxy_id"`
+		ProxyEnabled *bool   `json:"proxy_enabled"`
 	}
 	if err := parseBody(r, &body); err != nil {
 		writeError(w, 400, "invalid json")
@@ -669,7 +700,9 @@ func providerPatchProxy(w http.ResponseWriter, r *http.Request, id string) {
 	}
 	if body.ProxyEnabled != nil {
 		v := 0
-		if *body.ProxyEnabled { v = 1 }
+		if *body.ProxyEnabled {
+			v = 1
+		}
 		sets = append(sets, "proxy_enabled=?")
 		args = append(args, v)
 	}
@@ -744,132 +777,132 @@ func providerTestPrompt(w http.ResponseWriter, r *http.Request, providerID strin
 	}
 
 	// Check if we got any keys, if not fallback to connections
-	
+
 	var results []map[string]interface{}
 	if rows != nil {
 		for rows.Next() {
-		var keyID, keyName, keyVal, accountID string
-		rows.Scan(&keyID, &keyName, &keyVal, &accountID)
+			var keyID, keyName, keyVal, accountID string
+			rows.Scan(&keyID, &keyName, &keyVal, &accountID)
 
-		// Auto-refresh OAuth key if expired
-		var keyType string
-		db.DB.QueryRow("SELECT COALESCE(key_type,'apikey') FROM api_keys WHERE id=?", keyID).Scan(&keyType)
-		if keyType == "oauth" {
-			var expiresAt string
-			db.DB.QueryRow("SELECT COALESCE(oauth_expires_at,'') FROM api_keys WHERE id=?", keyID).Scan(&expiresAt)
-			if refreshed, err := GetOAuthKeyValue(keyID, keyVal, expiresAt); err == nil {
-				keyVal = refreshed
+			// Auto-refresh OAuth key if expired
+			var keyType string
+			db.DB.QueryRow("SELECT COALESCE(key_type,'apikey') FROM api_keys WHERE id=?", keyID).Scan(&keyType)
+			if keyType == "oauth" {
+				var expiresAt string
+				db.DB.QueryRow("SELECT COALESCE(oauth_expires_at,'') FROM api_keys WHERE id=?", keyID).Scan(&expiresAt)
+				if refreshed, err := GetOAuthKeyValue(keyID, keyVal, expiresAt); err == nil {
+					keyVal = refreshed
+				}
 			}
-		}
 
-		start := time.Now()
-		// Build request — use resolveUpstreamURL for Cloudflare + account_id support
-		upstreamURL := resolveUpstreamURL(baseURL, accountID)
-		isMerlin := strings.Contains(strings.ToLower(baseURL), "getmerlin")
+			start := time.Now()
+			// Build request — use resolveUpstreamURL for Cloudflare + account_id support
+			upstreamURL := resolveUpstreamURL(baseURL, accountID)
+			isMerlin := strings.Contains(strings.ToLower(baseURL), "getmerlin")
 
-		var reqBody []byte
-		if isMerlin {
-			reqBody, _ = json.Marshal(convertToMerlinBody(map[string]interface{}{
-				"messages": []map[string]string{{"role": "user", "content": body.Prompt}},
-			}, body.ModelID))
-		} else {
-			reqBody, _ = json.Marshal(map[string]interface{}{
-				"model":      body.ModelID,
-				"messages":   []map[string]string{{"role": "user", "content": body.Prompt}},
-				"max_tokens": 1000,
-			})
-		}
-
-		req, _ := http.NewRequest("POST", upstreamURL, strings.NewReader(string(reqBody)))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+keyVal)
-		if strings.Contains(baseURL, "kimchi") {
-			req.Header.Set("User-Agent", "kimchi/0.1.50")
-		}
-		if isMerlin {
-			req.Header.Set("x-merlin-version", "web-merlin")
-			req.Header.Set("x-request-timestamp", time.Now().Format("2006-01-02T15:04:05.000-07:00"))
-			req.Header.Set("Accept", "text/event-stream")
-		}
-
-		client := &http.Client{Timeout: 30 * time.Second}
-		proxyUsed := ""
-		if proxyURL := getProviderProxy(providerID); proxyURL != "" {
-			if transport, err := makeProxyTransport(proxyURL); err == nil {
-				client.Transport = transport
-				proxyUsed = proxyURL
-			}
-		}
-		resp, err := client.Do(req)
-		latency := time.Since(start).Milliseconds()
-
-		result := map[string]interface{}{
-			"key_id":     keyID,
-			"key_name":   keyName,
-			"latency_ms": latency,
-			"proxy":      proxyUsed,
-		}
-		if err != nil {
-			result["error"] = err.Error()
-			result["status"] = 0
-		} else {
-			defer resp.Body.Close()
-			buf := new(strings.Builder)
-			io.Copy(buf, resp.Body)
-			raw := buf.String()
-			result["status"] = resp.StatusCode
-
+			var reqBody []byte
 			if isMerlin {
-				// Parse Merlin SSE response
-				var textParts []string
-				currentEvent := ""
-				for _, line := range strings.Split(raw, "\n") {
-					line = strings.TrimSpace(line)
-					if strings.HasPrefix(line, "event:") {
-						currentEvent = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
-						continue
-					}
-					if !strings.HasPrefix(line, "data:") || currentEvent != "message" {
-						continue
-					}
-					dataStr := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-					var data map[string]interface{}
-					if json.Unmarshal([]byte(dataStr), &data) == nil {
-						if msgData, ok := data["data"].(map[string]interface{}); ok {
-							if text, ok := msgData["text"].(string); ok && text != "" {
-								textParts = append(textParts, text)
-							}
-						}
-					}
-				}
-				result["content"] = strings.Join(textParts, "")
-				result["response"] = raw[:min(len(raw), 500)]
+				reqBody, _ = json.Marshal(convertToMerlinBody(map[string]interface{}{
+					"messages": []map[string]string{{"role": "user", "content": body.Prompt}},
+				}, body.ModelID))
 			} else {
-				// Parse OpenAI JSON response
-				var parsed map[string]interface{}
-				if json.Unmarshal([]byte(raw), &parsed) == nil {
-					if choices, ok := parsed["choices"].([]interface{}); ok && len(choices) > 0 {
-						if msg, ok := choices[0].(map[string]interface{}); ok {
-							if m, ok := msg["message"].(map[string]interface{}); ok {
-								result["content"] = m["content"]
-								result["reasoning_content"] = m["reasoning_content"]
-							}
-						}
-					}
-					if usage, ok := parsed["usage"].(map[string]interface{}); ok {
-						result["usage"] = usage
-					}
-				}
-				result["response"] = raw[:min(len(raw), 500)]
+				reqBody, _ = json.Marshal(map[string]interface{}{
+					"model":      body.ModelID,
+					"messages":   []map[string]string{{"role": "user", "content": body.Prompt}},
+					"max_tokens": 1000,
+				})
 			}
 
-			// Auto-disable key on auth failure or payment required
-			if resp.StatusCode != 200 {
-				autoDisableKey(keyID, keyName, resp.StatusCode, "")
+			req, _ := http.NewRequest("POST", upstreamURL, strings.NewReader(string(reqBody)))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer "+keyVal)
+			if strings.Contains(baseURL, "kimchi") {
+				req.Header.Set("User-Agent", "kimchi/0.1.50")
 			}
+			if isMerlin {
+				req.Header.Set("x-merlin-version", "web-merlin")
+				req.Header.Set("x-request-timestamp", time.Now().Format("2006-01-02T15:04:05.000-07:00"))
+				req.Header.Set("Accept", "text/event-stream")
+			}
+
+			client := &http.Client{Timeout: 30 * time.Second}
+			proxyUsed := ""
+			if proxyURL := getProviderProxy(providerID); proxyURL != "" {
+				if transport, err := makeProxyTransport(proxyURL); err == nil {
+					client.Transport = transport
+					proxyUsed = proxyURL
+				}
+			}
+			resp, err := client.Do(req)
+			latency := time.Since(start).Milliseconds()
+
+			result := map[string]interface{}{
+				"key_id":     keyID,
+				"key_name":   keyName,
+				"latency_ms": latency,
+				"proxy":      proxyUsed,
+			}
+			if err != nil {
+				result["error"] = err.Error()
+				result["status"] = 0
+			} else {
+				defer resp.Body.Close()
+				buf := new(strings.Builder)
+				io.Copy(buf, resp.Body)
+				raw := buf.String()
+				result["status"] = resp.StatusCode
+
+				if isMerlin {
+					// Parse Merlin SSE response
+					var textParts []string
+					currentEvent := ""
+					for _, line := range strings.Split(raw, "\n") {
+						line = strings.TrimSpace(line)
+						if strings.HasPrefix(line, "event:") {
+							currentEvent = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+							continue
+						}
+						if !strings.HasPrefix(line, "data:") || currentEvent != "message" {
+							continue
+						}
+						dataStr := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+						var data map[string]interface{}
+						if json.Unmarshal([]byte(dataStr), &data) == nil {
+							if msgData, ok := data["data"].(map[string]interface{}); ok {
+								if text, ok := msgData["text"].(string); ok && text != "" {
+									textParts = append(textParts, text)
+								}
+							}
+						}
+					}
+					result["content"] = strings.Join(textParts, "")
+					result["response"] = raw[:min(len(raw), 500)]
+				} else {
+					// Parse OpenAI JSON response
+					var parsed map[string]interface{}
+					if json.Unmarshal([]byte(raw), &parsed) == nil {
+						if choices, ok := parsed["choices"].([]interface{}); ok && len(choices) > 0 {
+							if msg, ok := choices[0].(map[string]interface{}); ok {
+								if m, ok := msg["message"].(map[string]interface{}); ok {
+									result["content"] = m["content"]
+									result["reasoning_content"] = m["reasoning_content"]
+								}
+							}
+						}
+						if usage, ok := parsed["usage"].(map[string]interface{}); ok {
+							result["usage"] = usage
+						}
+					}
+					result["response"] = raw[:min(len(raw), 500)]
+				}
+
+				// Auto-disable key on auth failure or payment required
+				if resp.StatusCode != 200 {
+					autoDisableKey(keyID, keyName, resp.StatusCode, "")
+				}
+			}
+			results = append(results, result)
 		}
-		results = append(results, result)
-	}
 	} // end if rows != nil
 	if results == nil {
 		results = []map[string]interface{}{}
@@ -1129,10 +1162,10 @@ func providerTestPromptStream(w http.ResponseWriter, r *http.Request, providerID
 
 		// Send meta for this key
 		meta, _ := json.Marshal(map[string]interface{}{
-			"type":     "meta",
-			"key_name": k.name,
-			"key_id":   k.id,
-			"model":    body.ModelID,
+			"type":      "meta",
+			"key_name":  k.name,
+			"key_id":    k.id,
+			"model":     body.ModelID,
 			"key_index": ki,
 			"key_total": len(keys),
 			"proxy":     proxyUsed,
@@ -1216,8 +1249,8 @@ func providerTestPromptStream(w http.ResponseWriter, r *http.Request, providerID
 
 func providerKeyBulkCreate(w http.ResponseWriter, r *http.Request, providerID string) {
 	var body struct {
-		Count       int    `json:"count"`
-		NamePrefix  string `json:"name_prefix"`
+		Count      int    `json:"count"`
+		NamePrefix string `json:"name_prefix"`
 	}
 	if err := parseBody(r, &body); err != nil {
 		writeError(w, 400, "invalid json")
@@ -1466,7 +1499,9 @@ func providerModelAdd(w http.ResponseWriter, r *http.Request, providerID string)
 		return
 	}
 	isFree := 0
-	if body.IsFree != nil && *body.IsFree { isFree = 1 }
+	if body.IsFree != nil && *body.IsFree {
+		isFree = 1
+	}
 	id := genID()
 	_, err := db.DB.Exec("INSERT OR IGNORE INTO models (id, provider_id, model_id, is_free, is_selected) VALUES (?, ?, ?, ?, 1)", id, providerID, body.ModelID, isFree)
 	if err != nil {
@@ -1591,7 +1626,7 @@ func providerDetectModels(w http.ResponseWriter, r *http.Request, providerID str
 		// OpenRouter returns {data: [{id, ...}]} — filter to free models only
 		var orResp struct {
 			Data []struct {
-				ID      string  `json:"id"`
+				ID      string `json:"id"`
 				Pricing struct {
 					Prompt string `json:"prompt"`
 				} `json:"pricing"`
@@ -1602,10 +1637,10 @@ func providerDetectModels(w http.ResponseWriter, r *http.Request, providerID str
 			return
 		}
 		allowed := map[string]bool{
-			"inclusionai/ling-3.0-flash:free":                     true,
+			"inclusionai/ling-3.0-flash:free":                    true,
 			"nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free": true,
-			"nvidia/nemotron-3-super-120b-a12b:free":              true,
-			"nvidia/nemotron-3-ultra-550b-a55b:free":              true,
+			"nvidia/nemotron-3-super-120b-a12b:free":             true,
+			"nvidia/nemotron-3-ultra-550b-a55b:free":             true,
 		}
 		for _, m := range orResp.Data {
 			if allowed[m.ID] {
@@ -1681,7 +1716,9 @@ func providerModelToggleSelect(w http.ResponseWriter, r *http.Request, providerI
 		return
 	}
 	v := 0
-	if *body.IsSelected { v = 1 }
+	if *body.IsSelected {
+		v = 1
+	}
 	_, err := db.DB.Exec("UPDATE models SET is_selected=? WHERE (id=? OR model_id=?) AND provider_id=?", v, modelID, modelID, providerID)
 	if err != nil {
 		writeError(w, 500, err.Error())
@@ -1788,11 +1825,28 @@ func maskKey(key string) string {
 }
 
 // providerKeyBulkAdd adds multiple user-provided keys at once
-func providerKeyBulkAdd(w http.ResponseWriter, r *http.Request, providerID string, keys []string) {
+func providerKeyBulkAdd(w http.ResponseWriter, r *http.Request, providerID string, keys []string, optNames []string) {
 	if len(keys) == 0 {
 		writeError(w, 400, "keys array is empty")
 		return
 	}
+
+	// find max existing key number
+	maxNum := 0
+	if rows, err := db.DB.Query(`SELECT name FROM api_keys WHERE provider_id=?`, providerID); err == nil {
+		for rows.Next() {
+			var n string
+			rows.Scan(&n)
+			// try key-<num> or trailing number
+			if idx := strings.LastIndex(n, "-"); idx >= 0 {
+				if v, err := strconv.Atoi(n[idx+1:]); err == nil && v > maxNum {
+					maxNum = v
+				}
+			}
+		}
+		rows.Close()
+	}
+
 	var created []map[string]interface{}
 	for i, keyVal := range keys {
 		keyVal = strings.TrimSpace(keyVal)
@@ -1800,7 +1854,12 @@ func providerKeyBulkAdd(w http.ResponseWriter, r *http.Request, providerID strin
 			continue
 		}
 		id := genID()
-		name := fmt.Sprintf("key-%d", i+1)
+		var name string
+		if i < len(optNames) && strings.TrimSpace(optNames[i]) != "" {
+			name = strings.TrimSpace(optNames[i])
+		} else {
+			name = fmt.Sprintf("key-%d", maxNum+i+1)
+		}
 		_, err := db.DB.Exec(
 			"INSERT INTO api_keys (id, provider_id, name, key_encrypted, is_active) VALUES (?, ?, ?, ?, 1)",
 			id, providerID, name, keyVal,
@@ -1826,6 +1885,23 @@ func providerKeyCreate(w http.ResponseWriter, r *http.Request, providerID string
 	if body.Key == "" {
 		writeError(w, 400, "key required")
 		return
+	}
+	// auto-name if not provided: continue from existing max
+	if strings.TrimSpace(body.Name) == "" {
+		maxNum := 0
+		if rows, err := db.DB.Query(`SELECT name FROM api_keys WHERE provider_id=?`, providerID); err == nil {
+			for rows.Next() {
+				var n string
+				rows.Scan(&n)
+				if idx := strings.LastIndex(n, "-"); idx >= 0 {
+					if v, err := strconv.Atoi(n[idx+1:]); err == nil && v > maxNum {
+						maxNum = v
+					}
+				}
+			}
+			rows.Close()
+		}
+		body.Name = fmt.Sprintf("key-%d", maxNum+1)
 	}
 
 	id := genID()

@@ -12,6 +12,7 @@ export interface Provider {
   connection_count?: number;
   model_count?: number;
   round_robin?: boolean;
+  round_robin_enabled?: boolean;
   icon?: string;
   supports_anthropic?: boolean;
 }
@@ -203,11 +204,11 @@ export const api = {
 
   getProvider: (id: number | string) => fetchApi<Provider>(`/api/providers/${id}`),
 
-  toggleRoundRobin: (id: number | string, round_robin: boolean) =>
+  toggleRoundRobin: (id: number | string, enabled: boolean) =>
     fetchApi<Provider>(`/api/providers/${id}/round-robin`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ round_robin }),
+      body: JSON.stringify({ enabled }),
     }),
 
   // --- Keys ---
@@ -226,6 +227,13 @@ export const api = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ keys }),
+    }),
+
+  bulkAddKeysWithNames: (providerId: number | string, items: { key: string; name: string }[]) =>
+    fetchApi<ApiKeyItem[]>(`/api/providers/${providerId}/keys`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ keys: items.map(i => i.key), names: items.map(i => i.name) }),
     }),
 
   deleteKey: (providerId: number | string, keyId: number | string) =>

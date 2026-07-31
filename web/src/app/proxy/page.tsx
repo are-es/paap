@@ -130,7 +130,7 @@ export default function ProxyPage() {
       </div>
 
       {/* PROXY TABLE — fixed height, scrollable */}
-      <div className="bg-card border border-border rounded-lg overflow-hidden flex-1 min-h-0">
+      <div className="bg-primary/[0.04] border border-primary/15 rounded-lg overflow-hidden flex-1 min-h-0">
         <div className="overflow-y-auto" style={{ height: "calc(100vh - 220px)" }}>
           <table className="w-full text-xs">
             <thead className="sticky top-0 z-10 bg-card/95 backdrop-blur-sm">
@@ -200,7 +200,7 @@ export default function ProxyPage() {
       {/* TEST RESULTS POPUP */}
       {testResults && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setTestResults(null)}>
-          <div className="bg-card border border-border rounded-lg shadow-xl w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-card border border-primary/20 rounded-lg shadow-xl w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between px-4 py-3 border-b border-border">
               <h3 className="text-sm font-semibold">Test Results</h3>
               <button onClick={() => setTestResults(null)} className="p-1 hover:bg-muted rounded">
@@ -277,7 +277,7 @@ function AddProxyModal({ open, onClose }: { open: boolean; onClose: () => void }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
-      <div className="bg-card border border-border rounded-lg shadow-xl w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-card border border-primary/20 rounded-lg shadow-xl w-full max-w-md" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-4 py-3 border-b border-border">
           <h3 className="text-sm font-semibold">Add Proxy</h3>
           <button onClick={onClose} className="p-1 hover:bg-muted rounded"><X className="w-4 h-4" /></button>

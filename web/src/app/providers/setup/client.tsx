@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -93,9 +93,10 @@ export function ProviderSetupClient() {
           <label className="flex items-center gap-2 cursor-pointer">
             <span className="text-[11px] text-muted-foreground font-medium">RR</span>
             <ToggleSwitch
-              enabled={provider?.round_robin ?? false}
+              enabled={provider?.round_robin_enabled ?? provider?.round_robin ?? false}
               onChange={() => {
-                api.toggleRoundRobin(providerId, !(provider?.round_robin ?? false))
+                const current = provider?.round_robin_enabled ?? provider?.round_robin ?? false;
+                api.toggleRoundRobin(providerId, !current)
                   .then(() => {
                     queryClient.invalidateQueries({ queryKey: ["provider", providerId] });
                     queryClient.invalidateQueries({ queryKey: ["providers"] });
@@ -191,8 +192,33 @@ function AddKeyModal({ onClose, providerId }: { onClose: () => void; providerId:
   const [singleKey, setSingleKey] = useState("");
   const [bulkText, setBulkText] = useState("");
 
+  // derive next key name from existing keys
+  const keysQuery = useQuery({
+    queryKey: ["keys", providerId],
+    queryFn: () => api.getKeys(providerId),
+  });
+  const existingKeys = keysQuery.data ?? [];
+
+  const nextKeyNum = useMemo(() => {
+    let max = 0;
+    for (const k of existingKeys) {
+      const m = String(k.name || "").match(/(\d+)\s*$/);
+      if (m) {
+        const n = parseInt(m[1], 10);
+        if (n > max) max = n;
+      }
+    }
+    return max + 1;
+  }, [existingKeys]);
+
+  const bulkLines = useMemo(() => bulkText.split("\n").map(s => s.trim()).filter(Boolean), [bulkText]);
+
+  function previewKeyName(index: number): string {
+    return `key-${nextKeyNum + index}`;
+  }
+
   const addMutation = useMutation({
-    mutationFn: (key: string) => api.addKey(providerId, { key }),
+    mutationFn: (payload: { key: string; name?: string }) => api.addKey(providerId, payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["keys", providerId] });
       setSingleKey("");
@@ -200,7 +226,7 @@ function AddKeyModal({ onClose, providerId }: { onClose: () => void; providerId:
   });
 
   const bulkMutation = useMutation({
-    mutationFn: (keys: string[]) => api.bulkAddKeys(providerId, keys),
+    mutationFn: (keys: { key: string; name: string }[]) => api.bulkAddKeysWithNames(providerId, keys),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["keys", providerId] });
       setBulkText("");
@@ -244,6 +270,7 @@ function AddKeyModal({ onClose, providerId }: { onClose: () => void; providerId:
         <div className="p-4">
           {tab === "single" ? (
             <div>
+              <p className="text-[11px] text-muted-foreground mb-2">Next name: <span className="font-mono text-foreground">{previewKeyName(0)}</span></p>
               <input
                 placeholder="Paste API key..."
                 value={singleKey}
@@ -252,15 +279,18 @@ function AddKeyModal({ onClose, providerId }: { onClose: () => void; providerId:
                 autoFocus
               />
               <button
-                onClick={() => { if (singleKey.trim()) addMutation.mutate(singleKey.trim()); }}
+                onClick={() => { if (singleKey.trim()) addMutation.mutate({ key: singleKey.trim(), name: previewKeyName(0) }); }}
                 disabled={!singleKey.trim() || addMutation.isPending}
                 className="mt-3 w-full px-3 py-2 text-sm rounded-lg bg-primary text-primary-foreground font-medium disabled:opacity-40 disabled:bg-muted disabled:text-muted-foreground hover:shadow-[0_0_12px_rgba(0,240,255,0.3)] transition-all"
               >
-                {addMutation.isPending ? "Adding..." : "Add Key"}
+                {addMutation.isPending ? "Adding..." : `Add ${previewKeyName(0)}`}
               </button>
             </div>
           ) : (
             <div>
+              {bulkLines.length > 0 && (
+                <p className="text-[11px] text-muted-foreground mb-2">Will create: <span className="font-mono text-foreground">{previewKeyName(0)} .. {previewKeyName(bulkLines.length-1)}</span></p>
+              )}
               <textarea
                 placeholder="One API key per line..."
                 value={bulkText}
@@ -271,13 +301,13 @@ function AddKeyModal({ onClose, providerId }: { onClose: () => void; providerId:
               />
               <button
                 onClick={() => {
-                  const keys = bulkText.split("\n").map((s) => s.trim()).filter(Boolean);
-                  if (keys.length > 0) bulkMutation.mutate(keys);
+                  const ks = bulkLines.map((k,i)=>({ key: k, name: previewKeyName(i) }));
+                  if (ks.length > 0) bulkMutation.mutate(ks);
                 }}
                 disabled={!bulkText.trim() || bulkMutation.isPending}
-                className="mt-3 w-full px-3 py-2 text-sm rounded-lg bg-neon-cyan text-[#0a0a14] font-medium disabled:opacity-50 hover:shadow-[0_0_12px_rgba(0,240,255,0.3)] transition-shadow"
+                className="mt-3 w-full px-3 py-2 text-sm rounded-lg bg-primary text-primary-foreground font-medium disabled:opacity-50 hover:shadow-[0_0_12px_rgba(0,240,255,0.3)] transition-shadow"
               >
-                {bulkMutation.isPending ? "Adding..." : `Add ${bulkText.split("\n").filter((s) => s.trim()).length} Keys`}
+                {bulkMutation.isPending ? "Adding..." : `Add ${bulkLines.length} Keys`}
               </button>
             </div>
           )}

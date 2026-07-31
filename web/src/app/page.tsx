@@ -80,7 +80,7 @@ export default function DashboardPage() {
           {stats.map((stat, i) => (
             <div
               key={stat.label}
-              className="bg-card border border-border rounded-lg p-3.5 hover:border-primary/20 transition-colors"
+              className="bg-primary/[0.04] border border-primary/15 rounded-lg p-3.5 hover:border-primary/20 transition-colors"
             >
               <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">{stat.label}</p>
               <p className="font-mono text-lg font-bold text-foreground">{stat.value}</p>
@@ -89,7 +89,7 @@ export default function DashboardPage() {
         </div>
 
         <div className="grid grid-cols-2 gap-3 mb-6 animate-in fade-in slide-in-from-y-2 duration-300 delay-100">
-          <section className="bg-card border border-border rounded-lg p-3">
+          <section className="bg-primary/[0.04] border border-primary/15 rounded-lg p-3">
             <h2 className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">Base URL</h2>
             <div className="relative">
               <code className="block font-mono text-[11px] bg-muted/50 border border-border rounded px-2 py-1.5 text-foreground break-all">
@@ -111,7 +111,7 @@ export default function DashboardPage() {
             </div>
           </section>
 
-          <section className="bg-card border border-border rounded-lg p-3">
+          <section className="bg-primary/[0.04] border border-primary/15 rounded-lg p-3">
             <h2 className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">Gateway API Key</h2>
             {gatewayKeys.length > 0 ? (
               <div className="space-y-1.5">

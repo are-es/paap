@@ -69,7 +69,7 @@ export default function SettingsPage() {
 
       <div className="space-y-4">
         {/* CARD 1: PROXY */}
-        <div className="bg-card border border-border rounded-lg p-4">
+        <div className="bg-primary/[0.04] border border-primary/15 rounded-lg p-4">
           <div className="flex items-center gap-2 mb-3">
             <Globe className="w-4 h-4 text-muted-foreground" />
             <span className="text-sm font-medium">Proxy Auto-Test</span>
@@ -89,7 +89,7 @@ export default function SettingsPage() {
         </div>
 
         {/* CARD 2: CLEAR ALL */}
-        <div className="bg-card border border-border rounded-lg p-4">
+        <div className="bg-primary/[0.04] border border-primary/15 rounded-lg p-4">
           <div className="flex items-center gap-2 mb-3">
             <Trash2 className="w-4 h-4 text-muted-foreground" />
             <span className="text-sm font-medium">Clear All Data</span>
@@ -108,7 +108,7 @@ export default function SettingsPage() {
         </div>
 
         {/* CARD 3: SERVER */}
-        <div className="bg-card border border-border rounded-lg p-4">
+        <div className="bg-primary/[0.04] border border-primary/15 rounded-lg p-4">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <Power className="w-4 h-4 text-muted-foreground" />

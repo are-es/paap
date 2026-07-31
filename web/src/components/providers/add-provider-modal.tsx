@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { api } from "@/lib/api";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { X } from "lucide-react";
@@ -10,18 +10,53 @@ interface AddProviderModalProps {
   onClose: () => void;
 }
 
+function inferNameFromUrl(url: string): string {
+  if (!url) return "";
+  try {
+    const u = new URL(url);
+    let host = u.hostname.replace(/^www\./, "");
+    // strip common prefixes
+    host = host.replace(/^(api|llm|us-central1-aiplatform|generativelanguage)\./, "");
+    // second-level domain
+    const parts = host.split(".");
+    if (parts.length >= 2) {
+      // handle googleapis.com -> google
+      if (host.includes("google")) return "Google";
+      if (host.includes("openai")) return "OpenAI";
+      if (host.includes("anthropic")) return "Anthropic";
+      if (host.includes("groq")) return "Groq";
+      if (host.includes("xiaomi") || host.includes("mimo")) return "Xiaomi";
+      if (host.includes("kimchi")) return "Kimchi";
+      if (host.includes("meta")) return "Meta";
+      if (host.includes("deepseek")) return "DeepSeek";
+      if (host.includes("runapi")) return "RunAPI";
+      if (host.includes("camel")) return "Camel";
+      if (host.includes("apiview")) return "APIView";
+      if (host.includes("tokenrouter")) return "TokenRouter";
+      if (host.includes("ollama")) return "Ollama";
+      // fallback: first label
+      const label = parts[parts.length - 2] || parts[0];
+      return label.charAt(0).toUpperCase() + label.slice(1);
+    }
+    return host.charAt(0).toUpperCase() + host.slice(1);
+  } catch {
+    return "";
+  }
+}
+
 export function AddProviderModal({ open, onClose }: AddProviderModalProps) {
   const [name, setName] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [supportsAnthropic, setSupportsAnthropic] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [nameTouched, setNameTouched] = useState(false);
 
   const queryClient = useQueryClient();
 
   const addMutation = useMutation({
     mutationFn: () =>
       api.addProvider({
-        name,
+        name: name || inferNameFromUrl(baseUrl) || "Custom Provider",
         base_url: baseUrl || "https://api.example.com",
         auth_type: "apikey",
         supports_anthropic: supportsAnthropic,
@@ -41,16 +76,25 @@ export function AddProviderModal({ open, onClose }: AddProviderModalProps) {
     setBaseUrl("");
     setSupportsAnthropic(false);
     setError(null);
+    setNameTouched(false);
   }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    if (!name.trim()) {
-      setError("Provider name is required");
+    if (!baseUrl.trim()) {
+      setError("Base URL is required");
       return;
     }
     addMutation.mutate();
+  }
+
+  function handleUrlChange(v: string) {
+    setBaseUrl(v);
+    if (!nameTouched) {
+      const inferred = inferNameFromUrl(v);
+      if (inferred) setName(inferred);
+    }
   }
 
   return (
@@ -79,21 +123,6 @@ export function AddProviderModal({ open, onClose }: AddProviderModalProps) {
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label htmlFor="provider-name" className="block text-xs font-medium mb-1.5 text-muted-foreground">
-              Name
-            </label>
-            <input
-              id="provider-name"
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="My Custom Provider"
-              className="w-full px-3 py-2 text-sm rounded-lg border border-input bg-background focus:outline-none focus:border-neon-cyan/50"
-              autoFocus
-            />
-          </div>
-
-          <div>
             <label htmlFor="provider-url" className="block text-xs font-medium mb-1.5 text-muted-foreground">
               Base URL
             </label>
@@ -101,9 +130,28 @@ export function AddProviderModal({ open, onClose }: AddProviderModalProps) {
               id="provider-url"
               type="text"
               value={baseUrl}
-              onChange={(e) => setBaseUrl(e.target.value)}
-              placeholder="https://api.example.com"
+              onChange={(e) => handleUrlChange(e.target.value)}
+              placeholder="https://api.openai.com/v1"
               className="w-full px-3 py-2 text-sm rounded-lg border border-input bg-background font-mono focus:outline-none focus:border-neon-cyan/50 focus:shadow-[0_0_8px_rgba(0,240,255,0.1)]"
+              autoFocus
+            />
+            {baseUrl && !nameTouched && (
+              <p className="text-[10px] text-muted-foreground mt-1">Auto name: {inferNameFromUrl(baseUrl) || "—"}</p>
+            )}
+          </div>
+
+          <div>
+            <label htmlFor="provider-name" className="block text-xs font-medium mb-1.5 text-muted-foreground">
+              Name { !nameTouched && <span className="text-[10px] opacity-60">(auto from URL, editable)</span>}
+            </label>
+            <input
+              id="provider-name"
+              type="text"
+              value={name}
+              onChange={(e) => { setName(e.target.value); setNameTouched(true); }}
+              onFocus={() => setNameTouched(true)}
+              placeholder="My Custom Provider"
+              className="w-full px-3 py-2 text-sm rounded-lg border border-input bg-background focus:outline-none focus:border-neon-cyan/50"
             />
           </div>
 
