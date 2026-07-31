@@ -1,274 +1,124 @@
-# AGENTS.md — PAAP (Pangkalan API)
+# PAAP — Agent Context
 
-AI agent guidance for working on the PAAP codebase. Read this before making any changes.
+PAAP (Pangkalan API) is an LLM gateway/proxy: `Client → PAAP → Provider`. It is not a provider itself. It fans requests out across multiple upstream providers, rotates API keys, optionally routes through SOCKS5/HTTP proxies, and compresses prompts before forwarding.
 
-## What is PAAP?
+Repo: `/mnt/hdd/ares-workspace/paap` — version 0.1.0, branch `master`.
 
-PAAP is a self-hosted API gateway that routes LLM requests across 40+ providers (OpenAI, Anthropic, Google, Xiaomi, Kimchi, Meta, Grok, OpenRouter, etc.) through a single OpenAI-compatible endpoint. It handles API key management, load balancing, logging, compression, and cost tracking.
+## Stack
 
-**Core value:** One endpoint (`/v1/chat/completions`) → many providers. Swap providers without changing client code.
-
-## Tech Stack
-
-| Layer | Stack |
-|-------|-------|
-| Backend | Go 1.25, SQLite (go-sqlite3), net/http |
-| Frontend | Next.js 16 (static export), React, Tailwind v4, shadcn/ui |
-| Database | SQLite at `~/.paap/paap.db` |
-| Build | `CGO_ENABLED=1 go build -o bin/paap-server ./cmd/server/` |
-| Frontend build | `cd web && npm run build` |
-| Service | `sudo systemctl restart paap` |
-| Theme | #FFFEF7 light / #0a0715 dark, 480px mobile |
-
-## Project Structure
-
-```
-paap/
-├── cmd/server/          # Go backend (all server code)
-│   ├── main.go          # Entry point, routes, startup
-│   ├── routing.go       # Main request handler (/v1/chat/completions)
-│   ├── providers.go     # Provider CRUD, key management, model management
-│   ├── groups.go        # Group routing (race, round-robin, fail-first)
-│   ├── logs.go          # Request logging, cost tracking, export
-│   ├── compression.go   # Markdown config loader (caveman/ponytail)
-│   ├── caveman_compress.go  # Regex-based content compression
-│   ├── rtk.go           # RTK integration (tool output compression)
-│   ├── streaming.go     # SSE streaming handler
-│   ├── gateway.go       # Gateway key management
-│   ├── oauth.go         # OAuth flows (Grok, Anigravity, Google)
-│   ├── anigravity.go    # Google Anigravity provider
-│   ├── anthropic.go     # Anthropic Messages API
-│   ├── merlin.go        # Merlin provider
-│   ├── qoder.go         # Qoder provider
-│   ├── qoder_cosy.go    # Qoder COSY signing
-│   ├── qoder_oauth.go   # Qoder OAuth
-│   ├── proxy.go         # Proxy pool management
-│   ├── connections.go   # Provider connections
-│   ├── keys.go          # API key helpers
-│   ├── reqlog.go        # Request logging to file
-│   └── t03_verify_test.go  # Tests
-├── internal/
-│   ├── db/db.go         # SQLite database layer
-│   └── auth/            # Authentication
-├── config/
-│   ├── caveman.md       # Caveman compression instructions
-│   └── ponytail.md      # Ponytail compression instructions
-├── web/                 # Next.js frontend
-│   ├── src/app/         # Pages (dashboard, providers, logs, groups, etc.)
-│   ├── src/components/  # Shared components
-│   └── src/lib/api.ts   # API client
-└── .gitignore
-```
-
-## Key Architecture Decisions
-
-### Request Flow
-```
-Client → /v1/chat/completions → authMiddleware → chatCompletionsHandler
-  → Parse body (model, messages, stream)
-  → Prompt injection (prepend/append)
-  → Compression mode injection (caveman/ponytail)
-  → RTK tool output compression
-  → Caveman content compression (regex)
-  → Route by model (direct or group)
-  → Select API key (round-robin)
-  → Forward to provider
-  → Handle response (streaming or non-streaming)
-  → Log request + update stats
-```
-
-### Provider Routing
-- **Direct:** model name matches a provider's model → route directly
-- **Group:** model name matches a group → race/round-robin/fail-first across group members
-- **Round-robin:** cycle through API keys for load balancing
-- **Race:** fire all keys simultaneously, take first winner
-
-### Compression Pipeline
-1. **Prompt Injection** — inject text into system message (prepend/append)
-2. **Compression Mode** — caveman/ponytail instruction text from Markdown files
-3. **RTK** — compress tool outputs (shell, git, test results)
-4. **Caveman Content** — regex-based natural language compression
-
-### Database Schema
-Key tables:
-- `providers` — provider config (name, base_url, auth_type, is_active)
-- `api_keys` — API keys per provider (key_encrypted, is_active, fail_count)
-- `groups` — model groups for routing
-- `group_models` — models in each group
-- `logs` — request logs (provider, model, tokens, latency, cost)
-- `system_settings` — key-value settings (compression, injection, etc.)
-- `gateway_keys` — client authentication keys
+- Backend: Go, `CGO_ENABLED=1` (SQLite via cgo), stdlib `net/http` + `http.ServeMux`
+- Storage: SQLite, WAL mode
+- Frontend: Next.js 16 static export (`output: "export"`), Tailwind v4, shadcn/ui, TanStack Query
+- Served by the Go binary from `web/out/`
 
 ## Commands
 
 ```bash
-# Build backend
-cd /mnt/hdd/ares-workspace/paap
+# backend
 CGO_ENABLED=1 go build -o bin/paap-server ./cmd/server/
 
-# Build frontend
+# frontend
 cd web && npm run build
 
-# Restart service
+# deploy
 sudo systemctl restart paap
 
-# Check health
+# health
 curl -s http://localhost:9090/api/health
-
-# Check logs
-journalctl -u paap -f
-
-# Database
-sqlite3 ~/.paap/paap.db "SELECT * FROM providers;"
-sqlite3 ~/.paap/paap.db "SELECT * FROM api_keys WHERE is_active=1;"
 ```
 
-## API Endpoints
+Run via systemd, not `paap start`. The unit sets `WorkingDirectory=/mnt/hdd/ares-workspace/paap`, which is required: `handleIndex` resolves `web/out` relative to CWD, so a wrong CWD serves a 404 dashboard.
 
-### Core
-- `POST /v1/chat/completions` — Main LLM endpoint (OpenAI-compatible)
-- `GET /v1/models` — List available models
-- `POST /v1/messages` — Anthropic Messages API
+## Layout
 
-### Providers
-- `GET /api/providers` — List providers
-- `GET /api/providers/:id` — Get provider details
-- `POST /api/providers` — Create provider
-- `PATCH /api/providers/:id` — Update provider
-- `DELETE /api/providers/:id` — Delete provider
+```
+cmd/server/
+  main.go          entry point, mux routing, static file serving, SPA fallback
+  routing.go       /v1/chat/completions proxy, group routing, auth middleware
+  providers.go     provider / key / model CRUD
+  groups.go        model groups + prompt injection
+  gateway.go       gateway keys + system settings (+ 5s settings cache)
+  logs.go          request logging + usage stats
+  proxy.go         proxy pool CRUD
+  proxy_tester.go  background proxy latency/country tester
+  anigravity.go    Anigravity provider (uses streamingHTTPClient, no timeout)
+  anthropic.go     /v1/messages translation
+  streaming.go     SSE passthrough
+  compression.go   compression middleware
+  qoder*.go        DEAD CODE — see Cleanup
+internal/db/
+  db.go            schema + migrations + seed
+web/src/
+  app/             Next.js routes
+  lib/api.ts       ALL frontend HTTP calls live here
+  components/      UI
+.agent/            project context (memory.md, status.md, notes.md, roadmap.md, prd/)
+graphify-out/      knowledge graph
+```
 
-### API Keys
-- `GET /api/providers/:id/keys` — List keys
-- `POST /api/providers/:id/keys` — Add key
-- `PATCH /api/providers/:id/keys/:key_id` — Toggle key active
-- `DELETE /api/providers/:id/keys/:key_id` — Delete key
-- `POST /api/providers/:id/keys/disabled` — Bulk delete disabled keys
+`.agent/memory.md` holds design decisions and hard-won pitfalls. `.agent/status.md` holds current counts and the blocked list. Read both before non-trivial work.
 
-### Groups
-- `GET /api/groups` — List groups
-- `POST /api/groups` — Create group
-- `GET /api/groups/:id` — Get group details
-- `PATCH /api/groups/:id` — Update group
-- `DELETE /api/groups/:id` — Delete group
+## Request flow
 
-### Logs
-- `GET /api/logs` — List logs (with filters)
-- `DELETE /api/logs` — Clear logs
-- `GET /api/logs/export` — Export CSV
-- `GET /api/logs/cost` — Cost summary
+1. Client hits `/v1/chat/completions` with a gateway key
+2. Auth middleware validates the gateway key
+3. Model string `provider/model` resolves to a provider, or a group name resolves to a model set
+4. Compression pipeline runs on the request — three independent stages:
+   - **instruction injection** (`compression_mode`, e.g. `caveman:ultra,ponytail:ultra`) prepends terseness rules to the system message, text loaded from `config/<mode>.md`
+   - **RTK** (`rtk_enabled` + `rtk_level`) shells out to the `rtk` binary to shrink tool results
+   - **caveman regex** (`caveman_compress_enabled` + `compression_level`) squeezes tool/assistant prose
+5. Provider dispatch: special-cased per provider where needed, otherwise generic OpenAI-compatible forward
+6. Key selection: round-robin, or race N active keys and take the first response
+7. Optional proxy: if `proxy_enabled`, pick the fastest active proxy from the pool
+8. Response is pure passthrough — PAAP only transforms the request
 
-### Settings
-- `GET /api/settings` — Get all settings
-- `PUT /api/settings` — Update settings
+## Compression
 
-### System
-- `GET /api/health` — Health check
-- `POST /api/system/restart` — Restart server
-- `POST /api/system/shutdown` — Shutdown server
+`rtk` is a **CLI tool** (Rust binary, `~/.local/bin/rtk`), not an instruction mode. Never put `rtk` in `compression_mode` — there is no `config/rtk.md`, so `GetCompressionPrompt("rtk", …)` returns `""` with no warning. It is controlled solely by `rtk_enabled` / `rtk_level`.
 
-## Coding Conventions
-
-### Go
-- Package: `main` (single binary)
-- Error handling: always check errors, log and continue (don't crash)
-- Database: use parameterized queries (no string concatenation)
-- Logging: `log.Printf("[PAAP] ...")` format
-- Naming: camelCase for functions, snake_case for DB columns
-
-### Frontend (TypeScript/React)
-- Components: PascalCase
-- Hooks: camelCase with `use` prefix
-- Styling: Tailwind CSS (avoid inline styles)
-- State: React Query for server state, useState for local state
-- API: all calls go through `src/lib/api.ts`
-
-### File Naming
-- Go: `snake_case.go`
-- React: `PascalCase.tsx` or `camelCase.tsx`
-- Config: `snake_case.json` or `kebab-case.md`
-
-## Common Patterns
-
-### Adding a New Provider
-1. Add provider to `providers` table
-2. Add API keys to `api_keys` table
-3. Add models to `models` table
-4. Test with `POST /v1/chat/completions`
-
-### Adding a New API Endpoint
-1. Add handler function in appropriate file
-2. Register route in `main.go` (or provider routes)
-3. Add frontend API function in `src/lib/api.ts`
-4. Add UI component
-
-### Adding Compression Mode
-1. Create `config/mymode.md` with levels (lite/full/ultra)
-2. Add mode to `COMPRESSION_MODES` in `skills/page.tsx`
-3. No backend changes needed (auto-loads from config/)
-
-## Known Issues
-
-1. **providers.go** — 1900 lines, needs splitting (but works)
-2. **routing.go** — 1349 lines, needs splitting (but works)
-3. **OAuth secret** — hardcoded in oauth.go (should be env var)
-4. **Frontend catch blocks** — some are empty (should log errors)
-
-## Security
-
-- All API keys stored encrypted in DB
-- Gateway keys required for `/v1/*` endpoints
-- Key values masked in logs (first 6 + last 4 chars)
-- No secrets in source code (except oauth.go — needs fix)
-- SQL queries parameterized (no injection risk)
-
-## Testing
+`config/caveman.md` and `config/ponytail.md` are parsed by `compression.go`, which splits on `## Levels` and `## Shared Rules` H2 headers and reads `###` subsections beneath them. They resemble Hermes skill files but are **not interchangeable** — overwriting one with a `SKILL.md` drops those headers and silently disables that mode's injection. After editing either file, verify:
 
 ```bash
-# Run Go tests
-cd /mnt/hdd/ares-workspace/paap
-go test ./cmd/server/...
-
-# Test health
-curl -s http://localhost:9090/api/health
-
-# Test with gateway key
-GKEY=$(curl -s http://localhost:9090/api/gateway/keys | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['key'])")
-curl -X POST http://localhost:9090/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $GKEY" \
-  -d '{"model":"mimo-v2.5","messages":[{"role":"user","content":"hi"}],"max_tokens":10}'
+grep -E '^## ' config/caveman.md    # must show '## Levels' and '## Shared Rules'
+# then check the log line:  [PAAP] Compression mode=… text_len=2847
 ```
 
-## Deployment
+`detectFilter()` in `rtk.go` must return a name that exists in rtk's filter set (`rtk pipe --filter bogus` prints the list). An invalid name makes rtk exit non-zero and the code fails open — compression silently stops. Returning `""` means "no filter fits", and the caller skips compression, because bare `rtk pipe` with no `--filter` is a passthrough that costs a subprocess and saves nothing.
 
-1. Build: `CGO_ENABLED=1 go build -o bin/paap-server ./cmd/server/`
-2. Frontend: `cd web && npm run build`
-3. Restart: `sudo systemctl restart paap`
-4. Verify: `curl -s http://localhost:9090/api/health`
+Error tool results (`is_error: true` / `status: "error"`) are never compressed — the model needs traces verbatim.
 
-## Environment Variables
+## Conventions
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PAAP_PORT` | `9090` | Server port |
-| `PAAP_DATA` | `~/.paap` | Data directory |
+- Every mutating frontend call goes through `fetchApi()` in `web/src/lib/api.ts`, never raw `fetch()`. `fetchApi` throws on non-2xx; raw `fetch` swallows failures and produces buttons that silently do nothing.
+- HTTP methods must match the Go handler exactly. Handlers use explicit `switch r.Method` with a `405` default — a mismatched method fails silently on the frontend.
+- Provider and group IDs are hex hash strings, not integers. Type them `string` (or `number | string`).
+- Settings writes go through `setSetting()`, which invalidates the 5s settings cache. Raw `db.DB.Exec` on `system_settings` leaves the routing layer reading stale values.
+- UI colors use semantic tokens (`bg-primary`, `text-foreground`). Hardcoded hex breaks dark mode. Live Orbit is the one sanctioned exception.
+- All agent-generated docs go in `.agent/`, never the repo root. `AGENTS.md` is the exception.
 
-## File Permissions
+## Pitfalls
 
-- Config files: `600` (owner read/write only)
-- Database: `600` (owner read/write only)
-- Binary: `755` (executable)
-- Logs: `644` (world readable)
+- **`parseBody(r, v)` closes `r.Body`.** A handler that peeks at the body to route (bulk-vs-single, discriminated unions) must `io.ReadAll` first and restore with `r.Body = io.NopCloser(bytes.NewReader(raw))` before delegating. Otherwise the downstream handler sees an empty closed body and returns `invalid json` 400 on a valid request.
+- **Never let an HTTP handler recurse into itself** to return the updated resource. `r.Method` is still the write method, so it re-enters the write branch with a consumed body. Factor the read path into its own function.
+- **`useSearchParams` needs a `<Suspense>` boundary** under static export.
+- **Do not add a rebuild-triggering UI action.** A build takes 20-40s, needs `node_modules` (absent for binary installs), and restarting the server kills in-flight streams.
+- **`db.go:287` seeds `claude-*` groups only when none exist.** Deleting one is durable; deleting all of them re-seeds every one on next boot.
+- **`DELETE /api/logs` really does clear all logs and cost history.** Do not probe it to check routing.
+- **`config/caveman.md` / `config/ponytail.md` are NOT Hermes skill files.** They are parsed for `## Levels` / `## Shared Rules` headers. Overwriting one with a `SKILL.md` silently disables that compression mode — no error, the only symptom is a lower `text_len=` in the log.
+- **An invalid rtk filter name fails open.** `rtk` exits non-zero, PAAP logs one line and returns uncompressed content. Compression appears to work while doing nothing.
 
-## When Working on This Codebase
+## Cleanup queue
 
-1. **Always read AGENTS.md first** before making changes
-2. **Build and test** after every change
-3. **Check hardcoded paths** — use env vars or dynamic paths
-4. **Don't crash on errors** — log and continue
-5. **Parameterized SQL** — never concatenate strings into queries
-6. **Frontend: use Tailwind** — avoid inline styles
-7. **Frontend: use api.ts** — all API calls go through the client
-8. **Backend: follow existing patterns** — look at similar code before adding new
-9. **Config files** — put in `config/` folder, not hardcoded in code
-10. **Test with gateway key** — all `/v1/*` endpoints require auth
+- Qoder is removed from the product but 950 lines remain: `qoder.go`, `qoder_cosy.go`, `qoder_oauth.go`, plus the dispatch at `routing.go:409-413`. Safe to delete — no DB rows reference it.
+- **Port RTK filters to native Go** — drop `exec.Command` entirely. Reference implementation: 9router `open-sse/rtk/` at `~/Downloads/9router-master/`. Gains: no subprocess per tool output, no `rtk` binary dependency, and support for the message shapes PAAP currently misses — Claude `tool_result` (string + array), OpenAI Responses `function_call_output`, Kiro `toolResults`, and `{role:"tool", content:[{type:"text"}]}`. Today only `{role:"tool", content:string}` is handled, so `/v1/messages` requests get zero RTK. ~800-1000 lines; delegate to OpenCode.
+- `ClientUsesRTK()` becomes unnecessary once the native port lands — compressed output no longer matches raw-format patterns, so autodetect rejects it and idempotence is structural. Today's version is coarse: a single `"rtk ` match disables compression for every tool output in the request.
+- `handleDeleteOffline` (`web/src/app/proxy/page.tsx:69`) awaits deletes serially with no error handling.
+- 7 raw `fetch()` calls left in `api.ts`: `addConnection`, `deleteConnection`, `updateModels`, `clearLogs`, `deleteGroup`, `shutdown`, `restart`. Methods are correct; failures are silent.
+
+## References
+
+- `.agent/memory.md` — design decisions, Live Orbit spec, backend pitfalls
+- `.agent/status.md` — current counts, file sizes, blocked list
+- `.agent/notes.md` — session history and rationale for past decisions
+- `.agent/roadmap.md` — build breakdown
+- `.agent/prd/` — product requirement docs
