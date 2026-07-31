@@ -15,6 +15,7 @@ import {
 } from "@/components/providers/provider-helpers";
 import { Plus, Trash2, Key, Cpu, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { AddProviderModal } from "@/components/providers/add-provider-modal";
 
 export default function ProvidersPage() {
   const [addOpen, setAddOpen] = useState(false);
@@ -77,7 +78,7 @@ function ProviderCard({ provider }: { provider: Provider }) {
   const neon = providerNeonColor(provider.name);
 
   const deleteMutation = useMutation({
-    mutationFn: (id: number) => api.deleteProvider(id),
+    mutationFn: (id: number | string) => api.deleteProvider(id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["providers"] }),
   });
 
@@ -86,7 +87,7 @@ function ProviderCard({ provider }: { provider: Provider }) {
   const countLabel = `${activeKeys}/${totalKeys}`;
 
   const handleClick = () => {
-    window.location.href = `/providers/${provider.id}`;
+    window.location.href = `/providers/setup?id=${encodeURIComponent(String(provider.id))}`;
   };
 
   return (
@@ -132,6 +133,7 @@ function ProviderCard({ provider }: { provider: Provider }) {
         <button
           onClick={(e) => {
             e.stopPropagation();
+            if (!confirm(`Delete provider "${provider.name}"? This cannot be undone.`)) return;
             deleteMutation.mutate(provider.id);
           }}
           className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-destructive/10"
@@ -143,19 +145,3 @@ function ProviderCard({ provider }: { provider: Provider }) {
   );
 }
 
-function AddProviderModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  if (!open) return null;
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="bg-card border border-border rounded-xl p-6 w-full max-w-md">
-        <h2 className="font-heading text-lg font-bold mb-4">Add Provider</h2>
-        <p className="text-sm text-muted-foreground mb-4">
-          Provider setup coming soon. For now, use the built-in providers.
-        </p>
-        <Button onClick={onClose} className="w-full">
-          Close
-        </Button>
-      </div>
-    </div>
-  );
-}

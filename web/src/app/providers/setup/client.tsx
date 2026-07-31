@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, type ApiKeyItem, type PlaygroundResult } from "@/lib/api";
 import {
@@ -31,13 +31,14 @@ import {
 import { cn } from "@/lib/utils";
 
 export function ProviderSetupClient() {
-  const { id } = useParams<{ id: string }>();
-  const providerId = id;
+  const searchParams = useSearchParams();
+  const providerId = searchParams.get("id") ?? "";
   const queryClient = useQueryClient();
 
   const providerQuery = useQuery({
     queryKey: ["provider", providerId],
     queryFn: () => api.getProvider(providerId),
+    enabled: providerId !== "",
   });
 
   const provider = providerQuery.data;

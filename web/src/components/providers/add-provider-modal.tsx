@@ -1,10 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { api, type Provider } from "@/lib/api";
+import { api } from "@/lib/api";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { X } from "lucide-react";
-import { cn } from "@/lib/utils";
 
 interface AddProviderModalProps {
   open: boolean;
@@ -14,14 +13,19 @@ interface AddProviderModalProps {
 export function AddProviderModal({ open, onClose }: AddProviderModalProps) {
   const [name, setName] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
-  const [authType, setAuthType] = useState<Provider["auth_type"]>("apikey");
+  const [supportsAnthropic, setSupportsAnthropic] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const queryClient = useQueryClient();
 
   const addMutation = useMutation({
     mutationFn: () =>
-      api.addProvider({ name, base_url: baseUrl || "https://api.example.com", auth_type: authType }),
+      api.addProvider({
+        name,
+        base_url: baseUrl || "https://api.example.com",
+        auth_type: "apikey",
+        supports_anthropic: supportsAnthropic,
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["providers"] });
       reset();
@@ -35,7 +39,7 @@ export function AddProviderModal({ open, onClose }: AddProviderModalProps) {
   function reset() {
     setName("");
     setBaseUrl("");
-    setAuthType("apikey");
+    setSupportsAnthropic(false);
     setError(null);
   }
 
@@ -103,34 +107,17 @@ export function AddProviderModal({ open, onClose }: AddProviderModalProps) {
             />
           </div>
 
-          <div>
-            <span className="block text-xs font-medium mb-1.5 text-muted-foreground">Auth Type</span>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => setAuthType("apikey")}
-                className={cn(
-                  "flex-1 px-3 py-2 text-xs rounded-lg border transition-all",
-                  authType === "apikey"
-                    ? "border-neon-cyan bg-neon-cyan/10 text-neon-cyan"
-                    : "border-border bg-background hover:bg-muted text-muted-foreground"
-                )}
-              >
-                API Key
-              </button>
-              <button
-                type="button"
-                onClick={() => setAuthType("connection")}
-                className={cn(
-                  "flex-1 px-3 py-2 text-xs rounded-lg border transition-all",
-                  authType === "connection"
-                    ? "border-neon-purple bg-neon-purple/10 text-neon-purple"
-                    : "border-border bg-background hover:bg-muted text-muted-foreground"
-                )}
-              >
-                Connection
-              </button>
-            </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="supports-anthropic"
+              checked={supportsAnthropic}
+              onChange={(e) => setSupportsAnthropic(e.target.checked)}
+              className="w-4 h-4 rounded border-border"
+            />
+            <label htmlFor="supports-anthropic" className="text-xs text-muted-foreground cursor-pointer">
+              Anthropic support
+            </label>
           </div>
 
           {error && <p className="text-xs text-neon-magenta">{error}</p>}
@@ -139,14 +126,14 @@ export function AddProviderModal({ open, onClose }: AddProviderModalProps) {
             <button
               type="button"
               onClick={onClose}
-              className="px-3 py-1.5 text-sm rounded-lg border border-border hover:bg-muted"
+              className="px-3 py-1.5 text-sm rounded-lg border border-border hover:bg-muted text-foreground"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={addMutation.isPending}
-              className="px-3 py-1.5 text-sm rounded-lg bg-neon-cyan text-[#0a0a14] font-medium disabled:opacity-50 transition-shadow"
+              className="px-3 py-1.5 text-sm rounded-lg bg-primary text-primary-foreground font-medium disabled:opacity-50 transition-shadow"
             >
               {addMutation.isPending ? "Adding..." : "Add Provider"}
             </button>
