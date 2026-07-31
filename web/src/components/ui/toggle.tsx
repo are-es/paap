@@ -50,13 +50,13 @@ const Toggle = React.forwardRef<HTMLButtonElement, ToggleProps>(
           toggleVariants({ size, className }),
           checked
             ? "bg-primary"
-            : "bg-input"
+            : "bg-foreground/15"
         )}
         {...props}
       >
         <span
           className={cn(
-            "pointer-events-none rounded-full bg-background shadow-sm transition-transform duration-200",
+            "pointer-events-none rounded-full bg-white shadow-sm ring-1 ring-black/5 transition-transform duration-200",
             thumbSize,
             checked ? thumbTranslate : "translate-x-0.5"
           )}

@@ -2,7 +2,7 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
-@custom-variant dark (&:is(.dark *));
+@custom-variant dark (&:is(.dark *), &:is([data-theme=dark] *));
 
 @theme inline {
   --color-background: var(--background);
@@ -59,8 +59,8 @@
   --primary-foreground: oklch(0.99 0.005 85);
   --secondary: oklch(0.94 0.015 85);
   --secondary-foreground: oklch(0.18 0.01 260);
-  --muted: oklch(0.62 0.008 260);
-  --muted-foreground: oklch(0.62 0.008 260);
+  --muted: oklch(0.94 0.015 85);
+  --muted-foreground: oklch(0.46 0.008 260);
   --accent: oklch(0.45 0.12 265);
   --accent-foreground: oklch(0.99 0.005 85);
   --destructive: oklch(0.55 0.18 25);
@@ -94,18 +94,18 @@
 }
 
 [data-theme="dark"] {
-  --background: oklch(0.15 0.008 260);
+  --background: oklch(0.17 0.01 260);
   --foreground: oklch(0.93 0.005 85);
-  --card: oklch(0.18 0.01 260);
+  --card: oklch(0.20 0.011 260);
   --card-foreground: oklch(0.93 0.005 85);
-  --popover: oklch(0.18 0.01 260);
+  --popover: oklch(0.20 0.011 260);
   --popover-foreground: oklch(0.93 0.005 85);
   --primary: oklch(0.65 0.14 265);
   --primary-foreground: oklch(0.15 0.008 260);
-  --secondary: oklch(0.22 0.012 260);
+  --secondary: oklch(0.24 0.013 260);
   --secondary-foreground: oklch(0.93 0.005 85);
-  --muted: oklch(0.55 0.006 85);
-  --muted-foreground: oklch(0.55 0.006 85);
+  --muted: oklch(0.26 0.01 260);
+  --muted-foreground: oklch(0.66 0.007 85);
   --accent: oklch(0.65 0.14 265);
   --accent-foreground: oklch(0.15 0.008 260);
   --destructive: oklch(0.55 0.18 25);

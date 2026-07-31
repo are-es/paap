@@ -122,15 +122,15 @@ function ToggleSwitch({ enabled, onChange }: { enabled: boolean; onChange: () =>
     <button
       onClick={onChange}
       className={cn(
-        "w-9 h-5 rounded-full relative transition-colors",
+        "w-9 h-5 rounded-full relative transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         enabled
           ? "bg-green-500"
-          : "bg-gray-300 dark:bg-gray-600"
+          : "bg-foreground/15"
       )}
     >
       <span
         className={cn(
-          "absolute top-[2px] w-4 h-4 rounded-full shadow-sm transition-all bg-white",
+          "absolute top-[2px] w-4 h-4 rounded-full shadow-sm transition-all bg-white ring-1 ring-black/10",
             enabled
               ? "left-[18px]"
               : "left-[2px]"
@@ -214,12 +214,12 @@ function AddKeyModal({ onClose, providerId }: { onClose: () => void; providerId:
       onClick={onClose}
     >
       <div
-        className="bg-card border border-border rounded-xl w-full max-w-md mx-4"
+        className="bg-popover border border-border rounded-xl w-full max-w-md mx-4 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-4 py-3 border-b border-border">
           <h3 className="font-medium text-sm text-neon-cyan">Add API Key</h3>
-          <button onClick={onClose} className="p-1 hover:bg-muted rounded">
+          <button onClick={onClose} className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -248,13 +248,13 @@ function AddKeyModal({ onClose, providerId }: { onClose: () => void; providerId:
                 placeholder="Paste API key..."
                 value={singleKey}
                 onChange={(e) => setSingleKey(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg border border-input bg-background text-sm font-mono focus:outline-none focus:border-neon-cyan/50"
+                className="w-full px-3 py-2 rounded-lg border border-input bg-background text-sm font-mono placeholder:text-muted-foreground/70 focus:outline-none focus:border-neon-cyan/50"
                 autoFocus
               />
               <button
                 onClick={() => { if (singleKey.trim()) addMutation.mutate(singleKey.trim()); }}
                 disabled={!singleKey.trim() || addMutation.isPending}
-                className="mt-3 w-full px-3 py-2 text-sm rounded-lg bg-neon-cyan text-[#0a0a14] font-medium disabled:opacity-50 hover:shadow-[0_0_12px_rgba(0,240,255,0.3)] transition-shadow"
+                className="mt-3 w-full px-3 py-2 text-sm rounded-lg bg-primary text-primary-foreground font-medium disabled:opacity-40 disabled:bg-muted disabled:text-muted-foreground hover:shadow-[0_0_12px_rgba(0,240,255,0.3)] transition-all"
               >
                 {addMutation.isPending ? "Adding..." : "Add Key"}
               </button>
@@ -361,7 +361,7 @@ function KeysSection({ providerId }: { providerId: string }) {
           return (
             <div
               key={key.id}
-              className="flex items-center gap-3 px-3 py-2.5 rounded-lg border border-border/50 bg-white/[0.02] hover:bg-white/[0.04] transition-colors"
+              className="flex items-center gap-3 px-3 py-2.5 rounded-lg border border-border/50 bg-secondary/60 hover:bg-secondary/80 border-secondary-foreground/10 transition-colors"
             >
               <button
                 onClick={() => toggleMutation.mutate(key.id)}
@@ -369,12 +369,12 @@ function KeysSection({ providerId }: { providerId: string }) {
                   "w-8 h-[18px] rounded-full relative transition-colors shrink-0",
                   key.is_active
                     ? "bg-green-500"
-                    : "bg-gray-300 dark:bg-gray-600"
+                    : "bg-foreground/15"
                 )}
               >
                 <span
                   className={cn(
-                    "absolute top-0.5 w-3.5 h-3.5 rounded-full shadow-sm transition-all bg-white",
+                    "absolute top-0.5 w-3.5 h-3.5 rounded-full shadow-sm transition-all bg-white ring-1 ring-black/10",
                     key.is_active
                       ? "left-[16px]"
                       : "left-0.5"
@@ -505,19 +505,19 @@ function ConnectionsSection({ providerId }: { providerId: string }) {
     <NeonCollapse title="Connections" icon={<Globe className="w-4 h-4" />} count={connections.length} defaultOpen accentColor="purple">
       <div className="space-y-2 mt-3">
         {connections.map((conn) => (
-          <div key={conn.id} className="flex items-center gap-3 px-3 py-2.5 rounded-lg border border-border/50 bg-white/[0.02]">
+          <div key={conn.id} className="flex items-center gap-3 px-3 py-2.5 rounded-lg border border-border bg-secondary/60">
             <button
               onClick={() => toggleMutation.mutate(conn.id)}
               className={cn(
                 "w-8 h-[18px] rounded-full relative transition-colors shrink-0",
                 conn.is_active
                   ? "bg-green-500"
-                  : "bg-gray-300 dark:bg-gray-600"
+                  : "bg-foreground/15"
               )}
             >
               <span
                 className={cn(
-                  "absolute top-0.5 w-3.5 h-3.5 rounded-full shadow-sm transition-all bg-white",
+                  "absolute top-0.5 w-3.5 h-3.5 rounded-full shadow-sm transition-all bg-white ring-1 ring-black/10",
                   conn.is_active
                     ? "left-[16px]"
                     : "left-0.5"

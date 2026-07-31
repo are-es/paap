@@ -94,11 +94,11 @@ export default function ProxyPage() {
               onClick={toggleProxy}
               className={cn(
                 "w-9 h-5 rounded-full relative transition-colors",
-                proxyEnabled ? "bg-green-500" : "bg-gray-300 dark:bg-gray-600"
+                proxyEnabled ? "bg-green-500" : "bg-foreground/15"
               )}
             >
               <span className={cn(
-                "absolute top-[2px] w-4 h-4 rounded-full shadow-sm transition-all bg-white",
+                "absolute top-[2px] w-4 h-4 rounded-full shadow-sm transition-all bg-white ring-1 ring-black/10",
                 proxyEnabled ? "left-[18px]" : "left-[2px]"
               )} />
             </button>
