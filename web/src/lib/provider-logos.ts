@@ -10,7 +10,6 @@ const PROVIDER_LOGOS: Record<string, string> = {
   grok: "/assets/grok.png",
   ollama: "/assets/ollama.avif",
   ollamacloud: "/assets/ollama.avif",
-  qoder: "/assets/qoder.svg",
   anigravity: "/assets/antigravtiy.ico",
   "fatherless-ai": "/assets/fatherlesai.svg",
   fatherles: "/assets/fatherles-ai.ico",

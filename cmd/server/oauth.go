@@ -615,24 +615,6 @@ func oauthRoutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Qoder device flow
-	if strings.HasSuffix(trimmed, "qoder/device-code") && r.Method == "POST" {
-		qoderDeviceCodeStart(w, r)
-		return
-	}
-	if strings.HasSuffix(trimmed, "qoder/poll") && r.Method == "POST" {
-		qoderDeviceCodePoll(w, r)
-		return
-	}
-	if strings.HasSuffix(trimmed, "qoder/status") && r.Method == "GET" {
-		qoderStatus(w, r)
-		return
-	}
-	if strings.Contains(trimmed, "qoder/disconnect") && r.Method == "POST" {
-		qoderDisconnect(w, r)
-		return
-	}
-
 	// Grok CLI device code flow
 	if strings.HasSuffix(trimmed, "/device-code") && r.Method == "POST" {
 		oauthDeviceCodeStart(w, r)

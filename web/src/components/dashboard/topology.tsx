@@ -48,6 +48,8 @@ const NEON_PURPLE = "#a78bfa";
 
 const ICON_SIZE = 48;
 const ICON_SIZE_SM = 40;
+const ICON_SIZE_MIN = 22;
+const RING_PADDING = 28; // clears the outer ping halo (inset -12) + edge breathing room
 const CURVE_OFFSET = 50;
 
 function providerColor(provider: Provider): string {
@@ -55,7 +57,6 @@ function providerColor(provider: Provider): string {
   if (name.includes("google")) return "#4285f4";
   if (name.includes("xiaomi") || name.includes("mimo")) return "#ff6900";
   if (name.includes("kimchi")) return "#e74c3c";
-  if (name.includes("qoder")) return "#9b59b6";
   if (name.includes("meta")) return "#0668e1";
   if (name.includes("openrouter")) return "#6366f1";
   if (name.includes("grok")) return "#f59e0b";
@@ -246,10 +247,22 @@ export function ProviderTopology({ providers }: ProviderTopologyProps) {
   }, [dims.w, dims.h]);
 
   const onlineProviders = providers.filter((p) => p.status !== "offline");
-  const rings = useMemo(() => getRings(onlineProviders.length), [onlineProviders.length]);
-  const nodeSize = onlineProviders.length > 10 ? ICON_SIZE_SM : ICON_SIZE;
+  const rawRings = useMemo(() => getRings(onlineProviders.length), [onlineProviders.length]);
   const cx = dims.w / 2;
   const cy = dims.h / 2;
+
+  // Scale rings + icons to fit the container so outer-ring nodes never clip.
+  // Ring radii from getRings() are nominal; shrink them (and the icons) when
+  // the container is smaller than the outermost ring needs.
+  const outerR = rawRings[rawRings.length - 1]?.r ?? 200;
+  const nominalSize = onlineProviders.length > 10 ? ICON_SIZE_SM : ICON_SIZE;
+  const budget = Math.min(dims.w, dims.h) / 2 - nominalSize / 2 - RING_PADDING;
+  const scale = Math.min(1, Math.max(0.35, budget / outerR));
+  const nodeSize = Math.max(ICON_SIZE_MIN, Math.round(nominalSize * scale));
+  const rings = useMemo(
+    () => rawRings.map((ring) => ({ ...ring, r: ring.r * scale })),
+    [rawRings, scale]
+  );
 
   const nodes = useMemo<NodeLayout[]>(() => {
     let idx = 0;

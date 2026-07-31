@@ -151,7 +151,7 @@ func providerList(w http.ResponseWriter, r *http.Request) {
 	rows, err := db.DB.Query(`SELECT p.id, p.name, p.base_url, p.icon, p.is_active, p.round_robin,
 		COALESCE(p.proxy_id,''), COALESCE(p.proxy_enabled,0), p.created_at,
 		COALESCE(p.provider_type,'custom'), COALESCE(p.auth_type,'apikey'), COALESCE(p.builtin_id,''),
-		COALESCE(p.round_robin_enabled,0)
+		COALESCE(p.round_robin_enabled,0), COALESCE(p.supports_anthropic,0)
 		FROM providers p ORDER BY p.name`)
 	if err != nil {
 		writeError(w, 500, err.Error())
@@ -162,9 +162,9 @@ func providerList(w http.ResponseWriter, r *http.Request) {
 	var list []map[string]interface{}
 	for rows.Next() {
 		var id, name, baseURL, icon, proxyID, createdAt, providerType, authType, builtinID string
-		var isActive, roundRobin, proxyEnabled, roundRobinEnabled int
+		var isActive, roundRobin, proxyEnabled, roundRobinEnabled, supportsAnthropic int
 		rows.Scan(&id, &name, &baseURL, &icon, &isActive, &roundRobin, &proxyID, &proxyEnabled, &createdAt,
-			&providerType, &authType, &builtinID, &roundRobinEnabled)
+			&providerType, &authType, &builtinID, &roundRobinEnabled, &supportsAnthropic)
 
 		// Get key counts (api_keys + provider_connections for connection-type providers)
 		var totalKeys, activeKeys int
@@ -192,6 +192,7 @@ func providerList(w http.ResponseWriter, r *http.Request) {
 			"provider_type": providerType, "auth_type": authType,
 			"builtin_id": builtinID,
 			"round_robin_enabled": roundRobinEnabled == 1,
+			"supports_anthropic": supportsAnthropic == 1,
 			"key_count":        totalKeys,
 			"active_key_count": activeKeys,
 			"model_count":      modelCount,
@@ -206,9 +207,10 @@ func providerList(w http.ResponseWriter, r *http.Request) {
 
 func providerCreate(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name    string `json:"name"`
-		BaseURL string `json:"base_url"`
-		Icon    string `json:"icon"`
+		Name              string `json:"name"`
+		BaseURL           string `json:"base_url"`
+		Icon              string `json:"icon"`
+		SupportsAnthropic bool   `json:"supports_anthropic"`
 	}
 	if err := parseBody(r, &body); err != nil {
 		writeError(w, 400, "invalid json")
@@ -219,10 +221,15 @@ func providerCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	supportsAnthropic := 0
+	if body.SupportsAnthropic {
+		supportsAnthropic = 1
+	}
+
 	id := genID()
 	_, err := db.DB.Exec(
-		"INSERT INTO providers (id, name, base_url, icon) VALUES (?, ?, ?, ?)",
-		id, body.Name, body.BaseURL, body.Icon,
+		"INSERT INTO providers (id, name, base_url, icon, supports_anthropic) VALUES (?, ?, ?, ?, ?)",
+		id, body.Name, body.BaseURL, body.Icon, supportsAnthropic,
 	)
 	if err != nil {
 		writeError(w, 500, err.Error())
@@ -271,8 +278,14 @@ func providerRoutes(w http.ResponseWriter, r *http.Request) {
 			providerKeyList(w, r, id)
 		case "POST":
 			// Detect bulk from body: { keys: [...] }
+			raw, err := io.ReadAll(r.Body)
+			r.Body.Close()
+			if err != nil {
+				writeError(w, 400, "invalid body")
+				return
+			}
 			var rawBody map[string]json.RawMessage
-			if err := parseBody(r, &rawBody); err != nil {
+			if err := json.Unmarshal(raw, &rawBody); err != nil {
 				writeError(w, 400, "invalid json")
 				return
 			}
@@ -287,7 +300,8 @@ func providerRoutes(w http.ResponseWriter, r *http.Request) {
 				}
 				providerKeyBulkAdd(w, r, id, keysBody.Keys)
 			} else {
-				// Single add: { key: "..." }
+				// Single add: { key: "..." } — restore body, downstream re-parses it
+				r.Body = io.NopCloser(bytes.NewReader(raw))
 				providerKeyCreate(w, r, id)
 			}
 		default:
@@ -913,14 +927,6 @@ func providerTestPrompt(w http.ResponseWriter, r *http.Request, providerID strin
 			if providerID == "builtin-anigravity" {
 				// Use Anigravity translator
 				content, latency, err := testAnigravityRequest(body.ModelID, body.Prompt, connToken)
-				if err != nil {
-					formatted = []map[string]interface{}{{"status": 500, "latency_ms": 0, "res": err.Error(), "key": connEmail}}
-				} else {
-					formatted = []map[string]interface{}{{"status": 200, "latency_ms": latency, "res": content, "key": connEmail}}
-				}
-			} else if providerID == "builtin-qoder" {
-				// Use Qoder COSY signing
-				content, latency, err := testQoderRequest(body.ModelID, body.Prompt, connToken)
 				if err != nil {
 					formatted = []map[string]interface{}{{"status": 500, "latency_ms": 0, "res": err.Error(), "key": connEmail}}
 				} else {
