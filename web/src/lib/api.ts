@@ -13,6 +13,7 @@ export interface Provider {
   model_count?: number;
   round_robin?: boolean;
   icon?: string;
+  supports_anthropic?: boolean;
 }
 
 export interface ApiKeyItem {
@@ -174,6 +175,7 @@ export const api = {
     name: string;
     base_url: string;
     auth_type: "apikey" | "connection";
+    supports_anthropic?: boolean;
   }) =>
     fetchApi<Provider>("/api/providers", {
       method: "POST",
@@ -181,8 +183,8 @@ export const api = {
       body: JSON.stringify({ ...payload, provider_type: "custom" }),
     }),
 
-  deleteProvider: (id: number) =>
-    fetch(`/api/providers/${id}`, { method: "POST" }),
+  deleteProvider: (id: number | string) =>
+    fetchApi<{ status: string; id: string }>(`/api/providers/${id}`, { method: "DELETE" }),
 
   getProvider: (id: number | string) => fetchApi<Provider>(`/api/providers/${id}`),
 
@@ -211,8 +213,8 @@ export const api = {
       body: JSON.stringify({ keys }),
     }),
 
-  deleteKey: (providerId: number | string, keyId: number) =>
-    fetch(`/api/providers/${providerId}/keys/${keyId}`, { method: "POST" }),
+  deleteKey: (providerId: number | string, keyId: number | string) =>
+    fetchApi<{ status: string; id: string }>(`/api/providers/${providerId}/keys/${keyId}`, { method: "DELETE" }),
 
   deleteDisabledKeys: (providerId: number | string) =>
     fetchApi<{ status: string; deleted: number }>(`/api/providers/${providerId}/keys/disabled`, {
@@ -236,10 +238,10 @@ export const api = {
     fetchApi<ConnectionItem[]>(`/api/providers/${providerId}/connections`),
 
   addConnection: (providerId: number | string) =>
-    fetch(`/api/providers/${providerId}/connections`, { method: "POST" }),
+    fetchApi<ConnectionItem>(`/api/providers/${providerId}/connections`, { method: "POST" }),
 
-  deleteConnection: (providerId: number | string, connId: number) =>
-    fetch(`/api/providers/${providerId}/connections/${connId}`, {
+  deleteConnection: (providerId: number | string, connId: number | string) =>
+    fetchApi<{ status: string; id: string }>(`/api/providers/${providerId}/connections/${connId}`, {
       method: "DELETE",
     }),
 
@@ -253,7 +255,7 @@ export const api = {
     }),
 
   updateModels: (providerId: number | string, modelIds: string[]) =>
-    fetch(`/api/providers/${providerId}/models`, {
+    fetchApi<ModelItem[]>(`/api/providers/${providerId}/models`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ models: modelIds }),
@@ -303,7 +305,7 @@ export const api = {
   },
 
   clearLogs: () =>
-    fetch("/api/logs", { method: "DELETE" }),
+    fetchApi<{ status: string; message: string }>("/api/logs", { method: "DELETE" }),
 
   getCost: () => fetchApi<CostSummary>("/api/logs/cost"),
 
@@ -340,7 +342,7 @@ export const api = {
     }),
 
   deleteGroup: (id: string) =>
-    fetch(`/api/groups/${id}`, { method: "DELETE" }),
+    fetchApi<{ status: string; id: string }>(`/api/groups/${id}`, { method: "DELETE" }),
 
   addGroupModel: (groupId: string, payload: { provider_id: string; model_id: string }) =>
     fetchApi<GroupModel>(`/api/groups/${groupId}/models`, {
@@ -350,7 +352,7 @@ export const api = {
     }),
 
   removeGroupModel: (groupId: string, modelId: string) =>
-    fetch(`/api/groups/${groupId}/models/${encodeURIComponent(modelId)}`, { method: "POST" }),
+    fetchApi<{ status: string }>(`/api/groups/${groupId}/models/${encodeURIComponent(modelId)}`, { method: "DELETE" }),
 
   // --- Proxies ---
   getProxies: () => fetchApi<ProxyItem[]>("/api/proxies"),
@@ -368,8 +370,8 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
-  deleteProxy: (id: number) =>
-    fetch(`/api/proxies/${id}`, { method: "POST" }),
+  deleteProxy: (id: number | string) =>
+    fetchApi<{ status: string; id: string }>(`/api/proxies/${id}`, { method: "DELETE" }),
 
   testProxy: (id: number) =>
     fetchApi<{ status: string; latency_ms: number }>(
@@ -393,10 +395,13 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
-  deleteGatewayKey: (id: number) =>
-    fetch(`/api/gateway/keys/${id}`, { method: "POST" }),
+  deleteGatewayKey: (id: number | string) =>
+    fetchApi<{ status: string; id: string }>(`/api/gateway/keys/${id}`, { method: "DELETE" }),
 
   // --- System ---
+  // shutdown/restart intentionally use raw fetch: the server kills itself right
+  // after responding, so the connection often dies before the body arrives.
+  // fetchApi would throw on that and mask a successful shutdown.
   shutdown: () =>
     fetch("/api/system/shutdown", { method: "POST" }),
 

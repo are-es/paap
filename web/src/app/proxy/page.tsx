@@ -68,10 +68,15 @@ export default function ProxyPage() {
 
   const handleDeleteOffline = async () => {
     const offlineProxies = proxies.filter((p) => p.status === "inactive");
-    for (const p of offlineProxies) {
-      await api.deleteProxy(p.id);
-    }
+    if (offlineProxies.length === 0) return;
+    const results = await Promise.allSettled(
+      offlineProxies.map((p) => api.deleteProxy(p.id))
+    );
     queryClient.invalidateQueries({ queryKey: ["proxies"] });
+    const failed = results.filter((r) => r.status === "rejected").length;
+    if (failed > 0) {
+      alert(`Failed to delete ${failed} of ${offlineProxies.length} offline proxies.`);
+    }
   };
 
   const proxies = proxiesQuery.data ?? [];

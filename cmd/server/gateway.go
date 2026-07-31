@@ -147,36 +147,7 @@ func getSettingInt(key string, defaultVal int) int {
 func settingsHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
-		rows, err := db.DB.Query("SELECT key, value FROM system_settings")
-		if err != nil {
-			writeError(w, 500, err.Error())
-			return
-		}
-		defer rows.Close()
-		settings := map[string]interface{}{}
-		for rows.Next() {
-			var k, v string
-			rows.Scan(&k, &v)
-			settings[k] = v
-		}
-
-		// Include gateway key info
-		var gwKey, gwName string
-		err = db.DB.QueryRow("SELECT key, name FROM gateway_keys WHERE is_active=1 ORDER BY created_at DESC LIMIT 1").Scan(&gwKey, &gwName)
-		if err == nil && gwKey != "" {
-			settings["gateway_key"] = gwKey
-			settings["gateway_key_name"] = gwName
-			if len(gwKey) > 12 {
-				settings["gateway_key_masked"] = gwKey[:8] + "..." + gwKey[len(gwKey)-4:]
-			} else {
-				settings["gateway_key_masked"] = gwKey
-			}
-		}
-
-		// Include base_url
-		settings["base_url"] = getSettingStr("base_url", "http://localhost:9090/v1")
-
-		writeJSON(w, settings)
+		settingsGet(w)
 	case "PUT":
 		var body map[string]interface{}
 		if err := parseBody(r, &body); err != nil {
@@ -184,12 +155,43 @@ func settingsHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for k, v := range body {
-			val := fmt.Sprintf("%v", v)
-			db.DB.Exec(`INSERT INTO system_settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
-				ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`, k, val)
+			setSetting(k, fmt.Sprintf("%v", v))
 		}
-		settingsHandler(w, r) // return updated settings
-		default:
-			writeError(w, 405, "method not allowed")
+		settingsGet(w) // return updated settings
+	default:
+		writeError(w, 405, "method not allowed")
+	}
+}
+
+func settingsGet(w http.ResponseWriter) {
+	rows, err := db.DB.Query("SELECT key, value FROM system_settings")
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	defer rows.Close()
+	settings := map[string]interface{}{}
+	for rows.Next() {
+		var k, v string
+		rows.Scan(&k, &v)
+		settings[k] = v
+	}
+
+	// Include gateway key info
+	var gwKey, gwName string
+	err = db.DB.QueryRow("SELECT key, name FROM gateway_keys WHERE is_active=1 ORDER BY created_at DESC LIMIT 1").Scan(&gwKey, &gwName)
+	if err == nil && gwKey != "" {
+		settings["gateway_key"] = gwKey
+		settings["gateway_key_name"] = gwName
+		if len(gwKey) > 12 {
+			settings["gateway_key_masked"] = gwKey[:8] + "..." + gwKey[len(gwKey)-4:]
+		} else {
+			settings["gateway_key_masked"] = gwKey
 		}
-		}
+	}
+
+	// Include base_url
+	settings["base_url"] = getSettingStr("base_url", "http://localhost:9090/v1")
+
+	writeJSON(w, settings)
+}
