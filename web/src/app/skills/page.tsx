@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type SettingsData } from "@/lib/api";
-import { Zap, Save } from "lucide-react";
+import { Zap, Save, Gauge } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface CompressionMode {
@@ -74,6 +74,17 @@ export default function SkillsPage() {
     queryFn: () => api.getSettings(),
   });
 
+  const headroomEnabled = String(settingsQuery.data?.headroom_enabled ?? "false") === "true";
+
+  // Polled only while enabled: the answer can change without PAAP doing anything
+  // (user starts the proxy in a terminal), and it is dead weight while off.
+  const headroomQuery = useQuery({
+    queryKey: ["headroom-status"],
+    queryFn: () => api.headroomStatus(),
+    enabled: headroomEnabled,
+    refetchInterval: headroomEnabled ? 10_000 : false,
+  });
+
   if (settingsQuery.data && !injectionLoaded) {
     const d = settingsQuery.data as SettingsData;
     if (d.prompt_injection_enabled !== undefined) {
@@ -123,6 +134,12 @@ export default function SkillsPage() {
     queryClient.invalidateQueries({ queryKey: ["settings"] });
   };
 
+  const toggleHeadroom = async () => {
+    await api.updateSettings({ headroom_enabled: headroomEnabled ? "false" : "true" });
+    await queryClient.invalidateQueries({ queryKey: ["settings"] });
+    queryClient.invalidateQueries({ queryKey: ["headroom-status"] });
+  };
+
   return (
     <div className="p-6 md:p-8 min-h-full">
       <h1 className="font-heading text-xl font-bold mb-6">Compression</h1>
@@ -145,12 +162,12 @@ export default function SkillsPage() {
                 onClick={() => setInjectionEnabled(!injectionEnabled)}
                 className={cn(
                   "w-9 h-5 rounded-full relative transition-colors",
-                  injectionEnabled ? "bg-green-500" : "bg-gray-300 dark:bg-gray-600"
+                  injectionEnabled ? "bg-green-500" : "bg-foreground/15"
                 )}
               >
                 <span
                   className={cn(
-                    "absolute top-[2px] w-4 h-4 rounded-full shadow-sm transition-all bg-white",
+                    "absolute top-[2px] w-4 h-4 rounded-full shadow-sm transition-all bg-white ring-1 ring-black/10",
                     injectionEnabled ? "left-[18px]" : "left-[2px]"
                   )}
                 />
@@ -211,12 +228,12 @@ export default function SkillsPage() {
                         onClick={() => toggleMode(mode.id)}
                         className={cn(
                           "w-9 h-5 rounded-full relative transition-colors",
-                          isActive ? "bg-green-500" : "bg-gray-300 dark:bg-gray-600"
+                          isActive ? "bg-green-500" : "bg-foreground/15"
                         )}
                       >
                         <span
                           className={cn(
-                            "absolute top-[2px] w-4 h-4 rounded-full shadow-sm transition-all bg-white",
+                            "absolute top-[2px] w-4 h-4 rounded-full shadow-sm transition-all bg-white ring-1 ring-black/10",
                             isActive ? "left-[18px]" : "left-[2px]"
                           )}
                         />
@@ -250,6 +267,60 @@ export default function SkillsPage() {
               );
             })}
           </div>
+        </div>
+
+        {/* HEADROOM */}
+        <div className="bg-card border border-border rounded-lg p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Gauge className="w-4 h-4 text-muted-foreground" />
+              <span className="text-sm font-medium">Headroom</span>
+            </div>
+            <button
+              onClick={toggleHeadroom}
+              aria-label="Aktifkan Headroom"
+              className={cn(
+                "w-9 h-5 rounded-full relative transition-colors",
+                headroomEnabled ? "bg-green-500" : "bg-foreground/15"
+              )}
+            >
+              <span
+                className={cn(
+                  "absolute top-[2px] w-4 h-4 rounded-full shadow-sm transition-all bg-white ring-1 ring-black/10",
+                  headroomEnabled ? "left-[18px]" : "left-[2px]"
+                )}
+              />
+            </button>
+          </div>
+
+          <p className="text-[11px] text-muted-foreground">
+            Kompresi tool output JSON lewat proxy Headroom, jalan setelah RTK. Butuh service
+            Python terpisah. Tool output kecil di-skip otomatis.
+          </p>
+
+          {headroomEnabled && headroomQuery.data && (
+            <div className="mt-3">
+              {headroomQuery.data.reachable ? (
+                <span className="inline-flex items-center gap-1.5 text-[11px] text-green-600">
+                  <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                  Proxy aktif di {headroomQuery.data.url}
+                </span>
+              ) : (
+                <div className="space-y-1.5">
+                  <span className="inline-flex items-center gap-1.5 text-[11px] text-amber-600">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                    {headroomQuery.data.hint}
+                  </span>
+                  <pre className="px-2.5 py-1.5 text-[11px] rounded border border-input bg-muted/50 font-mono overflow-x-auto">
+                    {headroomQuery.data.command}
+                  </pre>
+                  <p className="text-[10px] text-muted-foreground">
+                    Jalankan di terminal. PAAP mendeteksi sendiri dalam ~30 detik, tanpa restart.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>

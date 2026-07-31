@@ -278,6 +278,9 @@ func migrate() error {
 	DB.Exec(`INSERT OR IGNORE INTO system_settings (key, value) VALUES ('prompt_injection_enabled', 'false')`)
 	DB.Exec(`INSERT OR IGNORE INTO system_settings (key, value) VALUES ('prompt_injection_text', '')`)
 	DB.Exec(`INSERT OR IGNORE INTO system_settings (key, value) VALUES ('prompt_injection_position', 'prepend')`)
+	DB.Exec(`INSERT OR IGNORE INTO system_settings (key, value) VALUES ('headroom_enabled', 'false')`)
+	DB.Exec(`INSERT OR IGNORE INTO system_settings (key, value) VALUES ('headroom_url', 'http://127.0.0.1:8787')`)
+	DB.Exec(`INSERT OR IGNORE INTO system_settings (key, value) VALUES ('headroom_timeout_ms', '15000')`)
 
 	// === Seed claude-* prefixed groups for Claude Code (existing feature) ===
 	// Only seed if no claude-* groups exist at all (first-time setup)

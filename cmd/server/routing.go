@@ -272,6 +272,23 @@ paapOverheadStart := time.Now()
 			}()
 		}
 	}
+	// ── Headroom Compression (after RTK — benchmark: RTK-first 50.5% vs HR-first 47.0%) ──
+	if msgs, ok := rawBody["messages"].([]interface{}); ok {
+		var msgMaps []map[string]interface{}
+		for _, m := range msgs {
+			if mm, ok := m.(map[string]interface{}); ok {
+				msgMaps = append(msgMaps, mm)
+			}
+		}
+		msgMaps = CompressWithHeadroom(msgMaps, modelName)
+		rawBody["messages"] = func() []interface{} {
+			out := make([]interface{}, len(msgMaps))
+			for i, m := range msgMaps {
+				out[i] = m
+			}
+			return out
+		}()
+	}
 	// ── Caveman Content Compression ─────────────────────────
 	cavemanCompressEnabled := getSettingStrCached("caveman_compress_enabled", "true") == "true"
 	if cavemanCompressEnabled {
