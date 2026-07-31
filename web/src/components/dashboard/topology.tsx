@@ -38,13 +38,15 @@ function providerColor(provider: Provider): string {
   if (name.includes("ollama")) return "#10b981";
   if (name.includes("deepseek")) return "#0ea5e9";
   if (name.includes("cloudflare")) return "#f48120";
+  if (name.includes("runapi")) return "#8b5cf6";
   return "#71717a";
 }
 
 function getRings(count: number): { r: number; max: number }[] {
-  if (count <= 6) return [{ r: 200, max: 6 }];
-  if (count <= 12) return [{ r: 160, max: 5 }, { r: 280, max: 7 }];
-  return [{ r: 140, max: 5 }, { r: 240, max: 6 }, { r: 340, max: 8 }];
+  if (count <= 5) return [{ r: 0, max: count }].map(r=>({...r, r: 110})); // single small ring
+  if (count <= 10) return [{ r: 120, max: 5 }, { r: 200, max: count-5 }];
+  if (count <= 16) return [{ r: 100, max: 4 }, { r: 175, max: 6 }, { r: 260, max: count-10 }];
+  return [{ r: 90, max: 4 }, { r: 155, max: 5 }, { r: 225, max: 6 }, { r: 300, max: count-15 }];
 }
 
 function curvedPath(nx: number, ny: number, cx: number, cy: number, seed: number): string {
@@ -116,18 +118,13 @@ export function ProviderTopology({ providers }: ProviderTopologyProps) {
   const cx = dims.w / 2;
   const cy = dims.h / 2;
 
-  // Scale rings + icons to fit the container so outer-ring nodes never clip.
-  // Ring radii from getRings() are nominal; shrink them (and the icons) when
-  // the container is smaller than the outermost ring needs.
-  const outerR = rawRings[rawRings.length - 1]?.r ?? 200;
-  const nominalSize = onlineProviders.length > 10 ? ICON_SIZE_SM : ICON_SIZE;
-  const budget = Math.min(dims.w, dims.h) / 2 - nominalSize / 2 - RING_PADDING;
-  const scale = Math.min(1, Math.max(0.35, budget / outerR));
-  const nodeSize = Math.max(ICON_SIZE_MIN, Math.round(nominalSize * scale));
-  const rings = useMemo(
-    () => rawRings.map((ring) => ({ ...ring, r: ring.r * scale })),
-    [rawRings, scale]
-  );
+  // Fixed icon size — no shrinking.
+  const nodeSize = onlineProviders.length > 12 ? ICON_SIZE_MIN + 6 : ICON_SIZE_SM;
+  const rings = useMemo(() => {
+    // clamp to container but allow more room: 45% min dim
+    const maxR = Math.min(dims.w, dims.h) * 0.45 - nodeSize;
+    return rawRings.map(r => ({ ...r, r: Math.min(r.r, Math.max(40, maxR)) }));
+  }, [rawRings, dims.w, dims.h, nodeSize]);
 
   const nodes = useMemo<NodeLayout[]>(() => {
     let idx = 0;
@@ -209,19 +206,6 @@ export function ProviderTopology({ providers }: ProviderTopologyProps) {
               </feMerge>
             </filter>
           </defs>
-
-          {rings.map((ring, i) => (
-            <circle
-              key={`ring-${i}`}
-              cx={cx}
-              cy={cy}
-              r={ring.r}
-              fill="none"
-              stroke="rgba(255,255,255,0.04)"
-              strokeWidth={1}
-              strokeDasharray="4,8"
-            />
-          ))}
 
           {nodes.map((node, idx) => {
             const isActive = node.status === "active";
@@ -308,17 +292,31 @@ export function ProviderTopology({ providers }: ProviderTopologyProps) {
         </svg>
 
         <div
-          className="absolute z-10 pointer-events-none"
-          style={{ left: cx - 48, top: cy - 28 }}
+          className="absolute z-10"
+          style={{ left: cx - 36, top: cy - 36, width: 72, height: 72 }}
         >
-          <div className="relative">
+          <div className="relative w-full h-full">
+            {/* glow shadow only when active, centered icon */}
             <div
-              className="absolute inset-0 rounded-full blur-xl opacity-20"
-              style={{ background: NEON_CYAN }}
+              className="absolute inset-0 rounded-full transition-all duration-500"
+              style={{
+                background: hasActive ? NEON_CYAN : "transparent",
+                filter: hasActive ? `blur(16px)` : "blur(0px)",
+                opacity: hasActive ? 0.5 : 0,
+                boxShadow: hasActive ? `0 0 24px ${NEON_CYAN}, 0 0 48px ${NEON_CYAN}40` : "none",
+              }}
             />
-            <Image src="/assets/logo.svg" alt="PAAP" width={96} height={28} className="w-24 h-auto mx-auto relative" unoptimized />
+            <div
+              className="relative w-full h-full rounded-full flex items-center justify-center"
+              style={{
+                background: "var(--card, #fff)",
+                border: `2px solid ${hasActive ? NEON_CYAN : "var(--border)"}`,
+                boxShadow: hasActive ? `0 0 20px ${NEON_CYAN}60, inset 0 0 12px ${NEON_CYAN}20` : "0 2px 8px rgba(0,0,0,0.06)",
+              }}
+            >
+              <Image src="/assets/logo.svg" alt="PAAP" width={36} height={36} className="w-9 h-9 object-contain" unoptimized />
+            </div>
           </div>
-          <div className="text-[10px] text-muted-foreground mt-1 font-mono tracking-wider text-center">SMART ROUTER</div>
         </div>
 
         {nodes.map((node) => {
@@ -380,11 +378,11 @@ export function ProviderTopology({ providers }: ProviderTopologyProps) {
               <div
                 className="w-full h-full rounded-full flex items-center justify-center transition-all duration-500 overflow-hidden"
                 style={{
-                  background: isActive ? `${NEON_CYAN}15` : "#0d0e18",
-                  border: `2px solid ${isActive ? NEON_CYAN : color + "50"}`,
+                  background: "var(--card, #fff)",
+                  border: `2px solid ${isActive ? NEON_CYAN : color + "40"}`,
                   boxShadow: isActive
-                    ? `0 0 24px ${NEON_CYAN}50, inset 0 0 12px ${NEON_CYAN}15`
-                    : `0 0 6px ${color}10`,
+                    ? `0 0 20px ${NEON_CYAN}60, 0 0 40px ${NEON_CYAN}30, inset 0 0 10px ${NEON_CYAN}20`
+                    : `0 2px 8px rgba(0,0,0,0.08), 0 0 0 1px ${color}15`,
                 }}
               >
                 {logo ? (

@@ -209,7 +209,7 @@ function AddModelModal({
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div className="w-full max-w-sm bg-card rounded-xl border border-border p-5">
+      <div className="w-full max-w-sm bg-primary/[0.04] rounded-xl border border-primary/15 p-5">
         <div className="flex items-center justify-between mb-4">
           <h2 className="font-heading text-lg font-bold">Add Model</h2>
           <button onClick={onClose} className="p-1 rounded-md hover:bg-muted text-muted-foreground">

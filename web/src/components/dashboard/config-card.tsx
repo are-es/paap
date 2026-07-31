@@ -40,7 +40,7 @@ export function ConfigCard({ baseUrl, apiKey }: ConfigCardProps) {
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-      <div className="relative group rounded-xl border border-border bg-card p-4 transition-all duration-300 hover:border-neon-cyan/20">
+      <div className="relative group rounded-xl border border-primary/15 bg-primary/[0.04] p-4 transition-all duration-300 hover:border-neon-cyan/20">
         <div
           className="absolute inset-x-4 top-0 h-px opacity-0 group-hover:opacity-100 transition-opacity duration-500"
           style={{
@@ -76,7 +76,7 @@ export function ConfigCard({ baseUrl, apiKey }: ConfigCardProps) {
         </div>
       </div>
 
-      <div className="relative group rounded-xl border border-border bg-card p-4 transition-all duration-300 hover:border-neon-cyan/20">
+      <div className="relative group rounded-xl border border-primary/15 bg-primary/[0.04] p-4 transition-all duration-300 hover:border-neon-cyan/20">
         <div
           className="absolute inset-x-4 top-0 h-px opacity-0 group-hover:opacity-100 transition-opacity duration-500"
           style={{

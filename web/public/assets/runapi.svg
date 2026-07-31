@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <rect width="128" height="128" rx="32" fill="#101012"/>
+  <!-- two horizontal loop outlines, overlapping center -->
+  <rect x="24" y="40" width="80" height="28" rx="14" fill="none" stroke="white" stroke-width="10" stroke-linecap="round"/>
+  <rect x="24" y="60" width="80" height="28" rx="14" fill="none" stroke="#9a9aa0" stroke-width="10" stroke-linecap="round"/>
+  <circle cx="64" cy="64" r="10" fill="white"/>
+</svg>

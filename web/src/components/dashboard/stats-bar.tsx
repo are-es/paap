@@ -98,7 +98,7 @@ export function StatsBar() {
         return (
           <div
             key={stat.label}
-            className="group relative rounded-xl border border-border bg-card p-4 text-center transition-all duration-300 hover:border-foreground/10"
+            className="group relative rounded-xl border border-primary/15 bg-primary/[0.04] p-4 text-center transition-all duration-300 hover:border-foreground/10"
             style={{
               "--card-neon": stat.neon.color,
               "--card-glow": stat.neon.glow,

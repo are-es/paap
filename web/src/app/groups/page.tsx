@@ -38,7 +38,7 @@ export default function GroupsPage() {
           {Array.from({ length: 4 }).map((_, i) => (
             <div
               key={i}
-              className="h-32 rounded-xl border border-border bg-card animate-pulse"
+              className="h-32 rounded-xl border border-primary/15 bg-primary/[0.04] animate-pulse"
             />
           ))}
         </div>
@@ -109,7 +109,7 @@ function GroupCard({
     <Link
       href={`/groups/${group.id}`}
       className={cn(
-        "group relative flex flex-col gap-3 p-4 rounded-lg border border-border bg-card",
+        "group relative flex flex-col gap-3 p-4 rounded-lg border border-primary/15 bg-primary/[0.04]",
         "cursor-pointer transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40"
       )}
     >
@@ -158,7 +158,7 @@ function AddGroupModal({ open, onClose }: { open: boolean; onClose: () => void }
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div className="w-full max-w-md bg-card rounded-xl border border-border p-5">
+      <div className="w-full max-w-md bg-primary/[0.04] rounded-xl border border-primary/15 p-5">
         <div className="flex items-center justify-between mb-4">
           <h2 className="font-heading text-lg font-bold">Add Group</h2>
           <button onClick={onClose} className="p-1 rounded-md hover:bg-muted text-muted-foreground">

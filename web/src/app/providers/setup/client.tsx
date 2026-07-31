@@ -711,7 +711,7 @@ function ModelsSection({ providerId }: { providerId: string }) {
         <button
           onClick={() => { if (newModel.trim()) addModelMutation.mutate(newModel.trim()); }}
           disabled={!newModel.trim() || addModelMutation.isPending}
-          className="inline-flex items-center gap-1 px-3 py-1.5 text-sm rounded-lg bg-neon-cyan text-[#0a0a14] font-medium disabled:opacity-50 hover:shadow-[0_0_12px_rgba(0,240,255,0.3)] transition-shadow"
+          className="inline-flex items-center gap-1 px-3 py-1.5 text-sm rounded-lg bg-primary text-primary-foreground font-medium disabled:opacity-40 disabled:bg-muted disabled:text-muted-foreground hover:shadow-[0_0_12px_rgba(0,240,255,0.2)] transition-all"
         >
           <Plus className="w-3.5 h-3.5" />
           Add
@@ -780,7 +780,7 @@ className="px-3 py-2 rounded-lg border border-input bg-background text-sm focus:
         <button
           onClick={() => testMutation.mutate()}
           disabled={testMutation.isPending || !model}
-          className="inline-flex items-center gap-1.5 px-4 py-2 text-sm rounded-lg bg-neon-amber text-[#0a0a14] font-medium disabled:opacity-50 hover:shadow-[0_0_12px_rgba(255,170,0,0.3)] transition-shadow"
+          className="inline-flex items-center gap-1.5 px-4 py-2 text-sm rounded-lg bg-primary text-primary-foreground font-medium disabled:opacity-40 disabled:bg-muted disabled:text-muted-foreground hover:shadow-[0_0_12px_rgba(0,240,255,0.2)] transition-all"
         >
           {testMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />} Run Test
         </button>

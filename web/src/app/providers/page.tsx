@@ -41,7 +41,7 @@ export default function ProvidersPage() {
           {Array.from({ length: 6 }).map((_, i) => (
             <div
               key={i}
-              className="h-44 rounded-xl border border-border bg-card animate-pulse"
+              className="h-44 rounded-xl border border-primary/15 bg-primary/[0.04] animate-pulse"
             />
           ))}
         </div>
@@ -54,7 +54,7 @@ export default function ProvidersPage() {
       )}
 
       {!providersQuery.isLoading && providers.length === 0 && (
-        <div className="rounded-xl border border-dashed border-border bg-card p-10 text-center">
+        <div className="rounded-xl border border-dashed border-primary/15 bg-primary/[0.04] p-10 text-center">
           <p className="text-sm text-muted-foreground">No providers configured yet.</p>
           <Button className="mt-4" onClick={() => setAddOpen(true)}>
             <Plus className="w-4 h-4 mr-1" /> Add Provider
@@ -94,7 +94,7 @@ function ProviderCard({ provider }: { provider: Provider }) {
     <div
       onClick={handleClick}
       className={cn(
-        "group relative rounded-xl border border-border bg-card p-5 cursor-pointer transition-all duration-200 flex flex-col gap-4",
+        "group relative rounded-xl border border-primary/15 bg-primary/[0.04] p-5 cursor-pointer transition-all duration-200 flex flex-col gap-4",
         "before:absolute before:top-0 before:left-0 before:bottom-0 before:w-[3px] before:rounded-l-xl before:opacity-0 before:transition-opacity",
         NEON_ACCENT_STRIP[neon],
         "before:group-hover:opacity-100",

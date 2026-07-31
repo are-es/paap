@@ -13,6 +13,7 @@ const PROVIDER_LOGOS: Record<string, string> = {
   anigravity: "/assets/antigravtiy.ico",
   "fatherless-ai": "/assets/fatherlesai.svg",
   fatherles: "/assets/fatherles-ai.ico",
+  runapi: "/assets/runapi.svg",
 };
 
 export function getProviderLogo(provider: { builtin_id?: string | null; name?: string; icon?: string }): string | null {
