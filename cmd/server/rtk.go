@@ -5,8 +5,30 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"sync"
+)
+
+// RTK tuning constants. Values mirror rtk's own defaults so PAAP-side
+// pre-filtering agrees with what the binary would decide on its own.
+const (
+	rtkDetectWindow    = 1024             // only the head is inspected for a filter match
+	rtkMinCompressSize = 500              // below this, compression isn't worth a subprocess
+	rtkMaxCompressSize = 10 * 1024 * 1024 // 10 MiB hard cap
+)
+
+// Filter-detection patterns, ported from 9router's open-sse/rtk/autodetect.js
+// (itself a port of rtk's Rust auto_detect_filter).
+var (
+	reGitLog      = regexp.MustCompile(`(?m)^[*|/\\ ]*commit [0-9a-f]{7,40}$`)
+	reGitDiff     = regexp.MustCompile(`(?m)^diff --git `)
+	reGitDiffHunk = regexp.MustCompile(`(?m)^@@ `)
+	reGitStatus   = regexp.MustCompile(`(?m)^On branch |^nothing to commit|^Changes (not |to be )|^Untracked files:`)
+	reGoTest      = regexp.MustCompile(`(?m)^(=== RUN|--- (PASS|FAIL|SKIP)|(ok|FAIL)\s+\S+\s)`)
+	reGoBuild     = regexp.MustCompile(`(?m)^(# \S+|\S+\.go:\d+:\d+: )`)
+	reTsc         = regexp.MustCompile(`(?m)^\S+\.tsx?\(\d+,\d+\): error TS\d+`)
+	rePytest      = regexp.MustCompile(`(?m)^(=+ (test session starts|FAILURES|short test summary)|\S+\.py (PASSED|FAILED|\.+))`)
 )
 
 var (
@@ -55,103 +77,132 @@ func IsRTKAvailable() bool {
 	return rtkAvailable
 }
 
-// detectCommand detects what command was run from tool result content
-func detectCommand(content string) string {
-	contentLower := strings.ToLower(content)
-	
-	// Git log patterns
-	if strings.Contains(contentLower, "commit ") && strings.Contains(contentLower, "author:") {
-		return "git"
+// detectFilter maps tool output to an rtk `pipe --filter` name.
+// Returns "" when no filter fits — caller must then skip compression, because
+// `rtk pipe` with no filter is a passthrough that saves nothing.
+// Valid names come from `rtk pipe --filter bogus`; do not invent new ones.
+// Ordering mirrors 9router's autoDetectFilter: git-log, git-diff, git-status,
+// build output, grep, find, then generic log.
+func detectFilter(content string) string {
+	// Peek at the head only — matches rtk's own DETECT_WINDOW.
+	head := content
+	if len(head) > rtkDetectWindow {
+		head = head[:rtkDetectWindow]
 	}
-	if strings.Contains(contentLower, "fix:") || strings.Contains(contentLower, "feat:") {
-		// Looks like git log --oneline
-		return "git"
+
+	switch {
+	case reGitLog.MatchString(head):
+		return "git-log"
+	case reGitDiff.MatchString(head), reGitDiffHunk.MatchString(head):
+		return "git-diff"
+	case reGitStatus.MatchString(head):
+		return "git-status"
+	case reGoTest.MatchString(head):
+		return "go-test"
+	case reGoBuild.MatchString(head):
+		return "go-build"
+	case reTsc.MatchString(head):
+		return "tsc"
+	case rePytest.MatchString(head):
+		return "pytest"
 	}
-	
-	// Diff patterns
-	if strings.HasPrefix(content, "---") || strings.HasPrefix(content, "+++") {
-		return "diff"
+
+	lines := strings.Split(head, "\n")
+	var nonEmpty []string
+	for _, l := range lines {
+		if strings.TrimSpace(l) != "" {
+			nonEmpty = append(nonEmpty, l)
+		}
 	}
-	if strings.Contains(content, "@@") && strings.Contains(content, "-") {
-		return "diff"
+
+	// grep: any of the first 5 non-empty lines look like "file:lineno:content"
+	limit := 5
+	if len(nonEmpty) < limit {
+		limit = len(nonEmpty)
 	}
-	
-	// Test output patterns
-	if strings.Contains(contentLower, "pass") && strings.Contains(contentLower, "fail") {
-		return "test"
+	for _, l := range nonEmpty[:limit] {
+		if isGrepLine(l) {
+			return "grep"
+		}
 	}
-	if strings.Contains(contentLower, "ok") && strings.Contains(contentLower, "error") {
-		return "test"
+
+	// find: every non-empty line is path-like, at least 3 of them
+	if len(nonEmpty) >= 3 {
+		allPaths := true
+		for _, l := range nonEmpty {
+			if !isPathLike(l) {
+				allPaths = false
+				break
+			}
+		}
+		if allPaths {
+			return "find"
+		}
 	}
-	
-	// Error patterns
-	if strings.Contains(contentLower, "error:") || strings.Contains(contentLower, "warning:") {
-		return "err"
+
+	// Generic multi-line noise — rtk's log filter dedupes and truncates.
+	if len(nonEmpty) >= 10 {
+		return "log"
 	}
-	
-	// JSON patterns
-	if strings.HasPrefix(strings.TrimSpace(content), "{") || strings.HasPrefix(strings.TrimSpace(content), "[") {
-		return "json"
-	}
-	
-	// File listing patterns (ls -la)
-	if strings.Contains(content, "total ") && strings.Contains(content, "drwx") {
-		return "ls"
-	}
-	
-	// Grep patterns
-	if strings.Contains(content, ":") && strings.Contains(content, "Binary") {
-		return "grep"
-	}
-	
-	return "pipe"
+
+	return ""
 }
 
-// CompressToolOutput compresses a single tool output using RTK
+// isGrepLine reports whether a line looks like "path:lineno:content".
+func isGrepLine(line string) bool {
+	first := strings.Index(line, ":")
+	if first < 0 {
+		return false
+	}
+	rest := line[first+1:]
+	second := strings.Index(rest, ":")
+	if second < 0 {
+		return false
+	}
+	lineno := rest[:second]
+	if lineno == "" {
+		return false
+	}
+	for _, c := range lineno {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// isPathLike reports whether a line looks like a bare filesystem path.
+func isPathLike(line string) bool {
+	t := strings.TrimSpace(line)
+	if t == "" {
+		return false
+	}
+	if strings.Contains(t, ":") {
+		return false
+	}
+	return strings.HasPrefix(t, ".") || strings.HasPrefix(t, "/") || strings.Contains(t, "/")
+}
+
+// CompressToolOutput compresses a single tool output using RTK.
 func CompressToolOutput(content string, level string) string {
 	if !IsRTKAvailable() {
 		return content
 	}
 
-	// Skip small outputs (< 200 chars)
-	if len(content) < 200 {
+	// Skip blobs that are too small to matter or too large to be worth piping
+	// through a subprocess.
+	if len(content) < rtkMinCompressSize || len(content) > rtkMaxCompressSize {
 		return content
 	}
 
-	// Detect command type
-	cmdType := detectCommand(content)
-	log.Printf("[PAAP] RTK detected command type: %s (%d chars)", cmdType, len(content))
-
-	// Build RTK command
-	var args []string
-	switch cmdType {
-	case "git":
-		args = []string{"git", "log", "--oneline", "-20"}
-	case "diff":
-		args = []string{"diff"}
-	case "test":
-		args = []string{"test"}
-	case "err":
-		args = []string{"err"}
-	case "json":
-		args = []string{"json"}
-	case "ls":
-		args = []string{"ls"}
-	case "grep":
-		args = []string{"grep"}
-	default:
-		args = []string{"pipe"}
-		if level == "ultra" {
-			args = append(args, "--ultra-compact")
-		}
+	filter := detectFilter(content)
+	if filter == "" {
+		// No filter fits. `rtk pipe` without --filter is a passthrough, so
+		// running it would only cost a subprocess.
+		return content
 	}
 
-	// For non-pipe commands, we need to run the command through RTK
-	// But since we have the output already, we'll use pipe with appropriate filtering
-	// RTK's pipe command applies general filtering
-	
-	// Use pipe with ultra-compact for better compression
-	args = []string{"pipe"}
+	args := []string{"pipe", "--filter", filter}
 	if level == "ultra" {
 		args = append(args, "--ultra-compact")
 	}
@@ -165,25 +216,23 @@ func CompressToolOutput(content string, level string) string {
 	cmd.Stderr = &errOut
 
 	if err := cmd.Run(); err != nil {
-		// Log error but return original content
-		log.Printf("[PAAP] RTK compression failed: %v (%s)", err, errOut.String())
+		// Fail open — log and return the original content untouched.
+		log.Printf("[PAAP] RTK compression failed (filter=%s): %v (%s)", filter, err, errOut.String())
 		return content
 	}
 
 	compressed := out.String()
 
-	// If compression didn't help (or made it larger), return original
-	if len(compressed) >= len(content) {
+	// Safety: never return empty, never grow the input.
+	if compressed == "" || len(compressed) >= len(content) {
 		return content
 	}
 
-	saved := len(content) - len(compressed)
-	percent := float64(saved) / float64(len(content)) * 100
-	log.Printf("[PAAP] RTK compressed tool output: %d → %d bytes (%.1f%% saved)", len(content), len(compressed), percent)
-
+	log.Printf("[PAAP] RTK %s: %d -> %d bytes (%.1f%% saved)",
+		filter, len(content), len(compressed),
+		float64(len(content)-len(compressed))/float64(len(content))*100)
 	return compressed
 }
-
 
 // ClientUsesRTK checks if the client is using RTK by looking at tool call commands
 func ClientUsesRTK(messages []map[string]interface{}) bool {
@@ -229,6 +278,19 @@ func ClientUsesRTK(messages []map[string]interface{}) bool {
 	return false
 }
 
+// isErrorToolResult reports whether a tool message carries an error result.
+// Error traces must reach the model verbatim, so they are never compressed.
+// Mirrors 9router's `is_error` / `status:"error"` skip rules.
+func isErrorToolResult(msg map[string]interface{}) bool {
+	if v, ok := msg["is_error"].(bool); ok && v {
+		return true
+	}
+	if s, ok := msg["status"].(string); ok && s == "error" {
+		return true
+	}
+	return false
+}
+
 // CompressToolOutputs compresses all tool result messages in parallel
 func CompressToolOutputs(messages []map[string]interface{}, level string) []map[string]interface{} {
 	if !IsRTKAvailable() {
@@ -246,8 +308,12 @@ func CompressToolOutputs(messages []map[string]interface{}, level string) []map[
 		if role != "tool" {
 			continue
 		}
+		// Never compress error traces — the model needs them verbatim to debug.
+		if isErrorToolResult(msg) {
+			continue
+		}
 		content, ok := msg["content"].(string)
-		if !ok || len(content) < 200 {
+		if !ok || len(content) < rtkMinCompressSize {
 			continue
 		}
 		tasks = append(tasks, task{i, content})
