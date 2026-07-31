@@ -406,12 +406,6 @@ paapOverheadStart := time.Now()
 		return
 	}
 
-	// ── Qoder: use COSY signing ──
-	if providerID == "builtin-qoder" {
-		qoderRequest(w, r, modelID, rawBody, isStream)
-		return
-	}
-
 	upstreamURL := resolveUpstreamURL(baseURL, keyAccountID)
 
 
@@ -541,13 +535,7 @@ paapOverheadMs := time.Since(paapOverheadStart).Milliseconds()
 					bodyBytes2, _ := io.ReadAll(resp2.Body)
 					resp2.Body.Close()
 					var tokensIn, tokensOut int
-					var parsed map[string]interface{}
-					if json.Unmarshal(bodyBytes2, &parsed) == nil {
-						if usage, ok := parsed["usage"].(map[string]interface{}); ok {
-							if pt, ok := usage["prompt_tokens"].(float64); ok { tokensIn = int(pt) }
-							if ct, ok := usage["completion_tokens"].(float64); ok { tokensOut = int(ct) }
-						}
-					}
+					parseUsageJSON(bodyBytes2, &tokensIn, &tokensOut)
 					logProxyRequest(providerID, providerName, modelID, nextKeyID, nextKeyName, groupName, proxyUsed, 200, tokensIn, tokensOut, latencyMs, "")
 					w.Header().Set("Content-Type", "application/json")
 					w.Write(bodyBytes2)
@@ -583,17 +571,7 @@ paapOverheadMs := time.Since(paapOverheadStart).Milliseconds()
 		} else {
 			bodyBytes2, _ := io.ReadAll(resp.Body)
 			// Parse usage from response
-			var parsed map[string]interface{}
-			if json.Unmarshal(bodyBytes2, &parsed) == nil {
-				if usage, ok := parsed["usage"].(map[string]interface{}); ok {
-					if pt, ok := usage["prompt_tokens"].(float64); ok {
-						tokensIn = int(pt)
-					}
-					if ct, ok := usage["completion_tokens"].(float64); ok {
-						tokensOut = int(ct)
-					}
-				}
-			}
+			parseUsageJSON(bodyBytes2, &tokensIn, &tokensOut)
 			logProxyRequest(providerID, providerName, modelID, keyID, keyName, groupName, proxyUsed, resp.StatusCode, tokensIn, tokensOut, latencyMs, "")
 			w.Header().Set("Content-Type", "application/json")
 			w.Write(bodyBytes2)

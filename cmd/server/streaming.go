@@ -64,18 +64,7 @@ func handleStreaming(w http.ResponseWriter, upstreamResp *http.Response) (int, i
 			var chunk map[string]interface{}
 			if json.Unmarshal([]byte(data), &chunk) == nil {
 				if usage, ok := chunk["usage"].(map[string]interface{}); ok {
-					if pt, ok := usage["prompt_tokens"].(float64); ok {
-						tokensIn = int(pt)
-					}
-					if ct, ok := usage["completion_tokens"].(float64); ok {
-						tokensOut = int(ct)
-					}
-					if pt, ok := usage["input_tokens"].(float64); ok {
-						tokensIn = int(pt)
-					}
-					if ct, ok := usage["output_tokens"].(float64); ok {
-						tokensOut = int(ct)
-					}
+					extractUsage(usage, &tokensIn, &tokensOut)
 				}
 			}
 		}
@@ -112,25 +101,30 @@ func handleNonStreaming(w http.ResponseWriter, upstreamResp *http.Response) {
 	io.Copy(w, upstreamResp.Body)
 }
 
+// extractUsage pulls token counts out of a provider usage object.
+// OpenAI names (prompt_tokens/completion_tokens) win; Anthropic-style
+// input_tokens/output_tokens are only a FALLBACK.
+// Some gateways (e.g. go-router) emit both, with the Anthropic pair zeroed —
+// overwriting unconditionally there logged 0 output tokens.
+func extractUsage(usage map[string]interface{}, tokensIn, tokensOut *int) {
+	if pt, ok := usage["prompt_tokens"].(float64); ok && pt > 0 {
+		*tokensIn = int(pt)
+	} else if pt, ok := usage["input_tokens"].(float64); ok && pt > 0 {
+		*tokensIn = int(pt)
+	}
+	if ct, ok := usage["completion_tokens"].(float64); ok && ct > 0 {
+		*tokensOut = int(ct)
+	} else if ct, ok := usage["output_tokens"].(float64); ok && ct > 0 {
+		*tokensOut = int(ct)
+	}
+}
+
 // parseUsageJSON extracts token usage from a JSON response body (non-streaming)
 func parseUsageJSON(body []byte, tokensIn, tokensOut *int) {
 	var parsed map[string]interface{}
 	if json.Unmarshal(body, &parsed) == nil {
 		if usage, ok := parsed["usage"].(map[string]interface{}); ok {
-			// OpenAI standard
-			if pt, ok := usage["prompt_tokens"].(float64); ok {
-				*tokensIn = int(pt)
-			}
-			if ct, ok := usage["completion_tokens"].(float64); ok {
-				*tokensOut = int(ct)
-			}
-			// Some providers use input/output
-			if pt, ok := usage["input_tokens"].(float64); ok {
-				*tokensIn = int(pt)
-			}
-			if ct, ok := usage["output_tokens"].(float64); ok {
-				*tokensOut = int(ct)
-			}
+			extractUsage(usage, tokensIn, tokensOut)
 		}
 	}
 }
@@ -149,18 +143,7 @@ func parseUsageSSE(body []byte, tokensIn, tokensOut *int) {
 		var chunk map[string]interface{}
 		if json.Unmarshal([]byte(data), &chunk) == nil {
 			if usage, ok := chunk["usage"].(map[string]interface{}); ok {
-				if pt, ok := usage["prompt_tokens"].(float64); ok {
-					*tokensIn = int(pt)
-				}
-				if ct, ok := usage["completion_tokens"].(float64); ok {
-					*tokensOut = int(ct)
-				}
-				if pt, ok := usage["input_tokens"].(float64); ok {
-					*tokensIn = int(pt)
-				}
-				if ct, ok := usage["output_tokens"].(float64); ok {
-					*tokensOut = int(ct)
-				}
+				extractUsage(usage, tokensIn, tokensOut)
 			}
 		}
 	}
