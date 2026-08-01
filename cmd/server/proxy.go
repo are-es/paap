@@ -33,16 +33,20 @@ func proxyList(w http.ResponseWriter, r *http.Request) {
 			"id": id, "name": name, "address": address, "port": port,
 			"type": proxyType,
 			"status": func() string {
-				if isActive == 1 && (testStatus == "ok" || (lastLatency > 0 && lastLatency <= 2000)) { return "active" }
+				if isActive == 1 && (testStatus == "ok" || (lastLatency > 0 && lastLatency <= 2000)) {
+					return "active"
+				}
 				return "inactive"
 			}(),
 			"latency_ms": func() interface{} {
-				if lastLatency > 0 { return lastLatency }
+				if lastLatency > 0 {
+					return lastLatency
+				}
 				return nil
 			}(),
-			"country": testRegion,
+			"country":     testRegion,
 			"test_status": testStatus, "test_ip": testIP,
-			"is_active": isActive == 1,
+			"is_active":     isActive == 1,
 			"success_count": successCount, "fail_count": failCount,
 		})
 	}

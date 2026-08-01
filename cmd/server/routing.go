@@ -40,26 +40,48 @@ func isProviderRoundRobin(providerID string) bool {
 	return rr == 1
 }
 
-// autoDisableKey disables key on 4xx (401, 403, 429). 2xx/5xx keep key enabled.
+// autoDisableKey handles non-2xx responses.
+// - 2xx: reset fail_count
+// - 5xx: upstream error, don't disable but log (caller still fallbacks to other keys)
+// - 402 / billing / quota: immediate disable (1x) — saldo habis permanent
+// - 401/403/429: increment fail_count, disable after 3, but caller always retries other keys
+// - 400: check body for billing/quota keywords → immediate disable, else format error → don't disable but still fallback
 // Returns true if key was disabled.
 func autoDisableKey(keyID, keyName string, statusCode int, errBody string) bool {
 	if statusCode >= 200 && statusCode < 300 {
-		// Success — reset fail_count
 		db.DB.Exec("UPDATE api_keys SET fail_count=0, last_error='' WHERE id=?", keyID)
 		return false
 	}
+
+	lowerBody := strings.ToLower(errBody)
+	isBillingError := statusCode == 402 ||
+		strings.Contains(lowerBody, "insufficient_user_quota") ||
+		strings.Contains(lowerBody, "billing_not_configured") ||
+		strings.Contains(lowerBody, "billing verification") ||
+		strings.Contains(lowerBody, "quota") && (strings.Contains(lowerBody, "balance") || strings.Contains(lowerBody, "exceeded") || strings.Contains(lowerBody, "insufficient")) ||
+		strings.Contains(lowerBody, "insufficient") && strings.Contains(lowerBody, "balance")
+
+	if isBillingError {
+		db.DB.Exec("UPDATE api_keys SET fail_count=3, last_error=?, last_tested_at=strftime('%s','now'), is_active=0 WHERE id=?",
+			errBody, keyID)
+		log.Printf("[PAAP] Auto-disabled key %s (%s) — billing/quota exhausted (immediate, %d: %s)",
+			keyName, keyID, statusCode, errBody)
+		return true
+	}
+
 	if statusCode >= 500 {
-		// Server error — log but don't disable (upstream problem, not key problem)
 		log.Printf("[PAAP] Key %s (%s) upstream error %d: %s", keyName, keyID, statusCode, errBody)
+		// don't disable, but caller will still retry other keys (non-200 fallback)
 		return false
 	}
-	// 4xx — client error, key is likely bad (401 unauthorized, 403 forbidden, 429 rate limited)
-	// 4xx — client error. 400 = format issue (not key), 401/403/429 = key problem
+
 	if statusCode == 400 {
-		// 400 = bad request format, not key issue — log but don't disable
+		// format error vs billing already handled above
 		log.Printf("[PAAP] Key %s (%s) format error %d: %s", keyName, keyID, statusCode, errBody)
 		return false
 	}
+
+	// 401/403/404/429 etc — increment, disable after 3
 	db.DB.Exec("UPDATE api_keys SET fail_count=fail_count+1, last_error=?, last_tested_at=strftime('%s','now') WHERE id=?",
 		errBody, keyID)
 	var failCount int
@@ -131,7 +153,7 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	startTime := time.Now()
-paapOverheadStart := time.Now()
+	paapOverheadStart := time.Now()
 
 	// Parse full request body as map — forward ALL OpenAI-compatible params
 	// (tools, tool_choice, response_format, reasoning_effort, etc.)
@@ -184,7 +206,6 @@ paapOverheadStart := time.Now()
 			}
 		}
 	}
-
 
 	// ── Compression Mode Injection ───────────────────────────────
 	compressionMode := getSettingStrCached("compression_mode", "")
@@ -255,7 +276,7 @@ paapOverheadStart := time.Now()
 					}
 				}
 			}
-			
+
 			// Check if client already uses RTK
 			if ClientUsesRTK(msgMaps) {
 				log.Printf("[PAAP] Client already uses RTK — skipping PAAP RTK compression")
@@ -425,7 +446,6 @@ paapOverheadStart := time.Now()
 
 	upstreamURL := resolveUpstreamURL(baseURL, keyAccountID)
 
-
 	req, err := http.NewRequest("POST", upstreamURL, bytes.NewReader(bodyBytes))
 	if err != nil {
 		writeError(w, 500, "failed to create upstream request")
@@ -448,7 +468,7 @@ paapOverheadStart := time.Now()
 	// Execute upstream request with auto-disable + fallback
 	resp, err := client.Do(req)
 	latencyMs := time.Since(startTime).Milliseconds()
-paapOverheadMs := time.Since(paapOverheadStart).Milliseconds()
+	paapOverheadMs := time.Since(paapOverheadStart).Milliseconds()
 	log.Printf("[PAAP] PAAP overhead: %dms (before provider request)", paapOverheadMs)
 
 	if isMerlin {
@@ -501,7 +521,7 @@ paapOverheadMs := time.Since(paapOverheadStart).Milliseconds()
 	defer resp.Body.Close()
 
 	// On non-200: increment fail_count, auto-disable after 3 consecutive failures
-	
+
 	if resp.StatusCode != 200 {
 		// Read error body for diagnostics before closing
 		errBody, _ := io.ReadAll(resp.Body)
@@ -1028,7 +1048,7 @@ func routeByModel(model string) (providerID, providerName, baseURL, modelID, key
 	// Get a key for this provider (round-robin) — handles both apikey and OAuth
 	keyID, keyName, keyValue, keyAccountID, err = getNextActiveKey(providerID)
 	if err != nil {
-		// Fallback: check provider_connections for OAuth tokens
+		// Fallback: check provider_connections for OAuth tokens (Anigravity, etc.)
 		var connID, connEmail, connToken, connRefresh string
 		var connExpires int64
 		connErr := db.DB.QueryRow(`SELECT id, email, access_token, COALESCE(refresh_token,''), COALESCE(expires_at,0) 
@@ -1039,20 +1059,16 @@ func routeByModel(model string) (providerID, providerName, baseURL, modelID, key
 		}
 		keyID = connID
 		keyName = connEmail
-		keyValue = connToken
 		keyAccountID = ""
 		err = nil
 
-		// Refresh if expired
-		if connExpires > 0 && time.Now().Unix() > connExpires-300 {
-			newAccess, newRefresh, expiresIn, refreshErr := RefreshAnigravityToken(connRefresh)
-			if refreshErr != nil {
-				return "", "", "", "", "", "", "", "", fmt.Errorf("connection token expired and refresh failed: %v", refreshErr)
-			}
-			keyValue = newAccess
-			newExpires := time.Now().Add(time.Duration(expiresIn) * time.Second).Unix()
-			db.DB.Exec("UPDATE provider_connections SET access_token=?, refresh_token=?, expires_at=? WHERE id=?",
-				newAccess, newRefresh, newExpires, connID)
+		// Proactive refresh: check expiry with 5 min lead, mutex per connection,
+		// merge refresh_token, atomic DB update. On failure: deactivate connection
+		// and surface clear "reconnect" error instead of silent 401.
+		var refreshErr error
+		keyValue, refreshErr = ensureAnigravityToken(connID, connToken, connRefresh, connExpires)
+		if refreshErr != nil {
+			return "", "", "", "", "", "", "", "", fmt.Errorf("anigravity token error: %v", refreshErr)
 		}
 	}
 
@@ -1265,7 +1281,6 @@ func getGroupInjectPrompt(groupName string) (injectPrompt, injectPosition string
 		Scan(&injectPrompt, &injectPosition)
 	return injectPrompt, injectPosition
 }
-
 
 // getCompressionInstruction returns compressed instruction text for the given mode and level
 

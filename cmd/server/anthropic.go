@@ -242,13 +242,14 @@ func setAnthropicAuth(req *http.Request, baseURL, keyValue string) {
 
 // handleAnthropicStreaming proxies Anthropic SSE and extracts token usage.
 // Anthropic SSE format:
-//   event: message_start
-//   data: {"type":"message_start","message":{"usage":{"input_tokens":N,"output_tokens":0}}}
-//   ...
-//   event: message_delta
-//   data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":N}}
-//   event: message_stop
-//   data: {"type":"message_stop"}
+//
+//	event: message_start
+//	data: {"type":"message_start","message":{"usage":{"input_tokens":N,"output_tokens":0}}}
+//	...
+//	event: message_delta
+//	data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":N}}
+//	event: message_stop
+//	data: {"type":"message_stop"}
 func handleAnthropicStreaming(w http.ResponseWriter, upstreamResp *http.Response) (int, int) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")

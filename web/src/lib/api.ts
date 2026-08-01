@@ -244,6 +244,11 @@ export const api = {
       method: "POST",
     }),
 
+  enableAllKeys: (providerId: number | string) =>
+    fetchApi<{ enabled: number }>(`/api/providers/${providerId}/keys/enable-all`, {
+      method: "POST",
+    }),
+
   toggleKey: (providerId: number | string, keyId: number) =>
     fetchApi<ApiKeyItem>(
       `/api/providers/${providerId}/keys/${keyId}`,

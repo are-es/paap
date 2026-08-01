@@ -2,16 +2,16 @@ package main
 
 import (
 	"crypto/rand"
-	"net"
-	"net/http"
-	"os/exec"
-	"time"
 	"encoding/hex"
 	"encoding/json"
 	"log"
+	"net"
+	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/dolvin/paap/internal/db"
 )
@@ -73,7 +73,6 @@ func main() {
 
 	// ── Health (public, no auth) ─────────────────────────────
 	mux.HandleFunc("/api/health", handleHealth)
-
 
 	// ── Providers ───────────────────────────────────────────
 	mux.HandleFunc("/api/providers", methodRouter(map[string]http.HandlerFunc{
@@ -231,9 +230,9 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	var gwKeyCount int
 	db.DB.QueryRow("SELECT COUNT(*) FROM gateway_keys WHERE is_active=1").Scan(&gwKeyCount)
 	writeJSON(w, map[string]interface{}{
-		"name":    "PAAP — Pangkalan API",
-		"status":  "ok",
-		"version": "0.1.0",
+		"name":              "PAAP — Pangkalan API",
+		"status":            "ok",
+		"version":           "0.1.0",
 		"gateway_key_count": gwKeyCount,
 	})
 }
@@ -286,7 +285,6 @@ func systemShutdown(w http.ResponseWriter, r *http.Request) {
 		os.Exit(0)
 	}()
 }
-
 
 func systemRestart(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"status": "restarting", "message": "Server is restarting..."})

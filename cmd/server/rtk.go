@@ -241,28 +241,28 @@ func ClientUsesRTK(messages []map[string]interface{}) bool {
 		if role != "assistant" {
 			continue
 		}
-		
+
 		toolCalls, ok := msg["tool_calls"].([]interface{})
 		if !ok {
 			continue
 		}
-		
+
 		for _, tc := range toolCalls {
 			tcMap, ok := tc.(map[string]interface{})
 			if !ok {
 				continue
 			}
-			
+
 			fn, ok := tcMap["function"].(map[string]interface{})
 			if !ok {
 				continue
 			}
-			
+
 			args, ok := fn["arguments"].(string)
 			if !ok {
 				continue
 			}
-			
+
 			// Check if command starts with rtk
 			if strings.Contains(args, `"command":`) {
 				// Extract command from JSON args
@@ -273,7 +273,7 @@ func ClientUsesRTK(messages []map[string]interface{}) bool {
 			}
 		}
 	}
-	
+
 	log.Printf("[PAAP] No client RTK detected in %d messages", len(messages))
 	return false
 }

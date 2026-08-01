@@ -327,7 +327,7 @@ func migrate() error {
 	DB.Exec(`INSERT OR IGNORE INTO providers (id, name, base_url, icon, is_active, round_robin, provider_type, auth_type, builtin_id, round_robin_enabled, supports_anthropic, created_at, updated_at)
 		VALUES ('builtin-ollamacloud', 'OllamaCloud', 'https://api.ollamacloud.ai/v1', 'ollama.svg', 1, 1, 'builtin', 'apikey', 'ollamacloud', 1, 1, `+now+`, `+now+`)`)
 	DB.Exec(`INSERT OR IGNORE INTO providers (id, name, base_url, icon, is_active, round_robin, provider_type, auth_type, builtin_id, round_robin_enabled, supports_anthropic, created_at, updated_at)
-		VALUES ('builtin-runapi', 'RunAPI', 'https://api.runapi.co/v1', 'runapi.svg', 1, 1, 'builtin', 'apikey', 'runapi', 1, 1, `+now+`, `+now+`)`)
+		VALUES ('builtin-runapi', 'RunAPI', 'https://runapi.co/v1', 'runapi.svg', 1, 1, 'builtin', 'apikey', 'runapi', 1, 1, `+now+`, `+now+`)`)
 
 	// === Builtin compression skills REMOVED — use folder-based skills only ===
 	// Skills are loaded from ~/.paap/skills/ folder (JSON/MD files)

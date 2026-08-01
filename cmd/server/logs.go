@@ -69,10 +69,28 @@ func logList(w http.ResponseWriter, r *http.Request) {
 	}
 	if s := q.Get("status"); s != "" {
 		switch s {
-		case "success":
-			conds = append(conds, "status_code = 200")
-		case "error":
-			conds = append(conds, "(status_code IS NULL OR status_code != 200)")
+		case "success", "200", "2xx":
+			conds = append(conds, "status_code >= 200 AND status_code < 300")
+		case "error", "4xx", "5xx":
+			if s == "4xx" {
+				conds = append(conds, "status_code >= 400 AND status_code < 500")
+			} else if s == "5xx" {
+				conds = append(conds, "status_code >= 500")
+			} else {
+				conds = append(conds, "(status_code IS NULL OR status_code >= 400)")
+			}
+		default:
+			// support exact codes: 400, 401, 402, 403, 429, 500, etc OR ranges like 400-499
+			if strings.HasSuffix(s, "xx") {
+				// 4xx, 5xx already handled but keep generic: 4xx -> 400-499
+				prefix := strings.TrimSuffix(s, "xx")
+				if v, err := strconv.Atoi(prefix); err == nil {
+					conds = append(conds, fmt.Sprintf("status_code >= %d AND status_code < %d", v*100, v*100+100))
+				}
+			} else if v, err := strconv.Atoi(s); err == nil {
+				conds = append(conds, "status_code = ?")
+				args = append(args, v)
+			}
 		}
 	}
 	if from := q.Get("from"); from != "" {
@@ -201,16 +219,16 @@ func logCostSummary(w http.ResponseWriter, r *http.Request) {
 
 	// Time period aggregations
 	type periodSummary struct {
-		ReqCount   int     `json:"req_count"`
-		CostUSD    float64 `json:"cost_usd"`
-		TokensIn   int     `json:"tokens_in"`
-		TokensOut  int     `json:"tokens_out"`
+		ReqCount  int     `json:"req_count"`
+		CostUSD   float64 `json:"cost_usd"`
+		TokensIn  int     `json:"tokens_in"`
+		TokensOut int     `json:"tokens_out"`
 	}
 	periods := map[string]string{
-		"today":  "date = date('now')",
-		"7d":     "date >= date('now', '-7 days')",
-		"30d":    "date >= date('now', '-30 days')",
-		"all":    "1=1",
+		"today": "date = date('now')",
+		"7d":    "date >= date('now', '-7 days')",
+		"30d":   "date >= date('now', '-30 days')",
+		"all":   "1=1",
 	}
 	summary := map[string]periodSummary{}
 	for name, cond := range periods {
@@ -302,10 +320,25 @@ func logExport(w http.ResponseWriter, r *http.Request) {
 		args = append(args, m)
 	}
 	if s := r.URL.Query().Get("status"); s != "" {
-		if s == "success" {
-			conds = append(conds, "status_code = 200")
-		} else if s == "error" {
-			conds = append(conds, "(status_code IS NULL OR status_code != 200)")
+		switch s {
+		case "success", "200", "2xx":
+			conds = append(conds, "status_code >= 200 AND status_code < 300")
+		case "4xx":
+			conds = append(conds, "status_code >= 400 AND status_code < 500")
+		case "5xx":
+			conds = append(conds, "status_code >= 500")
+		default:
+			if s == "error" {
+				conds = append(conds, "(status_code IS NULL OR status_code >= 400)")
+			} else if strings.HasSuffix(s, "xx") {
+				prefix := strings.TrimSuffix(s, "xx")
+				if v, err := strconv.Atoi(prefix); err == nil {
+					conds = append(conds, fmt.Sprintf("status_code >= %d AND status_code < %d", v*100, v*100+100))
+				}
+			} else if v, err := strconv.Atoi(s); err == nil {
+				conds = append(conds, "status_code = ?")
+				args = append(args, v)
+			}
 		}
 	}
 	if from := r.URL.Query().Get("from"); from != "" {
@@ -410,7 +443,7 @@ func logExport(w http.ResponseWriter, r *http.Request) {
 			"id": row.ID, "timestamp": row.Timestamp,
 			"provider_id": row.ProviderID, "provider_name": row.ProviderName,
 			"model_id": row.ModelID, "key_name": row.KeyName,
-			"group_name": row.GroupName,
+			"group_name":  row.GroupName,
 			"status_code": row.StatusCode, "race_status": row.RaceStatus,
 			"tokens_in": row.TokensIn, "tokens_out": row.TokensOut,
 			"latency_ms": row.LatencyMs, "cost_usd": row.CostUSD,
@@ -448,7 +481,7 @@ var modelPricing = map[string][2]float64{
 	"deepseek/deepseek-v3.1":     {0.19, 0.71},
 	"deepseek/deepseek-v3.2":     {0.217, 0.326},
 	"minimax/minimax-m2.5":       {0.14, 0.81},
-	"qwen/qwen3.5-397b-a17b":    {0.40, 2.65},
+	"qwen/qwen3.5-397b-a17b":     {0.40, 2.65},
 	"z-ai/glm-5":                 {0.48, 1.54},
 	"z-ai/glm-5.2":               {1.26, 3.96},
 }

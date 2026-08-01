@@ -63,7 +63,7 @@ func connectionCreate(w http.ResponseWriter, r *http.Request, providerID string)
 	}
 
 	var body struct {
-		AuthType     string `json:"auth_type"`     // "apikey" or "oauth"
+		AuthType     string `json:"auth_type"` // "apikey" or "oauth"
 		Name         string `json:"name"`
 		Email        string `json:"email"`
 		APIKey       string `json:"api_key"`

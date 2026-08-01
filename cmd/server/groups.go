@@ -51,12 +51,12 @@ func groupList(w http.ResponseWriter, r *http.Request) {
 		list = append(list, map[string]interface{}{
 			"id": id, "name": name, "icon": icon,
 			"round_robin": roundRobin == 1, "parallel": parallel,
-			"race_mode": raceMode,
-			"selected_keys": jsonParse(selectedKeys, "[]"),
+			"race_mode":       raceMode,
+			"selected_keys":   jsonParse(selectedKeys, "[]"),
 			"selected_models": jsonParse(selectedModels, "[]"),
-			"race_count": raceCount,
-			"max_keys": maxKeys,
-			"created_at": createdAt,
+			"race_count":      raceCount,
+			"max_keys":        maxKeys,
+			"created_at":      createdAt,
 		})
 	}
 	if list == nil {
@@ -114,10 +114,10 @@ func groupCreate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]interface{}{
 		"id": id, "name": body.Name, "icon": body.Icon,
 		"round_robin": true, "race_mode": body.RaceMode,
-		"selected_keys": jsonParse(selectedKeysJSON, "[]"),
+		"selected_keys":   jsonParse(selectedKeysJSON, "[]"),
 		"selected_models": jsonParse(selectedModelsJSON, "[]"),
-		"race_count": raceCount,
-		"max_keys": maxKeys,
+		"race_count":      raceCount,
+		"max_keys":        maxKeys,
 	})
 }
 
@@ -186,28 +186,28 @@ func groupGet(w http.ResponseWriter, r *http.Request, id string) {
 	}
 	writeJSON(w, map[string]interface{}{
 		"id": id, "name": name, "icon": icon,
-		"round_robin": roundRobin == 1,
-		"parallel": parallel,
-		"race_mode": raceMode,
-		"selected_keys": jsonParse(selectedKeys, "[]"),
+		"round_robin":     roundRobin == 1,
+		"parallel":        parallel,
+		"race_mode":       raceMode,
+		"selected_keys":   jsonParse(selectedKeys, "[]"),
 		"selected_models": jsonParse(selectedModels, "[]"),
-		"race_count": raceCount,
-		"max_keys": maxKeys,
-		"created_at": createdAt,
+		"race_count":      raceCount,
+		"max_keys":        maxKeys,
+		"created_at":      createdAt,
 	})
 }
 
 func groupUpdate(w http.ResponseWriter, r *http.Request, id string) {
 	var body struct {
-		Name           *string      `json:"name"`
-		Icon           *string      `json:"icon"`
-		RoundRobin     *bool        `json:"round_robin"`
-		Parallel       *int         `json:"parallel"`
-		RaceMode       *string      `json:"race_mode"`
-		SelectedKeys   interface{}  `json:"selected_keys"`
-		SelectedModels interface{}  `json:"selected_models"`
-		RaceCount      *int         `json:"race_count"`
-		MaxKeys        *int         `json:"max_keys"`
+		Name           *string     `json:"name"`
+		Icon           *string     `json:"icon"`
+		RoundRobin     *bool       `json:"round_robin"`
+		Parallel       *int        `json:"parallel"`
+		RaceMode       *string     `json:"race_mode"`
+		SelectedKeys   interface{} `json:"selected_keys"`
+		SelectedModels interface{} `json:"selected_models"`
+		RaceCount      *int        `json:"race_count"`
+		MaxKeys        *int        `json:"max_keys"`
 	}
 	if err := parseBody(r, &body); err != nil {
 		writeError(w, 400, "invalid json")
@@ -225,7 +225,9 @@ func groupUpdate(w http.ResponseWriter, r *http.Request, id string) {
 	}
 	if body.RoundRobin != nil {
 		v := 0
-		if *body.RoundRobin { v = 1 }
+		if *body.RoundRobin {
+			v = 1
+		}
 		sets = append(sets, "round_robin=?")
 		args = append(args, v)
 	}
@@ -682,7 +684,9 @@ func handleGroupRoundRobinModel(w http.ResponseWriter, r *http.Request, groupNam
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 {
 		errStr := string(respBody)
-		if len(errStr) > 500 { errStr = errStr[:500] }
+		if len(errStr) > 500 {
+			errStr = errStr[:500]
+		}
 		if resp.StatusCode == 401 || resp.StatusCode == 403 || resp.StatusCode == 402 {
 			db.DB.Exec("UPDATE api_keys SET is_active=0 WHERE id=?", keyID)
 		}
@@ -795,7 +799,9 @@ func handleGroupFailFirst(w http.ResponseWriter, r *http.Request, groupName stri
 		errBody, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		errStr := string(errBody)
-		if len(errStr) > 500 { errStr = errStr[:500] }
+		if len(errStr) > 500 {
+			errStr = errStr[:500]
+		}
 		if resp.StatusCode == 401 || resp.StatusCode == 403 || resp.StatusCode == 402 {
 			db.DB.Exec("UPDATE api_keys SET is_active=0 WHERE id=?", keyID)
 		}

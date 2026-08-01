@@ -143,7 +143,7 @@ func anigravityRequest(w http.ResponseWriter, r *http.Request, model string, raw
 		}
 
 		contents = append(contents, map[string]interface{}{
-			"role": "user",
+			"role":  "user",
 			"parts": []map[string]interface{}{{"text": textContent}},
 		})
 	}
@@ -355,9 +355,9 @@ func testAnigravityRequest(model, prompt, accessToken string) (string, int64, er
 
 // Gemini response types
 type geminiPart struct {
-	Text             string                 `json:"text"`
-	ThoughtSignature string                 `json:"thoughtSignature"`
-	FunctionCall     *geminiFunctionCall     `json:"functionCall"`
+	Text             string              `json:"text"`
+	ThoughtSignature string              `json:"thoughtSignature"`
+	FunctionCall     *geminiFunctionCall `json:"functionCall"`
 }
 
 type geminiFunctionCall struct {

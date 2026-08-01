@@ -149,12 +149,12 @@ func merlinCapture(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, map[string]interface{}{
-			"status":     "updated",
-			"message":    "Token refreshed successfully!",
-			"key_id":     oldKeyID,
-			"provider":   "Merlin",
-			"tab_id":     tabID,
-			"token_len":  len(token),
+			"status":    "updated",
+			"message":   "Token refreshed successfully!",
+			"key_id":    oldKeyID,
+			"provider":  "Merlin",
+			"tab_id":    tabID,
+			"token_len": len(token),
 		})
 		return
 	}
@@ -169,12 +169,12 @@ func merlinCapture(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, map[string]interface{}{
-		"status":     "ok",
-		"message":    "Merlin account added successfully!",
-		"key_id":     keyID,
-		"provider":   "Merlin",
-		"tab_id":     tabID,
-		"token_len":  len(token),
+		"status":    "ok",
+		"message":   "Merlin account added successfully!",
+		"key_id":    keyID,
+		"provider":  "Merlin",
+		"tab_id":    tabID,
+		"token_len": len(token),
 	})
 }
 
@@ -305,13 +305,13 @@ func convertToMerlinBody(rawBody map[string]interface{}, modelID string) map[str
 		"mode":  "UNIFIED_CHAT",
 		"model": modelID,
 		"metadata": map[string]interface{}{
-			"noTask":          true,
-			"isWebpageChat":   false,
-			"deepResearch":    false,
-			"webAccess":       true,
-			"proFinderMode":   false,
-			"mcpConfig":       map[string]interface{}{"isEnabled": false},
-			"merlinMagic":     false,
+			"noTask":        true,
+			"isWebpageChat": false,
+			"deepResearch":  false,
+			"webAccess":     true,
+			"proFinderMode": false,
+			"mcpConfig":     map[string]interface{}{"isEnabled": false},
+			"merlinMagic":   false,
 		},
 	}
 }

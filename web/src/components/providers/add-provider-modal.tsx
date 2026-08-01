@@ -107,7 +107,7 @@ export function AddProviderModal({ open, onClose }: AddProviderModalProps) {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="w-full max-w-md bg-primary/[0.04] rounded-xl border border-primary/15 p-5">
+      <div className="w-full max-w-md bg-popover border border-border rounded-xl p-5 shadow-2xl">
         <div className="flex items-center justify-between mb-4">
           <h2 id="add-provider-title" className="font-heading text-lg font-bold text-neon-cyan">
             Add Provider

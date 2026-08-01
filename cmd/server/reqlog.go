@@ -159,5 +159,3 @@ func LogResponse(statusCode int, latencyMs int64, tokensIn, tokensOut int, provi
 
 	reqLog.Println(line)
 }
-
-

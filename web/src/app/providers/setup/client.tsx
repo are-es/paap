@@ -343,6 +343,11 @@ function KeysSection({ providerId }: { providerId: string }) {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["keys", providerId] }),
   });
 
+  const enableAllMutation = useMutation({
+    mutationFn: () => api.enableAllKeys(providerId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["keys", providerId] }),
+  });
+
   const keys = keysQuery.data ?? [];
 
   const copyKey = (key: ApiKeyItem) => {
@@ -372,6 +377,12 @@ function KeysSection({ providerId }: { providerId: string }) {
               >
                 <Plus className="w-3 h-3" />
                 Add Key
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); enableAllMutation.mutate(); }}
+                className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] rounded border border-green-500/20 text-green-600 bg-green-500/5 hover:bg-green-500/10 transition-colors font-medium"
+              >
+                Enable All
               </button>
               <button
                 onClick={(e) => { e.stopPropagation(); deleteDisabledMutation.mutate(); }}

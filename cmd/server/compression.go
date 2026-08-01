@@ -41,7 +41,7 @@ func loadCompressionConfigs() map[string]*CompressionConfig {
 
 			config := parseMarkdown(string(data), name)
 			compressionConfigs[name] = config
-			log.Printf("[PAAP] Loaded compression config: %s (%d levels, %d shared rules)", 
+			log.Printf("[PAAP] Loaded compression config: %s (%d levels, %d shared rules)",
 				name, len(config.Levels), len(config.Shared))
 		}
 	})
@@ -63,13 +63,13 @@ func parseMarkdown(content, name string) *CompressionConfig {
 
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		
+
 		// Check for headers
 		if strings.HasPrefix(trimmed, "# ") && !strings.HasPrefix(trimmed, "## ") {
 			// Main title - skip
 			continue
 		}
-		
+
 		if strings.HasPrefix(trimmed, "## ") {
 			// Save previous section
 			if currentSection != "" && currentSubSection != "" {
@@ -80,7 +80,7 @@ func parseMarkdown(content, name string) *CompressionConfig {
 			buffer = nil
 			continue
 		}
-		
+
 		if strings.HasPrefix(trimmed, "### ") {
 			// Save previous subsection
 			if currentSection != "" && currentSubSection != "" {
@@ -183,4 +183,3 @@ func GetCompressionPrompt(mode, level string) string {
 
 	return strings.Join(parts, " ")
 }
-
