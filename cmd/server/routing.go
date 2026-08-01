@@ -854,7 +854,6 @@ func handleGroupRaceAll(w http.ResponseWriter, r *http.Request, modelName, group
 				body[k] = v
 			}
 			body["model"] = t.route.modelID
-			delete(body, "stream_options")
 
 			bodyBytes, _ := json.Marshal(body)
 			upstreamURL := resolveUpstreamURL(t.route.baseURL, t.keyAccID)
@@ -866,7 +865,7 @@ func handleGroupRaceAll(w http.ResponseWriter, r *http.Request, modelName, group
 			}
 
 			setProviderAuth(req, t.route.baseURL, t.keyVal)
-			client := sharedHTTPClient
+			client := &http.Client{Timeout: sharedHTTPClient.Timeout, Transport: sharedHTTPClient.Transport}
 			var raceProxyUsed string
 			if proxyURL := getProviderProxy(t.route.providerID); proxyURL != "" {
 				raceProxyUsed = proxyURL

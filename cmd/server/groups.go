@@ -389,6 +389,7 @@ func getGroupInfo(groupName string) (groupID, raceMode, selectedKeysJSON, select
 func handleGroupRaceKeys(w http.ResponseWriter, r *http.Request, modelName, groupName string, rawBody map[string]interface{}, raceCount int, selectedKeysJSON string) {
 	startTime := time.Now()
 	raceID := genID()
+	isStream, _ := rawBody["stream"].(bool)
 
 	// Parse selected_keys
 	var selectedKeyIDs []string
@@ -505,7 +506,6 @@ func handleGroupRaceKeys(w http.ResponseWriter, r *http.Request, modelName, grou
 				body[k] = v
 			}
 			body["model"] = t.modelID
-			delete(body, "stream_options")
 			bodyBytes, _ := json.Marshal(body)
 
 			upstreamURL := resolveUpstreamURL(t.baseURL, t.keyAccID)
@@ -516,7 +516,7 @@ func handleGroupRaceKeys(w http.ResponseWriter, r *http.Request, modelName, grou
 			}
 			setProviderAuth(req, t.baseURL, t.keyVal)
 
-			client := sharedHTTPClient
+			client := &http.Client{Timeout: sharedHTTPClient.Timeout, Transport: sharedHTTPClient.Transport}
 			var proxyUsed string
 			if proxyURL := getProviderProxy(t.providerID); proxyURL != "" {
 				proxyUsed = proxyURL
@@ -574,13 +574,19 @@ func handleGroupRaceKeys(w http.ResponseWriter, r *http.Request, modelName, grou
 				log.Printf("[PAAP] Race Keys winner: %s/%s (%dms)", res.task.providerName, res.task.modelID, totalMs)
 
 				// Forward response to client
-				w.Header().Set("Content-Type", "text/event-stream")
-				w.Header().Set("Cache-Control", "no-cache")
-				w.Header().Set("Connection", "keep-alive")
-				w.WriteHeader(200)
-				w.Write(res.body)
-				if flusher, ok := w.(http.Flusher); ok {
-					flusher.Flush()
+				if isStream {
+					w.Header().Set("Content-Type", "text/event-stream")
+					w.Header().Set("Cache-Control", "no-cache")
+					w.Header().Set("Connection", "keep-alive")
+					w.WriteHeader(200)
+					w.Write(res.body)
+					if flusher, ok := w.(http.Flusher); ok {
+						flusher.Flush()
+					}
+				} else {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(200)
+					w.Write(res.body)
 				}
 			}
 			continue
@@ -815,6 +821,7 @@ func handleGroupFailFirst(w http.ResponseWriter, r *http.Request, groupName stri
 // handleGroupRRRaceKeys: COMBINED mode — Round Robin picks model, then Race N keys for that model
 func handleGroupRRRaceKeys(w http.ResponseWriter, r *http.Request, groupName string, rawBody map[string]interface{}, maxKeys int) {
 	startTime := time.Now()
+	isStream, _ := rawBody["stream"].(bool)
 
 	groupID := ""
 	db.DB.QueryRow("SELECT id FROM groups WHERE name=?", groupName).Scan(&groupID)
@@ -901,7 +908,6 @@ func handleGroupRRRaceKeys(w http.ResponseWriter, r *http.Request, groupName str
 				body[k] = v
 			}
 			body["model"] = selected.modelID
-			delete(body, "stream_options")
 			bodyBytes, _ := json.Marshal(body)
 
 			upstreamURL := resolveUpstreamURL(selected.baseURL, t.keyAccID)
@@ -912,7 +918,7 @@ func handleGroupRRRaceKeys(w http.ResponseWriter, r *http.Request, groupName str
 			}
 			setProviderAuth(req, selected.baseURL, t.keyValue)
 
-			client := sharedHTTPClient
+			client := &http.Client{Timeout: sharedHTTPClient.Timeout, Transport: sharedHTTPClient.Transport}
 			var proxyUsed string
 			if proxyURL := getProviderProxy(selected.providerID); proxyURL != "" {
 				proxyUsed = proxyURL
@@ -970,13 +976,19 @@ func handleGroupRRRaceKeys(w http.ResponseWriter, r *http.Request, groupName str
 				log.Printf("[PAAP] RR+Race Keys winner: %s/%s key=%s (%dms)", selected.providerName, selected.modelID, res.task.keyName, totalMs)
 
 				// Forward response to client
-				w.Header().Set("Content-Type", "text/event-stream")
-				w.Header().Set("Cache-Control", "no-cache")
-				w.Header().Set("Connection", "keep-alive")
-				w.WriteHeader(200)
-				w.Write(res.body)
-				if flusher, ok := w.(http.Flusher); ok {
-					flusher.Flush()
+				if isStream {
+					w.Header().Set("Content-Type", "text/event-stream")
+					w.Header().Set("Cache-Control", "no-cache")
+					w.Header().Set("Connection", "keep-alive")
+					w.WriteHeader(200)
+					w.Write(res.body)
+					if flusher, ok := w.(http.Flusher); ok {
+						flusher.Flush()
+					}
+				} else {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(200)
+					w.Write(res.body)
 				}
 			}
 			continue
