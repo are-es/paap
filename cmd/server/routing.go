@@ -54,18 +54,10 @@ func autoDisableKey(keyID, keyName string, statusCode int, errBody string) bool 
 	}
 
 	lowerBody := strings.ToLower(errBody)
-	isBillingError := statusCode == 402 ||
-		strings.Contains(lowerBody, "insufficient_user_quota") ||
-		strings.Contains(lowerBody, "billing_not_configured") ||
-		strings.Contains(lowerBody, "billing verification") ||
-		strings.Contains(lowerBody, "quota") && (strings.Contains(lowerBody, "balance") || strings.Contains(lowerBody, "exceeded") || strings.Contains(lowerBody, "insufficient")) ||
-		strings.Contains(lowerBody, "insufficient") && strings.Contains(lowerBody, "balance")
-
-	if isBillingError {
+	if statusCode == 402 || strings.Contains(lowerBody, "quota") || strings.Contains(lowerBody, "billing") {
 		db.DB.Exec("UPDATE api_keys SET fail_count=3, last_error=?, last_tested_at=strftime('%s','now'), is_active=0 WHERE id=?",
 			errBody, keyID)
-		log.Printf("[PAAP] Auto-disabled key %s (%s) — billing/quota exhausted (immediate, %d: %s)",
-			keyName, keyID, statusCode, errBody)
+		log.Printf("[PAAP] Auto-disabled key %s (%s) — billing/quota exhausted (%d: %s)", keyName, keyID, statusCode, errBody)
 		return true
 	}
 
@@ -1066,7 +1058,7 @@ func routeByModel(model string) (providerID, providerName, baseURL, modelID, key
 		// merge refresh_token, atomic DB update. On failure: deactivate connection
 		// and surface clear "reconnect" error instead of silent 401.
 		var refreshErr error
-		keyValue, refreshErr = ensureAnigravityToken(connID, connToken, connRefresh, connExpires)
+		keyValue, refreshErr = ensureAnigravityToken(connID, connRefresh)
 		if refreshErr != nil {
 			return "", "", "", "", "", "", "", "", fmt.Errorf("anigravity token error: %v", refreshErr)
 		}

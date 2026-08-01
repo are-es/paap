@@ -12,7 +12,6 @@ import (
 	"net/url"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/dolvin/paap/internal/db"
@@ -601,77 +600,22 @@ func RefreshAnigravityToken(refreshToken string) (newAccess, newRefresh string, 
 	return tokenResp.AccessToken, newRefresh, tokenResp.ExpiresIn, nil
 }
 
-// ── Anigravity Token Lifecycle ──────────────────────────────
-
-const anigravityRefreshLeadSec = 300 // refresh 5 min before expiry
-
-// Per-connection mutex prevents N concurrent requests from all hitting Google's
-// token endpoint simultaneously (rate limit + wasted refreshes).
-var anigravityRefreshLocks sync.Map // connID -> *sync.Mutex
-
-func getAnigravityRefreshLock(connID string) *sync.Mutex {
-	val, _ := anigravityRefreshLocks.LoadOrStore(connID, &sync.Mutex{})
-	return val.(*sync.Mutex)
-}
-
-// ensureAnigravityToken proactively refreshes an expired/expiring Anigravity
-// OAuth token. Called BEFORE the request is forwarded — not as a fallback.
-//
-// Mirrors 9router's shouldRefreshCredentials + withCredentialRefreshLock pattern:
-//   - Check expires_at with 5 min lead buffer
-//   - Per-connection mutex (prevents N concurrent refreshes)
-//   - Merge: keep old refresh_token if Google doesn't return a new one
-//   - Atomic DB update inside the lock
-//
-// Returns the (possibly refreshed) access token, or an error that means
-// "reconnect needed" — the caller should surface this, not silently 401.
-func ensureAnigravityToken(connID string, accessToken string, refreshToken string, expiresAt int64) (string, error) {
+// ensureAnigravityToken refreshes expired token on-demand.
+// Called on 401 only — no proactive refresh, no mutex soup.
+func ensureAnigravityToken(connID, refreshToken string) (string, error) {
 	if refreshToken == "" {
-		return accessToken, fmt.Errorf("no refresh token stored — reconnect at /api/oauth/anigravity/start")
+		return "", fmt.Errorf("no refresh token — reconnect at /api/oauth/anigravity/start")
 	}
-	if expiresAt > 0 && time.Now().Unix() < expiresAt-anigravityRefreshLeadSec {
-		return accessToken, nil // not expired yet, use as-is
-	}
-
-	lock := getAnigravityRefreshLock(connID)
-	lock.Lock()
-	defer lock.Unlock()
-
-	// Re-read after acquiring lock — another goroutine may have refreshed already.
-	var curAccess, curRefresh string
-	var curExpires int64
-	err := db.DB.QueryRow(
-		`SELECT access_token, COALESCE(refresh_token,''), COALESCE(expires_at,0)
-		 FROM provider_connections WHERE id=?`, connID,
-	).Scan(&curAccess, &curRefresh, &curExpires)
+	log.Printf("[PAAP] Anigravity token expired for %s — refreshing...", connID[:8])
+	newAccess, newRefresh, expiresIn, err := RefreshAnigravityToken(refreshToken)
 	if err != nil {
-		return "", fmt.Errorf("connection %s not found: %v", connID[:8], err)
-	}
-	// Another goroutine refreshed while we waited.
-	if curExpires > 0 && time.Now().Unix() < curExpires-anigravityRefreshLeadSec {
-		return curAccess, nil
-	}
-
-	log.Printf("[PAAP] Anigravity token expired/expiring for %s — refreshing...", connID[:8])
-	newAccess, newRefresh, expiresIn, refreshErr := RefreshAnigravityToken(curRefresh)
-	if refreshErr != nil {
-		log.Printf("[PAAP] Anigravity refresh FAILED for %s: %v — deleting stale connection", connID[:8], refreshErr)
-		// Don't leave a dead connection sitting there — user will keep hitting 401.
-		// Delete it so the next request fails clearly ("no active connections")
-		// instead of retrying a dead token forever.
 		db.DB.Exec("UPDATE provider_connections SET is_active=0 WHERE id=?", connID)
-		return "", fmt.Errorf("refresh failed (token revoked or quota exceeded): %v — reconnect at /api/oauth/anigravity/start", refreshErr)
+		return "", fmt.Errorf("refresh failed: %v — reconnect at /api/oauth/anigravity/start", err)
 	}
-
 	newExpires := time.Now().Add(time.Duration(expiresIn) * time.Second).Unix()
-	_, dbErr := db.DB.Exec(
-		"UPDATE provider_connections SET access_token=?, refresh_token=?, expires_at=? WHERE id=?",
-		newAccess, newRefresh, newExpires, connID,
-	)
-	if dbErr != nil {
-		log.Printf("[PAAP] WARNING: Anigravity refresh succeeded but DB update failed: %v", dbErr)
-	}
-	log.Printf("[PAAP] Anigravity token refreshed for %s, expires in %ds", connID[:8], expiresIn)
+	db.DB.Exec("UPDATE provider_connections SET access_token=?, refresh_token=?, expires_at=? WHERE id=?",
+		newAccess, newRefresh, newExpires, connID)
+	log.Printf("[PAAP] Anigravity token refreshed for %s", connID[:8])
 	return newAccess, nil
 }
 

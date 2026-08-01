@@ -68,29 +68,19 @@ func logList(w http.ResponseWriter, r *http.Request) {
 		args = append(args, m)
 	}
 	if s := q.Get("status"); s != "" {
-		switch s {
-		case "success", "200", "2xx":
-			conds = append(conds, "status_code >= 200 AND status_code < 300")
-		case "error", "4xx", "5xx":
-			if s == "4xx" {
-				conds = append(conds, "status_code >= 400 AND status_code < 500")
-			} else if s == "5xx" {
-				conds = append(conds, "status_code >= 500")
-			} else {
-				conds = append(conds, "(status_code IS NULL OR status_code >= 400)")
-			}
-		default:
-			// support exact codes: 400, 401, 402, 403, 429, 500, etc OR ranges like 400-499
-			if strings.HasSuffix(s, "xx") {
-				// 4xx, 5xx already handled but keep generic: 4xx -> 400-499
-				prefix := strings.TrimSuffix(s, "xx")
-				if v, err := strconv.Atoi(prefix); err == nil {
-					conds = append(conds, fmt.Sprintf("status_code >= %d AND status_code < %d", v*100, v*100+100))
-				}
-			} else if v, err := strconv.Atoi(s); err == nil {
-				conds = append(conds, "status_code = ?")
-				args = append(args, v)
-			}
+		filters := map[string]string{
+			"success": "status_code >= 200 AND status_code < 300",
+			"200":     "status_code >= 200 AND status_code < 300",
+			"2xx":     "status_code >= 200 AND status_code < 300",
+			"error":   "(status_code IS NULL OR status_code >= 400)",
+			"4xx":     "status_code >= 400 AND status_code < 500",
+			"5xx":     "status_code >= 500",
+		}
+		if cond, ok := filters[s]; ok {
+			conds = append(conds, cond)
+		} else if v, err := strconv.Atoi(s); err == nil {
+			conds = append(conds, "status_code = ?")
+			args = append(args, v)
 		}
 	}
 	if from := q.Get("from"); from != "" {
