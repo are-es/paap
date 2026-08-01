@@ -31,13 +31,11 @@ func getProviderRRCounter(providerID string) *atomic.Int64 {
 }
 
 // isProviderRoundRobin checks if a provider has round-robin enabled
+// Reads round_robin_enabled (UI toggle) OR round_robin (direct DB)
 func isProviderRoundRobin(providerID string) bool {
-	var rr int
-	err := db.DB.QueryRow("SELECT round_robin FROM providers WHERE id = ?", providerID).Scan(&rr)
-	if err != nil {
-		return true // default to round-robin on error
-	}
-	return rr == 1
+	var rr, rrEnabled int
+	db.DB.QueryRow("SELECT COALESCE(round_robin,0), COALESCE(round_robin_enabled,0) FROM providers WHERE id = ?", providerID).Scan(&rr, &rrEnabled)
+	return rr == 1 || rrEnabled == 1
 }
 
 // autoDisableKey handles non-2xx responses.
