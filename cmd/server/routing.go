@@ -47,8 +47,7 @@ func isProviderRoundRobin(providerID string) bool {
 // - 2xx: reset fail_count
 // - 5xx: upstream error, don't disable but log (caller still fallbacks to other keys)
 // - 402 / billing / quota: immediate disable (1x) — saldo habis permanent
-// - 401/403/429: increment fail_count, disable after 3, but caller always retries other keys
-// - 400: check body for billing/quota keywords → immediate disable, else format error → don't disable but still fallback
+// - Other 4xx: fallback only, NO disable, NO fail_count increment
 // Returns true if key was disabled.
 func autoDisableKey(keyID, keyName string, statusCode int, errBody string) bool {
 	if statusCode >= 200 && statusCode < 300 {
@@ -65,36 +64,13 @@ func autoDisableKey(keyID, keyName string, statusCode int, errBody string) bool 
 	}
 
 	if statusCode >= 500 {
-		// Server error — don't disable on first failure, but disable if already at fail_count >= 3
-		var failCount int
-		db.DB.QueryRow("SELECT fail_count FROM api_keys WHERE id=?", keyID).Scan(&failCount)
-		if failCount >= 3 {
-			db.DB.Exec("UPDATE api_keys SET is_active=0 WHERE id=?", keyID)
-			log.Printf("[PAAP] Auto-disabled key %s (%s) — fail_count=%d + upstream error %d", keyName, keyID, failCount, statusCode)
-			return true
-		}
-		log.Printf("[PAAP] Key %s (%s) upstream error %d: %s", keyName, keyID, statusCode, errBody)
+		// Server error — fallback only, no disable
+		log.Printf("[PAAP] Key %s (%s) server error %d: %s", keyName, keyID, statusCode, errBody)
 		return false
 	}
 
-	if statusCode == 400 {
-		// format error vs billing already handled above
-		log.Printf("[PAAP] Key %s (%s) format error %d: %s", keyName, keyID, statusCode, errBody)
-		return false
-	}
-
-	// 401/403/404/429 etc — increment, disable after 3
-	db.DB.Exec("UPDATE api_keys SET fail_count=fail_count+1, last_error=?, last_tested_at=strftime('%s','now') WHERE id=?",
-		errBody, keyID)
-	var failCount int
-	db.DB.QueryRow("SELECT fail_count FROM api_keys WHERE id=?", keyID).Scan(&failCount)
-	if failCount >= 3 {
-		db.DB.Exec("UPDATE api_keys SET is_active=0 WHERE id=?", keyID)
-		log.Printf("[PAAP] Auto-disabled key %s (%s) — %d consecutive failures (last: %d %s)",
-			keyName, keyID, failCount, statusCode, errBody)
-		return true
-	}
-	log.Printf("[PAAP] Key %s (%s) fail_count=%d — %d: %s", keyName, keyID, failCount, statusCode, errBody)
+	// All other 4xx (401, 403, 404, 429, etc): fallback only, no disable, no fail_count change
+	log.Printf("[PAAP] Key %s (%s) client error %d: %s", keyName, keyID, statusCode, errBody)
 	return false
 }
 
@@ -334,6 +310,29 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	// ── Tool System: auto-route based on content detection ───
+	var toolUsed string
+	var originalModel string
+	if toolRouteModel := ProcessTools(rawBody); toolRouteModel != "" {
+		// Remember original model for logging
+		originalModel = modelName
+		// Find which tool triggered
+		for _, t := range GetActiveTools() {
+			if t.RouteModel == toolRouteModel {
+				toolUsed = t.Name
+				break
+			}
+		}
+		// Override model to tool's route model
+		rawBody["model"] = toolRouteModel
+		modelName = toolRouteModel
+		log.Printf("[PAAP] [TOOLS] Model overridden: %s → %s (tool: %s)", originalModel, toolRouteModel, toolUsed)
+	}
+
+	// ── Vision Tool (legacy): replace images with text descriptions ────
+	if getSettingStrCached("vision_enabled", "false") == "true" {
+		rawBody = applyVisionTool(rawBody)
+	}
 	// If no reasoning_effort at all and model contains meta/muse/lama → inject low (cheapest, safe)
 	// We don't know final provider yet here (routeByModel), so we check model name heuristic + inject after routing
 
@@ -483,7 +482,7 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		// Timeout — try next key before giving up
-		logProxyRequest(providerID, providerName, modelID, keyID, keyName, groupName, proxyUsed, 504, 0, 0, latencyMs, err.Error())
+		logProxyRequest(providerID, providerName, modelID, keyID, keyName, groupName, proxyUsed, 504, 0, 0, latencyMs, err.Error(), nil)
 		// Try remaining keys on timeout
 		tried := map[string]bool{keyID: true}
 		for {
@@ -503,13 +502,13 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 			latencyMs2 := time.Since(startTime2).Milliseconds()
 			if err2 == nil && resp2.StatusCode == 200 {
 				if isStream {
-					tIn, tOut := handleStreaming(w, resp2)
+					tIn, tOut, streamBody := handleStreaming(w, resp2)
 					resp2.Body.Close()
-					logProxyRequest(providerID, providerName, modelID, nextKeyID, nextKeyName, groupName, proxyUsed, 200, tIn, tOut, latencyMs2, "")
+					logProxyRequest(providerID, providerName, modelID, nextKeyID, nextKeyName, groupName, proxyUsed, 200, tIn, tOut, latencyMs2, "", streamBody)
 				} else {
 					bodyBytes3, _ := io.ReadAll(resp2.Body)
 					resp2.Body.Close()
-					logProxyRequest(providerID, providerName, modelID, nextKeyID, nextKeyName, groupName, proxyUsed, 200, 0, 0, latencyMs2, "")
+					logProxyRequest(providerID, providerName, modelID, nextKeyID, nextKeyName, groupName, proxyUsed, 200, 0, 0, latencyMs2, "", bodyBytes3)
 					w.Header().Set("Content-Type", "application/json")
 					w.Write(bodyBytes3)
 				}
@@ -518,7 +517,7 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 			if resp2 != nil {
 				resp2.Body.Close()
 			}
-			logProxyRequest(providerID, providerName, modelID, nextKeyID, nextKeyName, groupName, proxyUsed, 504, 0, 0, latencyMs2, fmt.Sprintf("retry timeout: %v", err2))
+			logProxyRequest(providerID, providerName, modelID, nextKeyID, nextKeyName, groupName, proxyUsed, 504, 0, 0, latencyMs2, fmt.Sprintf("retry timeout: %v", err2), nil)
 		}
 	}
 	defer resp.Body.Close()
@@ -545,7 +544,7 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 			nextKeyID, nextKeyName, nextKeyValue, _, ferr := getNextActiveKeyExcluding(providerID, tried)
 			if ferr != nil {
 				// No more active keys — return last error
-				logProxyRequest(providerID, providerName, modelID, keyID, keyName, groupName, proxyUsed, resp.StatusCode, 0, 0, latencyMs, "all keys exhausted")
+				logProxyRequest(providerID, providerName, modelID, keyID, keyName, groupName, proxyUsed, resp.StatusCode, 0, 0, latencyMs, "all keys exhausted", nil)
 				w.Header().Set("Content-Type", "application/json")
 				writeError(w, resp.StatusCode, fmt.Sprintf("all keys exhausted for provider %s", providerName))
 				return
@@ -560,23 +559,23 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 
 			if err2 != nil {
 				// Timeout on this key — log with 504, continue to next key
-				logProxyRequest(providerID, providerName, modelID, nextKeyID, nextKeyName, groupName, proxyUsed, 504, 0, 0, latencyMs, err2.Error())
+				logProxyRequest(providerID, providerName, modelID, nextKeyID, nextKeyName, groupName, proxyUsed, 504, 0, 0, latencyMs, err2.Error(), nil)
 				continue // try next key instead of giving up
 			}
 
 			if resp2.StatusCode == 200 {
 				// Success!
 				if isStream {
-					tIn, tOut := handleStreaming(w, resp2)
+					tIn, tOut, streamBody := handleStreaming(w, resp2)
 					resp2.Body.Close()
-					logProxyRequest(providerID, providerName, modelID, nextKeyID, nextKeyName, groupName, proxyUsed, 200, tIn, tOut, latencyMs, "")
+					logProxyRequest(providerID, providerName, modelID, nextKeyID, nextKeyName, groupName, proxyUsed, 200, tIn, tOut, latencyMs, "", streamBody)
 				} else {
 					// Parse tokens from non-streaming response
 					bodyBytes2, _ := io.ReadAll(resp2.Body)
 					resp2.Body.Close()
 					var tokensIn, tokensOut int
 					parseUsageJSON(bodyBytes2, &tokensIn, &tokensOut)
-					logProxyRequest(providerID, providerName, modelID, nextKeyID, nextKeyName, groupName, proxyUsed, 200, tokensIn, tokensOut, latencyMs, "")
+					logProxyRequest(providerID, providerName, modelID, nextKeyID, nextKeyName, groupName, proxyUsed, 200, tokensIn, tokensOut, latencyMs, "", bodyBytes2)
 					w.Header().Set("Content-Type", "application/json")
 					w.Write(bodyBytes2)
 				}
@@ -599,20 +598,25 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 	if isStream {
 		if isMerlin {
 			handleMerlinStreaming(w, resp, modelID)
-			logProxyRequest(providerID, providerName, modelID, keyID, keyName, groupName, proxyUsed, resp.StatusCode, 0, 0, latencyMs, "")
+			logProxyRequestWithTool(providerID, providerName, modelID, keyID, keyName, groupName, proxyUsed, resp.StatusCode, 0, 0, latencyMs, "", nil, toolUsed, originalModel)
 		} else {
-			tIn, tOut := handleStreaming(w, resp)
-			logProxyRequest(providerID, providerName, modelID, keyID, keyName, groupName, proxyUsed, resp.StatusCode, tIn, tOut, latencyMs, "")
+			tIn, tOut, streamBody := handleStreaming(w, resp)
+			logProxyRequestWithTool(providerID, providerName, modelID, keyID, keyName, groupName, proxyUsed, resp.StatusCode, tIn, tOut, latencyMs, "", streamBody, toolUsed, originalModel)
 		}
 	} else {
 		if isMerlin {
-			logProxyRequest(providerID, providerName, modelID, keyID, keyName, groupName, proxyUsed, resp.StatusCode, 0, 0, latencyMs, "")
+			logProxyRequestWithTool(providerID, providerName, modelID, keyID, keyName, groupName, proxyUsed, resp.StatusCode, 0, 0, latencyMs, "", nil, toolUsed, originalModel)
 			handleMerlinNonStreaming(w, resp, modelID)
 		} else {
 			bodyBytes2, _ := io.ReadAll(resp.Body)
 			// Parse usage from response
 			parseUsageJSON(bodyBytes2, &tokensIn, &tokensOut)
-			logProxyRequest(providerID, providerName, modelID, keyID, keyName, groupName, proxyUsed, resp.StatusCode, tokensIn, tokensOut, latencyMs, "")
+			logProxyRequestWithTool(providerID, providerName, modelID, keyID, keyName, groupName, proxyUsed, resp.StatusCode, tokensIn, tokensOut, latencyMs, "", bodyBytes2, toolUsed, originalModel)
+			// Add tool header in response if tool was used
+			if toolUsed != "" {
+				w.Header().Set("X-PAAP-Tool", toolUsed)
+				w.Header().Set("X-PAAP-Original-Model", originalModel)
+			}
 			w.Header().Set("Content-Type", "application/json")
 			w.Write(bodyBytes2)
 		}
@@ -967,6 +971,9 @@ func routeByModel(model string) (providerID, providerName, baseURL, modelID, key
 	if strings.HasPrefix(model, "claude-") {
 		model = strings.TrimPrefix(model, "claude-")
 	}
+	// Strip "[1m]" suffix (Claude Code 1M context window marker)
+	model = strings.TrimSuffix(model, "[1m]")
+	model = strings.TrimSuffix(model, "[1M]")
 
 	// Handle provider/model format (e.g., "grok-cli/grok-4.5")
 	if parts := strings.SplitN(model, "/", 2); len(parts) == 2 {
@@ -974,7 +981,7 @@ func routeByModel(model string) (providerID, providerName, baseURL, modelID, key
 		actualModel := parts[1]
 		var pName, pBaseURL string
 		// Try by ID first, then by slugified name
-		err = db.DB.QueryRow("SELECT name, base_url FROM providers WHERE id=? AND is_active=1", provSlug).Scan(&pName, &pBaseURL)
+		err = db.DB.QueryRow("SELECT id, name, base_url FROM providers WHERE id=? AND is_active=1", provSlug).Scan(&providerID, &pName, &pBaseURL)
 		if err != nil {
 			// Try builtin_id
 			err = db.DB.QueryRow("SELECT id, name, base_url FROM providers WHERE builtin_id=? AND is_active=1", provSlug).Scan(&providerID, &pName, &pBaseURL)

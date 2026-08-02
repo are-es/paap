@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -18,10 +17,11 @@ var (
 	reqLogMu   sync.Mutex
 )
 
-const maxReqLogSize = 2 * 1024 * 1024 // 2MB
+const maxReqLogSize = 1 * 1024 * 1024 // 1MB
 
 func initReqLog() {
 	reqLogOnce.Do(func() {
+		// Log file di ~/.paap/logs/requests.log (biar satu tempat sama paap CLI)
 		home, _ := os.UserHomeDir()
 		dir := filepath.Join(home, ".paap", "logs")
 		os.MkdirAll(dir, 0755)
@@ -127,8 +127,8 @@ func LogRequest(method, path, clientKey string, body map[string]interface{}) {
 	reqLog.Printf("→ REQUEST %s\n%s\n", ts, string(data))
 }
 
-// LogResponse logs the outgoing response to the request log file.
-func LogResponse(statusCode int, latencyMs int64, tokensIn, tokensOut int, provider, keyName, keyValue, errMsg string, retryCount int) {
+// LogResponse logs the outgoing response to the request log file (full JSON format).
+func LogResponse(statusCode int, latencyMs int64, tokensIn, tokensOut int, provider, keyName, keyValue, errMsg string, retryCount int, responseBody []byte) {
 	initReqLog()
 	if reqLog == nil {
 		return
@@ -140,22 +140,49 @@ func LogResponse(statusCode int, latencyMs int64, tokensIn, tokensOut int, provi
 
 	ts := time.Now().Format("2006-01-02T15:04:05Z")
 
-	status := fmt.Sprintf("%d", statusCode)
-	if statusCode == 504 {
-		status = "504 TIMEOUT"
-	} else if statusCode == 0 {
-		status = "0 (unknown)"
+	entry := map[string]interface{}{
+		"timestamp":       ts,
+		"direction":       "←",
+		"status_code":     statusCode,
+		"latency_ms":      latencyMs,
+		"tokens_in":       tokensIn,
+		"tokens_out":      tokensOut,
+		"provider":        provider,
+		"key":             maskKey(keyValue),
 	}
 
-	line := fmt.Sprintf("← RESPONSE %s | %s | %dms | %d in / %d out | provider=%s key=%s (%s)",
-		ts, status, latencyMs, tokensIn, tokensOut, provider, keyName, maskKey(keyValue))
+	// Parse response body if available
+	if len(responseBody) > 0 {
+		var parsed map[string]interface{}
+		if err := json.Unmarshal(responseBody, &parsed); err == nil {
+			// Extract choices content
+			if choices, ok := parsed["choices"].([]interface{}); ok && len(choices) > 0 {
+				if choice, ok := choices[0].(map[string]interface{}); ok {
+					if msg, ok := choice["message"].(map[string]interface{}); ok {
+						entry["response"] = map[string]interface{}{
+							"role":    msg["role"],
+							"content": msg["content"],
+						}
+					}
+				}
+			}
+			// Extract usage
+			if usage, ok := parsed["usage"].(map[string]interface{}); ok {
+				entry["usage"] = usage
+			}
+		} else {
+			// Can't parse, log raw
+			entry["raw_response"] = string(responseBody)
+		}
+	}
 
 	if errMsg != "" {
-		line += fmt.Sprintf(" | error=%s", errMsg)
+		entry["error"] = errMsg
 	}
 	if retryCount > 0 {
-		line += fmt.Sprintf(" | retries=%d", retryCount)
+		entry["retries"] = retryCount
 	}
 
-	reqLog.Println(line)
+	data, _ := json.MarshalIndent(entry, "", "  ")
+	reqLog.Printf("← RESPONSE %s\n%s\n", ts, string(data))
 }

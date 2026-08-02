@@ -681,7 +681,7 @@ func handleGroupRoundRobinModel(w http.ResponseWriter, r *http.Request, groupNam
 	resp, err := client.Do(req)
 	latencyMs := time.Since(startTime).Milliseconds()
 	if err != nil {
-		logProxyRequest(selected.providerID, selected.providerName, selected.modelID, keyID, keyName, groupName, proxyUsed, 0, 0, 0, latencyMs, err.Error())
+		logProxyRequest(selected.providerID, selected.providerName, selected.modelID, keyID, keyName, groupName, proxyUsed, 0, 0, 0, latencyMs, err.Error(), nil)
 		writeError(w, 502, fmt.Sprintf("upstream request failed: %v", err))
 		return
 	}
@@ -696,7 +696,7 @@ func handleGroupRoundRobinModel(w http.ResponseWriter, r *http.Request, groupNam
 		if resp.StatusCode == 401 || resp.StatusCode == 403 || resp.StatusCode == 402 {
 			db.DB.Exec("UPDATE api_keys SET is_active=0 WHERE id=?", keyID)
 		}
-		logProxyRequest(selected.providerID, selected.providerName, selected.modelID, keyID, keyName, groupName, proxyUsed, resp.StatusCode, 0, 0, latencyMs, errStr)
+		logProxyRequest(selected.providerID, selected.providerName, selected.modelID, keyID, keyName, groupName, proxyUsed, resp.StatusCode, 0, 0, latencyMs, errStr, nil)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(resp.StatusCode)
 		w.Write(respBody)
@@ -705,7 +705,7 @@ func handleGroupRoundRobinModel(w http.ResponseWriter, r *http.Request, groupNam
 
 	var tokensIn, tokensOut int
 	parseUsageJSON(respBody, &tokensIn, &tokensOut)
-	logProxyRequest(selected.providerID, selected.providerName, selected.modelID, keyID, keyName, groupName, proxyUsed, 200, tokensIn, tokensOut, latencyMs, "")
+	logProxyRequest(selected.providerID, selected.providerName, selected.modelID, keyID, keyName, groupName, proxyUsed, 200, tokensIn, tokensOut, latencyMs, "", nil)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(respBody)
@@ -795,7 +795,7 @@ func handleGroupFailFirst(w http.ResponseWriter, r *http.Request, groupName stri
 			resp.Body.Close()
 			var tokensIn, tokensOut int
 			parseUsageJSON(respBody, &tokensIn, &tokensOut)
-			logProxyRequest(rt.providerID, rt.providerName, rt.modelID, keyID, keyName, groupName, proxyUsed, 200, tokensIn, tokensOut, latencyMs, "")
+			logProxyRequest(rt.providerID, rt.providerName, rt.modelID, keyID, keyName, groupName, proxyUsed, 200, tokensIn, tokensOut, latencyMs, "", nil)
 			log.Printf("[PAAP] Fail First '%s': success with %s/%s (%dms)", groupName, rt.providerName, rt.modelID, latencyMs)
 			w.Header().Set("Content-Type", "application/json")
 			w.Write(respBody)
@@ -812,7 +812,7 @@ func handleGroupFailFirst(w http.ResponseWriter, r *http.Request, groupName stri
 			db.DB.Exec("UPDATE api_keys SET is_active=0 WHERE id=?", keyID)
 		}
 		log.Printf("[PAAP] Fail First '%s': %s/%s returned %d — %s", groupName, rt.providerName, rt.modelID, resp.StatusCode, errStr)
-		logProxyRequest(rt.providerID, rt.providerName, rt.modelID, keyID, keyName, groupName, proxyUsed, resp.StatusCode, 0, 0, latencyMs, errStr)
+		logProxyRequest(rt.providerID, rt.providerName, rt.modelID, keyID, keyName, groupName, proxyUsed, resp.StatusCode, 0, 0, latencyMs, errStr, nil)
 	}
 
 	writeError(w, 502, fmt.Sprintf("all models in group '%s' failed", groupName))

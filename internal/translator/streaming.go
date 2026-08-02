@@ -159,12 +159,13 @@ func (st *StreamTranslator) ProcessChunk(chunk map[string]interface{}) (outputTo
 }
 
 // ProcessReader reads OpenAI SSE stream and converts to Anthropic SSE format.
-// Returns (tokensIn, tokensOut).
-func (st *StreamTranslator) ProcessReader(r io.Reader) (int, int) {
+// Returns (tokensIn, tokensOut, fullContent).
+func (st *StreamTranslator) ProcessReader(r io.Reader) (int, int, string) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
 
-	var tokensIn, tokensOut int
+	var tokensOut int
+	var fullContent strings.Builder
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -177,30 +178,41 @@ func (st *StreamTranslator) ProcessReader(r io.Reader) (int, int) {
 		if data == "[DONE]" {
 			// If we haven't emitted stop yet (no finish_reason chunk), do it now
 			if st.started && (st.blockStarted || st.hasToolCalls) {
-				if st.blockStarted {
-					st.emitContentBlockStop()
-				}
-				st.emitMessageDelta("end_turn", tokensOut)
+				st.emitContentBlockStop()
+				st.emitMessageDelta("end_turn", 0)
 				st.emitMessageStop()
 			}
 			break
 		}
 
 		var chunk map[string]interface{}
-		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+		if json.Unmarshal([]byte(data), &chunk) != nil {
 			continue
+		}
+
+		// Capture content from delta for logging
+		if choices, ok := chunk["choices"].([]interface{}); ok && len(choices) > 0 {
+			if choice, ok := choices[0].(map[string]interface{}); ok {
+				if delta, ok := choice["delta"].(map[string]interface{}); ok {
+					if content, ok := delta["content"].(string); ok {
+						fullContent.WriteString(content)
+					}
+				}
+			}
 		}
 
 		out := st.ProcessChunk(chunk)
 		if out > 0 {
 			tokensOut = out
 		}
-		if st.inputTokens > 0 && tokensIn == 0 {
-			tokensIn = st.inputTokens
+		if pt, ok := chunk["usage"].(map[string]interface{}); ok {
+			if prompt, ok := pt["prompt_tokens"].(float64); ok && prompt > 0 {
+				st.inputTokens = int(prompt)
+			}
 		}
 	}
 
-	return tokensIn, tokensOut
+	return st.inputTokens, tokensOut, fullContent.String()
 }
 
 // ── Anthropic SSE Event Emitters ─────────────────────────────

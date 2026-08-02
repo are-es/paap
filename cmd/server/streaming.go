@@ -11,8 +11,9 @@ import (
 )
 
 // handleStreaming proxies SSE and extracts token usage from the final chunk.
-// Optimized: batch writes every 4KB or 50ms to reduce flush overhead.
-func handleStreaming(w http.ResponseWriter, upstreamResp *http.Response) (int, int) {
+// Also captures full content for logging.
+// Returns: tokensIn, tokensOut, fullResponseBody
+func handleStreaming(w http.ResponseWriter, upstreamResp *http.Response) (int, int, []byte) {
 	// Set response headers for SSE
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -23,10 +24,13 @@ func handleStreaming(w http.ResponseWriter, upstreamResp *http.Response) (int, i
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		log.Println("Warning: ResponseWriter does not support Flushing")
-		return 0, 0
+		return 0, 0, nil
 	}
 
 	var tokensIn, tokensOut int
+	var fullContent strings.Builder
+	var model string
+
 	scanner := bufio.NewScanner(upstreamResp.Body)
 	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
 
@@ -54,7 +58,7 @@ func handleStreaming(w http.ResponseWriter, upstreamResp *http.Response) (int, i
 		batch = append(batch, lineBytes...)
 		batchSize += len(lineBytes)
 
-		// Parse usage from data lines
+		// Parse usage and content from data lines
 		if strings.HasPrefix(line, "data:") {
 			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 			if data == "[DONE]" {
@@ -65,6 +69,20 @@ func handleStreaming(w http.ResponseWriter, upstreamResp *http.Response) (int, i
 			if json.Unmarshal([]byte(data), &chunk) == nil {
 				if usage, ok := chunk["usage"].(map[string]interface{}); ok {
 					extractUsage(usage, &tokensIn, &tokensOut)
+				}
+				// Capture content from delta
+				if choices, ok := chunk["choices"].([]interface{}); ok && len(choices) > 0 {
+					if choice, ok := choices[0].(map[string]interface{}); ok {
+						if delta, ok := choice["delta"].(map[string]interface{}); ok {
+							if content, ok := delta["content"].(string); ok {
+								fullContent.WriteString(content)
+							}
+						}
+					}
+				}
+				// Capture model name
+				if m, ok := chunk["model"].(string); ok && m != "" && model == "" {
+					model = m
 				}
 			}
 		}
@@ -88,7 +106,29 @@ func handleStreaming(w http.ResponseWriter, upstreamResp *http.Response) (int, i
 	// Final flush
 	flushBatch()
 
-	return tokensIn, tokensOut
+	// Build virtual full response body for logging
+	virtualResponse := map[string]interface{}{
+		"id":      "",
+		"model":   model,
+		"choices": []interface{}{
+			map[string]interface{}{
+				"index": 0,
+				"message": map[string]interface{}{
+					"role":    "assistant",
+					"content": fullContent.String(),
+				},
+				"finish_reason": "stop",
+			},
+		},
+		"usage": map[string]interface{}{
+			"prompt_tokens":     tokensIn,
+			"completion_tokens": tokensOut,
+			"total_tokens":      tokensIn + tokensOut,
+		},
+	}
+	bodyBytes, _ := json.Marshal(virtualResponse)
+
+	return tokensIn, tokensOut, bodyBytes
 }
 
 // handleNonStreaming proxies non-streaming responses

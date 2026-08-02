@@ -71,6 +71,25 @@ func anthropicMessagesHandler(w http.ResponseWriter, r *http.Request) {
 	messages = compressAnthropicToolResults(messages, modelName)
 	rawBody["messages"] = messages
 
+	// ── Tool System: auto-route based on content detection (Anthropic format) ───
+	var toolUsed string
+	var originalModel string
+	if toolRouteModel := ProcessTools(rawBody); toolRouteModel != "" {
+		// Remember original model for logging
+		originalModel = modelName
+		// Find which tool triggered
+		for _, t := range GetActiveTools() {
+			if t.RouteModel == toolRouteModel {
+				toolUsed = t.Name
+				break
+			}
+		}
+		// Override model to tool's route model
+		rawBody["model"] = toolRouteModel
+		modelName = toolRouteModel
+		log.Printf("[PAAP] [TOOLS] Anthropic model overridden: %s → %s (tool: %s)", originalModel, toolRouteModel, toolUsed)
+	}
+
 	// Ensure minimum max_tokens
 	if mt, ok := rawBody["max_tokens"].(float64); !ok || mt < 20000 {
 		rawBody["max_tokens"] = 20000
@@ -105,7 +124,7 @@ func anthropicMessagesHandler(w http.ResponseWriter, r *http.Request) {
 
 	if supportsAnthropic == 0 {
 		// Provider does NOT support Anthropic — translate via OpenAI
-		handleAnthropicTranslated(w, r, rawBody, providerID, providerName, baseURL, modelID, keyID, keyName, keyValue, keyAccountID, isStream, startTime)
+		handleAnthropicTranslated(w, r, rawBody, providerID, providerName, baseURL, modelID, keyID, keyName, keyValue, keyAccountID, isStream, startTime, toolUsed, originalModel)
 		return
 	}
 
@@ -154,7 +173,7 @@ func anthropicMessagesHandler(w http.ResponseWriter, r *http.Request) {
 	latencyMs := time.Since(startTime).Milliseconds()
 
 	if err != nil {
-		logProxyRequest(providerID, providerName, modelID, keyID, keyName, "", proxyUsed, 0, 0, 0, latencyMs, err.Error())
+		logProxyRequest(providerID, providerName, modelID, keyID, keyName, "", proxyUsed, 0, 0, 0, latencyMs, err.Error(), nil)
 		writeError(w, 502, fmt.Sprintf("upstream request failed: %v", err))
 		return
 	}
@@ -169,7 +188,7 @@ func anthropicMessagesHandler(w http.ResponseWriter, r *http.Request) {
 		for {
 			nextKeyID, nextKeyName, nextKeyValue, _, ferr := getNextActiveKeyExcluding(providerID, tried)
 			if ferr != nil {
-				logProxyRequest(providerID, providerName, modelID, keyID, keyName, "", proxyUsed, resp.StatusCode, 0, 0, latencyMs, "all keys exhausted")
+				logProxyRequest(providerID, providerName, modelID, keyID, keyName, "", proxyUsed, resp.StatusCode, 0, 0, latencyMs, "all keys exhausted", nil)
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(resp.StatusCode)
 				io.Copy(w, resp.Body)
@@ -185,7 +204,7 @@ func anthropicMessagesHandler(w http.ResponseWriter, r *http.Request) {
 			latencyMs = time.Since(startTime).Milliseconds()
 
 			if err2 != nil {
-				logProxyRequest(providerID, providerName, modelID, nextKeyID, nextKeyName, "", proxyUsed, 0, 0, 0, latencyMs, err2.Error())
+				logProxyRequest(providerID, providerName, modelID, nextKeyID, nextKeyName, "", proxyUsed, 0, 0, 0, latencyMs, err2.Error(), nil)
 				writeError(w, 502, fmt.Sprintf("upstream request failed: %v", err2))
 				return
 			}
@@ -198,7 +217,7 @@ func anthropicMessagesHandler(w http.ResponseWriter, r *http.Request) {
 					tokensIn, tokensOut = handleAnthropicNonStreaming(w, resp2)
 				}
 				resp2.Body.Close()
-				logProxyRequest(providerID, providerName, modelID, nextKeyID, nextKeyName, "", proxyUsed, 200, tokensIn, tokensOut, latencyMs, "")
+				logProxyRequest(providerID, providerName, modelID, nextKeyID, nextKeyName, "", proxyUsed, 200, tokensIn, tokensOut, latencyMs, "", nil)
 				return
 			}
 
@@ -211,7 +230,7 @@ func anthropicMessagesHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Non-auth error — return as-is
 	if resp.StatusCode != 200 {
-		logProxyRequest(providerID, providerName, modelID, keyID, keyName, "", proxyUsed, resp.StatusCode, 0, 0, latencyMs, fmt.Sprintf("upstream status %d", resp.StatusCode))
+		logProxyRequest(providerID, providerName, modelID, keyID, keyName, "", proxyUsed, resp.StatusCode, 0, 0, latencyMs, fmt.Sprintf("upstream status %d", resp.StatusCode), nil)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(resp.StatusCode)
 		io.Copy(w, resp.Body)
@@ -225,7 +244,12 @@ func anthropicMessagesHandler(w http.ResponseWriter, r *http.Request) {
 	} else {
 		tokensIn, tokensOut = handleAnthropicNonStreaming(w, resp)
 	}
-	logProxyRequest(providerID, providerName, modelID, keyID, keyName, "", proxyUsed, 200, tokensIn, tokensOut, latencyMs, "")
+	logProxyRequestWithTool(providerID, providerName, modelID, keyID, keyName, "", proxyUsed, 200, tokensIn, tokensOut, latencyMs, "", nil, toolUsed, originalModel)
+	// Add tool header in response if tool was used
+	if toolUsed != "" {
+		w.Header().Set("X-PAAP-Tool", toolUsed)
+		w.Header().Set("X-PAAP-Original-Model", originalModel)
+	}
 }
 
 // resolveAnthropicUpstreamURL converts OpenAI base URL to Anthropic endpoint.
@@ -547,7 +571,7 @@ func handleAnthropicNonStreaming(w http.ResponseWriter, upstreamResp *http.Respo
 func handleAnthropicTranslated(w http.ResponseWriter, r *http.Request,
 	rawBody map[string]interface{},
 	providerID, providerName, baseURL, modelID, keyID, keyName, keyValue, keyAccountID string,
-	isStream bool, startTime time.Time) {
+	isStream bool, startTime time.Time, toolUsed, originalModel string) {
 
 	// Convert Anthropic request to OpenAI format
 	openaiBody, err := translator.AnthropicToOpenAIRequest(rawBody)
@@ -597,7 +621,7 @@ func handleAnthropicTranslated(w http.ResponseWriter, r *http.Request,
 	latencyMs := time.Since(startTime).Milliseconds()
 
 	if err != nil {
-		logProxyRequest(providerID, providerName, modelID, keyID, keyName, "", proxyUsed, 0, 0, 0, latencyMs, err.Error())
+		logProxyRequest(providerID, providerName, modelID, keyID, keyName, "", proxyUsed, 0, 0, 0, latencyMs, err.Error(), nil)
 		writeError(w, 502, fmt.Sprintf("upstream request failed: %v", err))
 		return
 	}
@@ -618,7 +642,7 @@ func handleAnthropicTranslated(w http.ResponseWriter, r *http.Request,
 		for {
 			nextKeyID, nextKeyName, nextKeyValue, _, ferr := getNextActiveKeyExcluding(providerID, tried)
 			if ferr != nil {
-				logProxyRequest(providerID, providerName, modelID, keyID, keyName, "", proxyUsed, resp.StatusCode, 0, 0, latencyMs, "all keys exhausted")
+				logProxyRequest(providerID, providerName, modelID, keyID, keyName, "", proxyUsed, resp.StatusCode, 0, 0, latencyMs, "all keys exhausted", nil)
 				w.Header().Set("Content-Type", "application/json")
 				writeError(w, resp.StatusCode, fmt.Sprintf("all keys exhausted for provider %s", providerName))
 				return
@@ -631,18 +655,18 @@ func handleAnthropicTranslated(w http.ResponseWriter, r *http.Request,
 			latencyMs = time.Since(startTime).Milliseconds()
 
 			if err2 != nil {
-				logProxyRequest(providerID, providerName, modelID, nextKeyID, nextKeyName, "", proxyUsed, 0, 0, 0, latencyMs, err2.Error())
+				logProxyRequest(providerID, providerName, modelID, nextKeyID, nextKeyName, "", proxyUsed, 0, 0, 0, latencyMs, err2.Error(), nil)
 				continue
 			}
 
 			if resp2.StatusCode == 200 {
 				// Success — translate response
 				if isStream {
-					tIn, tOut := handleTranslatedStreaming(w, resp2, modelID)
-					logProxyRequest(providerID, providerName, modelID, nextKeyID, nextKeyName, "", proxyUsed, 200, tIn, tOut, latencyMs, "")
+					tIn, tOut, _ := handleTranslatedStreaming(w, resp2, modelID)
+					logProxyRequestWithTool(providerID, providerName, modelID, nextKeyID, nextKeyName, "", proxyUsed, 200, tIn, tOut, latencyMs, "", nil, toolUsed, originalModel)
 				} else {
 					tIn, tOut := handleTranslatedNonStreaming(w, resp2)
-					logProxyRequest(providerID, providerName, modelID, nextKeyID, nextKeyName, "", proxyUsed, 200, tIn, tOut, latencyMs, "")
+					logProxyRequestWithTool(providerID, providerName, modelID, nextKeyID, nextKeyName, "", proxyUsed, 200, tIn, tOut, latencyMs, "", nil, toolUsed, originalModel)
 				}
 				return
 			}
@@ -659,16 +683,16 @@ func handleAnthropicTranslated(w http.ResponseWriter, r *http.Request,
 
 	// Success — translate response
 	if isStream {
-		tIn, tOut := handleTranslatedStreaming(w, resp, modelID)
-		logProxyRequest(providerID, providerName, modelID, keyID, keyName, "", proxyUsed, 200, tIn, tOut, latencyMs, "")
+		tIn, tOut, _ := handleTranslatedStreaming(w, resp, modelID)
+		logProxyRequestWithTool(providerID, providerName, modelID, keyID, keyName, "", proxyUsed, 200, tIn, tOut, latencyMs, "", nil, toolUsed, originalModel)
 	} else {
 		tIn, tOut := handleTranslatedNonStreaming(w, resp)
-		logProxyRequest(providerID, providerName, modelID, keyID, keyName, "", proxyUsed, 200, tIn, tOut, latencyMs, "")
+		logProxyRequestWithTool(providerID, providerName, modelID, keyID, keyName, "", proxyUsed, 200, tIn, tOut, latencyMs, "", nil, toolUsed, originalModel)
 	}
 }
 
 // handleTranslatedStreaming converts OpenAI SSE stream to Anthropic SSE format
-func handleTranslatedStreaming(w http.ResponseWriter, upstreamResp *http.Response, model string) (int, int) {
+func handleTranslatedStreaming(w http.ResponseWriter, upstreamResp *http.Response, model string) (int, int, []byte) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -678,12 +702,33 @@ func handleTranslatedStreaming(w http.ResponseWriter, upstreamResp *http.Respons
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		log.Println("Warning: ResponseWriter does not support Flushing")
-		return 0, 0
+		return 0, 0, nil
 	}
 
 	st := translator.NewStreamTranslator(w, flusher.Flush, model)
-	tIn, tOut := st.ProcessReader(upstreamResp.Body)
-	return tIn, tOut
+	tIn, tOut, fullContent := st.ProcessReader(upstreamResp.Body)
+
+	// Build virtual response body for logging
+	virtualResponse := map[string]interface{}{
+		"model": model,
+		"choices": []interface{}{
+			map[string]interface{}{
+				"index": 0,
+				"message": map[string]interface{}{
+					"role":    "assistant",
+					"content": fullContent,
+				},
+				"finish_reason": "stop",
+			},
+		},
+		"usage": map[string]interface{}{
+			"prompt_tokens":     tIn,
+			"completion_tokens": tOut,
+			"total_tokens":      tIn + tOut,
+		},
+	}
+	bodyBytes, _ := json.Marshal(virtualResponse)
+	return tIn, tOut, bodyBytes
 }
 
 // handleTranslatedNonStreaming converts OpenAI JSON response to Anthropic JSON format

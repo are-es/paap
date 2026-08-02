@@ -26,24 +26,47 @@ curl -s http://localhost:9090/api/health
 
 1. Client sends to `/v1/messages` (Anthropic) or `/v1/chat/completions` (OpenAI)
 2. PAAP validates gateway key
-3. Routes to provider based on `provider/model` format
-4. Translates Anthropic → OpenAI (all providers go through translator)
-5. Compresses request (caveman, RTK, headroom)
-6. Sends to provider, returns response
+3. **Tools check** — if content triggers a tool (e.g., images → Vision), model is auto-overridden
+4. Routes to provider based on `provider/model` format
+5. Translates Anthropic → OpenAI (all providers go through translator)
+6. Compresses request (caveman, RTK, headroom)
+7. Sends to provider, returns response
 
 ## Model Format
 
 Format: `provider/model` (e.g., `hcnsec/DeepSeek-V4-Flash`)
 
 Claude Code adds `claude-` prefix → PAAP strips it automatically.
+Claude Code adds `[1m]` suffix (1M context) → PAAP strips it automatically.
+
+## Tools System
+
+Tools auto-route requests based on content detection. When a tool triggers, PAAP overrides the model to the tool's configured route model.
+
+### Vision Tool
+
+Detects images in request (Anthropic `image` blocks or OpenAI `image_url` blocks). Routes to configured vision model. Images are sent intact — no conversion to text descriptions.
+
+**Config:** Tools → Vision → Select route model
+
+**Logs:** Tool usage tracked in logs with `tool_used` and `original_model` columns.
+
+**API:** `GET /api/tools`, `POST /api/tools`, `PUT /api/tools/{id}`, `DELETE /api/tools/{id}`
+
+### Adding New Tools
+
+1. Add tool type to `cmd/server/tools.go` (const + detection logic in `ProcessTools()`)
+2. Add UI card in `web/src/app/tools/page.tsx`
+3. Add setup page in `web/src/app/tools/<type>/page.tsx`
 
 ## Structure
 
 ```
-cmd/server/           Go backend (routing, handlers, providers)
+cmd/server/           Go backend (routing, handlers, providers, tools)
 internal/translator/  Anthropic ↔ OpenAI conversion
 internal/db/          SQLite database
 web/src/              Next.js frontend
+web/src/app/tools/    Tools UI pages
 config/               Compression configs (caveman.md, ponytail.md)
 ```
 
@@ -84,8 +107,11 @@ SELECT id, name, is_active, fail_count FROM api_keys WHERE provider_id='...';
 # Reset key
 UPDATE api_keys SET fail_count=0, is_active=1 WHERE id='...';
 
-# Check logs
-SELECT timestamp, provider_name, status_code FROM logs ORDER BY timestamp DESC LIMIT 10;
+# Check logs (includes tool tracking)
+SELECT timestamp, provider_name, model_id, tool_used, original_model FROM logs ORDER BY timestamp DESC LIMIT 10;
+
+# Check tools
+SELECT id, name, type, enabled, route_model FROM tools;
 ```
 
 ## Add Provider
@@ -106,3 +132,5 @@ xiaomi, meta, google, kimchi, openrouter, grok-cli, anigravity, ollamacloud, run
 - Keys with `fail_count >= 3` are auto-disabled
 - Tool names >64 chars are auto-truncated
 - `config/*.md` are compression configs, not skill files
+- Tools system: Vision auto-routes image requests to configured model
+- `[1m]` suffix from Claude Code is stripped automatically

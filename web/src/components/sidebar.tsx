@@ -11,7 +11,7 @@ import {
   ScrollText,
   Layers,
   Globe,
-  Zap,
+  Wrench,
   Settings,
   ChevronLeft,
   ChevronRight,
@@ -26,6 +26,7 @@ const STORAGE_KEY = "paap-sidebar-collapsed";
 const navItems = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/providers", label: "Providers", icon: Server },
+  { href: "/tools", label: "Tools", icon: Wrench },
   { href: "/skills", label: "Compression", icon: Sparkles },
   { href: "/logs", label: "Logs", icon: ScrollText },
   { href: "/groups", label: "Groups", icon: Layers },

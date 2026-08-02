@@ -480,7 +480,7 @@ func handleAnigravityNonStreaming(w http.ResponseWriter, resp *http.Response) {
 		completionTokens = geminiResp.UsageMetadata.CandidatesTokenCount
 	}
 	logProxyRequest("builtin-anigravity", "Anigravity CLI", "anigravity", logConnID, logConnName, "", "",
-		200, promptTokens, completionTokens, 0, "")
+		200, promptTokens, completionTokens, 0, "", nil)
 }
 
 // handleAnigravityStreaming converts Gemini SSE to OpenAI SSE format

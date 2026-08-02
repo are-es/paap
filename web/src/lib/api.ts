@@ -89,6 +89,16 @@ export interface CompressionSkill {
   is_builtin: boolean;
 }
 
+export interface Tool {
+  id: string;
+  name: string;
+  type: string;
+  enabled: boolean;
+  route_model: string;
+  priority: number;
+  config: string;
+}
+
 export interface LogEntry {
   id: number;
   timestamp: string;
@@ -105,6 +115,8 @@ export interface LogEntry {
   cost_usd?: number;
   compression_ratio?: number;
   error?: string;
+  tool_used?: string;
+  original_model?: string;
 }
 
 export interface CostSummary {
@@ -181,6 +193,26 @@ export const api = {
       body: JSON.stringify(payload),
     }),
   headroomStatus: () => fetchApi<HeadroomStatus>("/api/headroom/status"),
+
+  // --- Tools ---
+  getTools: () => fetchApi<Tool[]>("/api/tools"),
+  createTool: (payload: Partial<Tool>) =>
+    fetchApi<Tool>("/api/tools", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+  updateTool: (id: string, payload: Partial<Tool>) =>
+    fetchApi<Tool>(`/api/tools/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+  deleteTool: (id: string) =>
+    fetchApi<{ status: string }>(`/api/tools/${id}`, { method: "DELETE" }),
+
+  // --- Models (all providers) ---
+  getAllModels: () => fetchApi<{id: string; model_id: string; provider_id: string; provider_name: string}[]>("/api/models"),
 
   // --- Providers ---
   getProviders: () => fetchApi<Provider[]>("/api/providers"),

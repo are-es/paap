@@ -227,6 +227,18 @@ func migrate() error {
 		`CREATE INDEX IF NOT EXISTS ix_compression_logs_ts ON compression_logs(timestamp DESC)`,
 		`CREATE INDEX IF NOT EXISTS ix_provider_connections_provider ON provider_connections(provider_id)`,
 		`CREATE INDEX IF NOT EXISTS ix_cost_summary_date ON cost_summary(date DESC)`,
+		// Tools table for auto-routing (vision, websearch, etc.)
+		`CREATE TABLE IF NOT EXISTS tools (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			type TEXT NOT NULL,
+			enabled INTEGER DEFAULT 1,
+			route_model TEXT NOT NULL,
+			priority INTEGER DEFAULT 0,
+			config TEXT DEFAULT '{}',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
 	}
 	for _, s := range schemas {
 		if _, err := DB.Exec(s); err != nil {
@@ -281,6 +293,13 @@ func migrate() error {
 	DB.Exec(`INSERT OR IGNORE INTO system_settings (key, value) VALUES ('headroom_enabled', 'false')`)
 	DB.Exec(`INSERT OR IGNORE INTO system_settings (key, value) VALUES ('headroom_url', 'http://127.0.0.1:8787')`)
 	DB.Exec(`INSERT OR IGNORE INTO system_settings (key, value) VALUES ('headroom_timeout_ms', '15000')`)
+	// === Vision Tool settings ===
+	DB.Exec(`INSERT OR IGNORE INTO system_settings (key, value) VALUES ('vision_enabled', 'false')`)
+	DB.Exec(`INSERT OR IGNORE INTO system_settings (key, value) VALUES ('vision_model', '')`)
+	DB.Exec(`INSERT OR IGNORE INTO system_settings (key, value) VALUES ('vision_prompt', 'Describe this image in detail. Focus on all visible text, UI elements, layout, colors, and any other relevant information.')`)
+	DB.Exec(`INSERT OR IGNORE INTO system_settings (key, value) VALUES ('vision_timeout_ms', '30000')`)
+	DB.Exec(`INSERT OR IGNORE INTO system_settings (key, value) VALUES ('vision_max_concurrent', '3')`)
+	DB.Exec(`INSERT OR IGNORE INTO system_settings (key, value) VALUES ('vision_max_image_mb', '5')`)
 
 	// === Seed claude-* prefixed groups for Claude Code (existing feature) ===
 	// Only seed if no claude-* groups exist at all (first-time setup)

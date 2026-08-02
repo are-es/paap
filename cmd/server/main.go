@@ -143,6 +143,13 @@ func main() {
 
 	// ── Compression routes removed (engine still used by routing) ──
 
+	// ── Tools (auto-routing: vision, websearch, etc.) ──────
+	mux.HandleFunc("/api/tools", methodRouter(map[string]http.HandlerFunc{
+		"GET":  toolListHandler,
+		"POST": toolCreateHandler,
+	}))
+	mux.HandleFunc("/api/tools/", toolRoutes)
+
 	// ── Merlin Auth ────────────────────────────────────────
 	mux.HandleFunc("/api/merlin/auth", merlinAuth)
 	mux.HandleFunc("/api/merlin/capture", merlinCapture)
