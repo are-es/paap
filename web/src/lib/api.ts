@@ -14,7 +14,6 @@ export interface Provider {
   round_robin?: boolean;
   round_robin_enabled?: boolean;
   icon?: string;
-  supports_anthropic?: boolean;
 }
 
 export interface ApiKeyItem {
@@ -191,7 +190,6 @@ export const api = {
     name: string;
     base_url: string;
     auth_type: "apikey" | "connection";
-    supports_anthropic?: boolean;
   }) =>
     fetchApi<Provider>("/api/providers", {
       method: "POST",

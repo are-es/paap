@@ -587,9 +587,10 @@ func logRaceTask(raceID, groupName string, totalModels, totalTasks int, provider
 	}
 }
 
-// ── modelList: /v1/models (OpenAI-compatible) ───────────────
+// ── modelList: /v1/models (OpenAI + Anthropic dual format) ──
 
 func modelList(w http.ResponseWriter, r *http.Request) {
+
 	if r.Method != "GET" {
 		writeError(w, 405, "method not allowed")
 		return
@@ -616,14 +617,16 @@ func modelList(w http.ResponseWriter, r *http.Request) {
 		for mRows.Next() {
 			var id, modelID, providerID, providerName string
 			mRows.Scan(&id, &modelID, &providerID, &providerName)
-			displayID := modelID
-			if strings.HasPrefix(id, "claude-") {
-				displayID = id
-			}
+			// Use slugified provider name for human-readable model IDs
+			// routeByModel() matches on provider ID, builtin_id, AND slugified name
 			slug := strings.ToLower(providerName)
 			slug = strings.ReplaceAll(slug, " ", "-")
 			slug = strings.ReplaceAll(slug, "_", "-")
-			fqModelID := slug + "/" + displayID
+			slug = strings.ReplaceAll(slug, "(", "-")
+			slug = strings.ReplaceAll(slug, ")", "")
+			slug = strings.ReplaceAll(slug, "--", "-")
+			slug = strings.Trim(slug, "-")
+			fqModelID := slug + "/" + modelID
 			models = append(models, map[string]interface{}{
 				"id": fqModelID, "object": "model", "owned_by": strings.ToLower(providerName),
 			})
@@ -633,6 +636,36 @@ func modelList(w http.ResponseWriter, r *http.Request) {
 	if models == nil {
 		models = []map[string]interface{}{}
 	}
+
+	// Claude Code gateway discovery: return Anthropic format when requested
+	// Claude Code sends "anthropic-version" header for /v1/models discovery
+	if r.Header.Get("anthropic-version") != "" || r.URL.Query().Get("format") == "anthropic" {
+		var anthropicModels []map[string]interface{}
+		for _, m := range models {
+			fqID, ok := m["id"].(string)
+			if !ok || fqID == "" {
+				continue // skip models with nil/empty id
+			}
+			// Add claude- prefix for Claude Code discovery
+			// Claude Code only shows models with claude- prefix in its model picker
+			// routeByModel() strips the prefix when routing requests
+			claudeID := fqID
+			if !strings.HasPrefix(fqID, "claude-") {
+				claudeID = "claude-" + fqID
+			}
+			entry := map[string]interface{}{
+				"id":           claudeID,
+				"display_name": fqID,
+			}
+			anthropicModels = append(anthropicModels, entry)
+		}
+		writeJSON(w, map[string]interface{}{
+			"data": anthropicModels,
+		})
+		return
+	}
+
+	// Default: OpenAI format
 	writeJSON(w, map[string]interface{}{
 		"object": "list",
 		"data":   models,

@@ -32,9 +32,14 @@ func getProviderRRCounter(providerID string) *atomic.Int64 {
 
 // isProviderRoundRobin checks if a provider has round-robin enabled
 // Reads round_robin_enabled (UI toggle) OR round_robin (direct DB)
+// Safe default: round-robin on DB error (spread load, not concentrate)
 func isProviderRoundRobin(providerID string) bool {
 	var rr, rrEnabled int
-	db.DB.QueryRow("SELECT COALESCE(round_robin,0), COALESCE(round_robin_enabled,0) FROM providers WHERE id = ?", providerID).Scan(&rr, &rrEnabled)
+	err := db.DB.QueryRow("SELECT COALESCE(round_robin,0), COALESCE(round_robin_enabled,0) FROM providers WHERE id = ?", providerID).Scan(&rr, &rrEnabled)
+	if err != nil {
+		log.Printf("[PAAP] isProviderRoundRobin DB error for %s: %v — defaulting to round-robin", providerID, err)
+		return true // safe default: spread load
+	}
 	return rr == 1 || rrEnabled == 1
 }
 
@@ -60,8 +65,15 @@ func autoDisableKey(keyID, keyName string, statusCode int, errBody string) bool 
 	}
 
 	if statusCode >= 500 {
+		// Server error — don't disable on first failure, but disable if already at fail_count >= 3
+		var failCount int
+		db.DB.QueryRow("SELECT fail_count FROM api_keys WHERE id=?", keyID).Scan(&failCount)
+		if failCount >= 3 {
+			db.DB.Exec("UPDATE api_keys SET is_active=0 WHERE id=?", keyID)
+			log.Printf("[PAAP] Auto-disabled key %s (%s) — fail_count=%d + upstream error %d", keyName, keyID, failCount, statusCode)
+			return true
+		}
 		log.Printf("[PAAP] Key %s (%s) upstream error %d: %s", keyName, keyID, statusCode, errBody)
-		// don't disable, but caller will still retry other keys (non-200 fallback)
 		return false
 	}
 
@@ -78,11 +90,11 @@ func autoDisableKey(keyID, keyName string, statusCode int, errBody string) bool 
 	db.DB.QueryRow("SELECT fail_count FROM api_keys WHERE id=?", keyID).Scan(&failCount)
 	if failCount >= 3 {
 		db.DB.Exec("UPDATE api_keys SET is_active=0 WHERE id=?", keyID)
-		log.Printf("[PAAP] Auto-disabled key %s (%s) — %d consecutive 4xx failures (last: %d %s)",
+		log.Printf("[PAAP] Auto-disabled key %s (%s) — %d consecutive failures (last: %d %s)",
 			keyName, keyID, failCount, statusCode, errBody)
 		return true
 	}
-	log.Printf("[PAAP] Key %s (%s) fail_count=%d — 4xx %d: %s", keyName, keyID, failCount, statusCode, errBody)
+	log.Printf("[PAAP] Key %s (%s) fail_count=%d — %d: %s", keyName, keyID, failCount, statusCode, errBody)
 	return false
 }
 
@@ -492,6 +504,7 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 			if err2 == nil && resp2.StatusCode == 200 {
 				if isStream {
 					tIn, tOut := handleStreaming(w, resp2)
+					resp2.Body.Close()
 					logProxyRequest(providerID, providerName, modelID, nextKeyID, nextKeyName, groupName, proxyUsed, 200, tIn, tOut, latencyMs2, "")
 				} else {
 					bodyBytes3, _ := io.ReadAll(resp2.Body)
@@ -534,7 +547,6 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 				// No more active keys — return last error
 				logProxyRequest(providerID, providerName, modelID, keyID, keyName, groupName, proxyUsed, resp.StatusCode, 0, 0, latencyMs, "all keys exhausted")
 				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(resp.StatusCode)
 				writeError(w, resp.StatusCode, fmt.Sprintf("all keys exhausted for provider %s", providerName))
 				return
 			}
@@ -556,6 +568,7 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 				// Success!
 				if isStream {
 					tIn, tOut := handleStreaming(w, resp2)
+					resp2.Body.Close()
 					logProxyRequest(providerID, providerName, modelID, nextKeyID, nextKeyName, groupName, proxyUsed, 200, tIn, tOut, latencyMs, "")
 				} else {
 					// Parse tokens from non-streaming response
@@ -947,6 +960,14 @@ func handleGroupRaceAll(w http.ResponseWriter, r *http.Request, modelName, group
 
 // routeByModel finds provider, key for a direct model name
 func routeByModel(model string) (providerID, providerName, baseURL, modelID, keyID, keyName, keyValue, keyAccountID string, err error) {
+	// Strip "claude-" prefix added by Claude Code CLI
+	// e.g. "claude-hcnsec/DeepSeek-V4-Flash" → "hcnsec/DeepSeek-V4-Flash"
+	// e.g. "claude-meta-(llama)/muse-spark-1.1" → "meta-(llama)/muse-spark-1.1"
+	origModel := model
+	if strings.HasPrefix(model, "claude-") {
+		model = strings.TrimPrefix(model, "claude-")
+	}
+
 	// Handle provider/model format (e.g., "grok-cli/grok-4.5")
 	if parts := strings.SplitN(model, "/", 2); len(parts) == 2 {
 		provSlug := parts[0]
@@ -955,6 +976,10 @@ func routeByModel(model string) (providerID, providerName, baseURL, modelID, key
 		// Try by ID first, then by slugified name
 		err = db.DB.QueryRow("SELECT name, base_url FROM providers WHERE id=? AND is_active=1", provSlug).Scan(&pName, &pBaseURL)
 		if err != nil {
+			// Try builtin_id
+			err = db.DB.QueryRow("SELECT id, name, base_url FROM providers WHERE builtin_id=? AND is_active=1", provSlug).Scan(&providerID, &pName, &pBaseURL)
+		}
+		if err != nil {
 			// Search all providers for slug match
 			rows, qErr := db.DB.Query("SELECT id, name, base_url FROM providers WHERE is_active=1")
 			if qErr == nil {
@@ -962,7 +987,13 @@ func routeByModel(model string) (providerID, providerName, baseURL, modelID, key
 				for rows.Next() {
 					var pid, pname, purl string
 					rows.Scan(&pid, &pname, &purl)
-					slug := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(pname, " ", "-"), "_", "-"))
+					slug := strings.ToLower(pname)
+					slug = strings.ReplaceAll(slug, " ", "-")
+					slug = strings.ReplaceAll(slug, "_", "-")
+					slug = strings.ReplaceAll(slug, "(", "-")
+					slug = strings.ReplaceAll(slug, ")", "")
+					slug = strings.ReplaceAll(slug, "--", "-")
+					slug = strings.Trim(slug, "-")
 					if slug == provSlug {
 						providerID = pid
 						pName = pname
@@ -972,8 +1003,6 @@ func routeByModel(model string) (providerID, providerName, baseURL, modelID, key
 					}
 				}
 			}
-		} else {
-			providerID = provSlug
 		}
 		if err == nil && providerID != "" {
 			providerName = pName
@@ -985,7 +1014,7 @@ func routeByModel(model string) (providerID, providerName, baseURL, modelID, key
 			if err != nil {
 				// Fallback: check provider_connections for OAuth tokens
 				var connID, connEmail, connToken string
-				connErr := db.DB.QueryRow(`SELECT id, email, access_token FROM provider_connections 
+				connErr := db.DB.QueryRow(`SELECT id, email, access_token FROM provider_connections
 					WHERE provider_id=? AND is_active=1 ORDER BY created_at DESC LIMIT 1`, providerID).Scan(&connID, &connEmail, &connToken)
 				if connErr != nil {
 					return "", "", "", "", "", "", "", "", fmt.Errorf("no active API keys or connections for provider '%s'", providerName)
@@ -1030,7 +1059,19 @@ func routeByModel(model string) (providerID, providerName, baseURL, modelID, key
 			LIMIT 1
 		`, model).Scan(&providerID, &modelID, &providerName, &baseURL)
 		if err != nil {
-			return "", "", "", "", "", "", "", "", fmt.Errorf("model '%s' not found or not selected", model)
+			// Try with original claude-prefixed model name
+			if origModel != model {
+				err = db.DB.QueryRow(`
+					SELECT m.provider_id, m.model_id, p.name, p.base_url
+					FROM models m
+					JOIN providers p ON m.provider_id = p.id
+					WHERE m.model_id = ? AND m.is_selected = 1 AND p.is_active = 1
+					LIMIT 1
+				`, origModel).Scan(&providerID, &modelID, &providerName, &baseURL)
+			}
+			if err != nil {
+				return "", "", "", "", "", "", "", "", fmt.Errorf("model '%s' not found or not selected", origModel)
+			}
 		}
 	}
 

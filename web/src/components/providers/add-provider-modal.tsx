@@ -47,7 +47,6 @@ function inferNameFromUrl(url: string): string {
 export function AddProviderModal({ open, onClose }: AddProviderModalProps) {
   const [name, setName] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
-  const [supportsAnthropic, setSupportsAnthropic] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [nameTouched, setNameTouched] = useState(false);
 
@@ -59,7 +58,6 @@ export function AddProviderModal({ open, onClose }: AddProviderModalProps) {
         name: name || inferNameFromUrl(baseUrl) || "Custom Provider",
         base_url: baseUrl || "https://api.example.com",
         auth_type: "apikey",
-        supports_anthropic: supportsAnthropic,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["providers"] });
@@ -74,7 +72,6 @@ export function AddProviderModal({ open, onClose }: AddProviderModalProps) {
   function reset() {
     setName("");
     setBaseUrl("");
-    setSupportsAnthropic(false);
     setError(null);
     setNameTouched(false);
   }
@@ -153,19 +150,6 @@ export function AddProviderModal({ open, onClose }: AddProviderModalProps) {
               placeholder="My Custom Provider"
               className="w-full px-3 py-2 text-sm rounded-lg border border-input bg-background focus:outline-none focus:border-neon-cyan/50"
             />
-          </div>
-
-          <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              id="supports-anthropic"
-              checked={supportsAnthropic}
-              onChange={(e) => setSupportsAnthropic(e.target.checked)}
-              className="w-4 h-4 rounded border-border"
-            />
-            <label htmlFor="supports-anthropic" className="text-xs text-muted-foreground cursor-pointer">
-              Anthropic support
-            </label>
           </div>
 
           {error && <p className="text-xs text-neon-magenta">{error}</p>}

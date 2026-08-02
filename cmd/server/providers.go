@@ -225,10 +225,9 @@ func providerList(w http.ResponseWriter, r *http.Request) {
 
 func providerCreate(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name              string `json:"name"`
-		BaseURL           string `json:"base_url"`
-		Icon              string `json:"icon"`
-		SupportsAnthropic bool   `json:"supports_anthropic"`
+		Name    string `json:"name"`
+		BaseURL string `json:"base_url"`
+		Icon    string `json:"icon"`
 	}
 	if err := parseBody(r, &body); err != nil {
 		writeError(w, 400, "invalid json")
@@ -239,15 +238,12 @@ func providerCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	supportsAnthropic := 0
-	if body.SupportsAnthropic {
-		supportsAnthropic = 1
-	}
-
+	// New providers always go through translator (supports_anthropic=0)
+	// Existing builtin providers with native Anthropic support keep their flag
 	id := genID()
 	_, err := db.DB.Exec(
-		"INSERT INTO providers (id, name, base_url, icon, supports_anthropic) VALUES (?, ?, ?, ?, ?)",
-		id, body.Name, body.BaseURL, body.Icon, supportsAnthropic,
+		"INSERT INTO providers (id, name, base_url, icon, supports_anthropic) VALUES (?, ?, ?, ?, 0)",
+		id, body.Name, body.BaseURL, body.Icon,
 	)
 	if err != nil {
 		writeError(w, 500, err.Error())

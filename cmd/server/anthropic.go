@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/dolvin/paap/internal/db"
+	"github.com/dolvin/paap/internal/translator"
 )
 
 // authMiddlewareAnthropic validates Anthropic-style x-api-key header
@@ -66,13 +67,17 @@ func anthropicMessagesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Apply headroom compression to tool results in Anthropic format
+	messages = compressAnthropicToolResults(messages, modelName)
+	rawBody["messages"] = messages
+
 	// Ensure minimum max_tokens
 	if mt, ok := rawBody["max_tokens"].(float64); !ok || mt < 20000 {
 		rawBody["max_tokens"] = 20000
 	}
 
 	// Route by model — check groups first, then direct model
-	var providerID, providerName, baseURL, modelID, keyID, keyName, keyValue string
+	var providerID, providerName, baseURL, modelID, keyID, keyName, keyValue, keyAccountID string
 	var err error
 
 	// Check if model name matches a group
@@ -81,20 +86,33 @@ func anthropicMessagesHandler(w http.ResponseWriter, r *http.Request) {
 
 	if strings.HasPrefix(modelName, "group:") || groupCount > 0 {
 		groupName := strings.TrimPrefix(modelName, "group:")
-		providerID, providerName, baseURL, modelID, keyID, keyName, keyValue, _, err = routeByGroup(groupName)
+		providerID, providerName, baseURL, modelID, keyID, keyName, keyValue, keyAccountID, err = routeByGroup(groupName)
 		if err != nil {
 			writeError(w, 400, fmt.Sprintf("group routing error: %v", err))
 			return
 		}
 	} else {
-		providerID, providerName, baseURL, modelID, keyID, keyName, keyValue, _, err = routeByModel(modelName)
+		providerID, providerName, baseURL, modelID, keyID, keyName, keyValue, keyAccountID, err = routeByModel(modelName)
 		if err != nil {
 			writeError(w, 400, fmt.Sprintf("model not found: %s", modelName))
 			return
 		}
 	}
 
-	// Build upstream body — override model ID
+	// Check if provider supports Anthropic format natively
+	var supportsAnthropic int
+	db.DB.QueryRow("SELECT COALESCE(supports_anthropic, 0) FROM providers WHERE id=?", providerID).Scan(&supportsAnthropic)
+
+	if supportsAnthropic == 0 {
+		// Provider does NOT support Anthropic — translate via OpenAI
+		handleAnthropicTranslated(w, r, rawBody, providerID, providerName, baseURL, modelID, keyID, keyName, keyValue, keyAccountID, isStream, startTime)
+		return
+	}
+
+	// Provider supports Anthropic natively — forward as-is
+	// But truncate tool names to 64 chars (provider limit)
+	truncateAnthropicToolNames(rawBody)
+
 	upstreamBody := make(map[string]interface{})
 	for k, v := range rawBody {
 		upstreamBody[k] = v
@@ -179,6 +197,7 @@ func anthropicMessagesHandler(w http.ResponseWriter, r *http.Request) {
 				} else {
 					tokensIn, tokensOut = handleAnthropicNonStreaming(w, resp2)
 				}
+				resp2.Body.Close()
 				logProxyRequest(providerID, providerName, modelID, nextKeyID, nextKeyName, "", proxyUsed, 200, tokensIn, tokensOut, latencyMs, "")
 				return
 			}
@@ -210,18 +229,43 @@ func anthropicMessagesHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // resolveAnthropicUpstreamURL converts OpenAI base URL to Anthropic endpoint.
-// e.g. https://api.xiaomimimo.com/v1 -> https://api.xiaomimimo.com/anthropic/v1/messages
-// e.g. https://api.deepseek.com/v1 -> https://api.deepseek.com/anthropic/v1/messages
+// Provider-specific routing:
+//   - TokenGO/Meta: {base}/v1/messages (same host, just /messages)
+//   - MiMo/DeepSeek/others: {base}/anthropic/v1/messages
 func resolveAnthropicUpstreamURL(baseURL string) string {
 	base := strings.TrimRight(baseURL, "/")
-	// TokenGO: same base URL, just /v1/messages
-	if strings.Contains(base, "tokengo") {
+	lower := strings.ToLower(base)
+
+	// Meta: /v1/messages (native Anthropic-compatible endpoint)
+	if strings.Contains(lower, "meta") || strings.Contains(lower, "meta.ai") {
 		if strings.HasSuffix(base, "/v1") {
 			return base + "/messages"
 		}
 		return base + "/v1/messages"
 	}
-	// MiMo/DeepSeek: replace /v1 with /anthropic/v1/messages
+
+	// Hcnsec: /v1/messages (native Anthropic-compatible endpoint)
+	if strings.Contains(lower, "hcnsec") {
+		if strings.HasSuffix(base, "/v1") {
+			return base + "/messages"
+		}
+		return base + "/v1/messages"
+	}
+
+	// TokenGO: same base URL, just /v1/messages
+	if strings.Contains(lower, "tokengo") {
+		if strings.HasSuffix(base, "/v1") {
+			return base + "/messages"
+		}
+		return base + "/v1/messages"
+	}
+
+	// OpenRouter: /api/v1/messages
+	if strings.Contains(lower, "openrouter") {
+		return base + "/messages"
+	}
+
+	// MiMo/DeepSeek/others: replace /v1 with /anthropic/v1/messages
 	if strings.HasSuffix(base, "/v1") {
 		base = strings.TrimSuffix(base, "/v1")
 	}
@@ -332,6 +376,140 @@ func handleAnthropicStreaming(w http.ResponseWriter, upstreamResp *http.Response
 	return tokensIn, tokensOut
 }
 
+// compressAnthropicToolResults compresses tool results in Anthropic messages
+// using headroom. Anthropic tool results are in role:"user" messages with
+// content containing tool_result blocks. We extract those, convert to OpenAI
+// tool format, run headroom compression, and write back.
+//
+// Deferred: full Anthropic↔OpenAI message translation. Headroom's /v1/compress
+// only speaks OpenAI messages[] shape, so we only compress the tool results
+// (the largest part of most requests) and leave the rest untouched.
+func compressAnthropicToolResults(messages []interface{}, model string) []interface{} {
+	// Early return if headroom is disabled — skip the full scan
+	if getSettingStrCached("headroom_enabled", "false") != "true" {
+		return messages
+	}
+
+	type toolResult struct {
+		msgIdx    int
+		blockIdx  int
+		content   string
+		isError   bool
+		hasStatus bool
+	}
+
+	var toolResults []toolResult
+
+	for i, msg := range messages {
+		msgMap, ok := msg.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		role, _ := msgMap["role"].(string)
+		if role != "user" {
+			continue
+		}
+
+		content := msgMap["content"]
+		contentArray, ok := content.([]interface{})
+		if !ok {
+			continue
+		}
+
+		for j, block := range contentArray {
+			blockMap, ok := block.(map[string]interface{})
+			if !ok {
+				continue
+			}
+
+			if blockMap["type"] != "tool_result" {
+				continue
+			}
+
+			// Skip error tool results — model needs them verbatim
+			isError, _ := blockMap["is_error"].(bool)
+			status, _ := blockMap["status"].(string)
+			if isError || status == "error" {
+				continue
+			}
+
+			// Extract content — can be string or array of content blocks
+			var builder strings.Builder
+			switch v := blockMap["content"].(type) {
+			case string:
+				builder.WriteString(v)
+			case []interface{}:
+				for _, item := range v {
+					if itemMap, ok := item.(map[string]interface{}); ok {
+						if itemMap["type"] == "text" {
+							if text, ok := itemMap["text"].(string); ok {
+								builder.WriteString(text)
+							}
+						}
+					}
+				}
+			}
+
+			toolContent := builder.String()
+			if len(toolContent) >= headroomMinCompressSize {
+				toolResults = append(toolResults, toolResult{i, j, toolContent, isError, status != ""})
+			}
+		}
+	}
+
+	if len(toolResults) == 0 {
+		return messages
+	}
+
+	// Build OpenAI-style tool messages for headroom
+	openAIMessages := make([]map[string]interface{}, len(toolResults))
+	for i, tr := range toolResults {
+		msg := map[string]interface{}{
+			"role":    "tool",
+			"content": tr.content,
+		}
+		// Propagate is_error/status so headroom skips error traces
+		if tr.isError {
+			msg["is_error"] = true
+		}
+		if tr.hasStatus {
+			msg["status"] = "error"
+		}
+		openAIMessages[i] = msg
+	}
+
+	compressedMessages := CompressWithHeadroom(openAIMessages, model)
+
+	// Write compressed content back into Anthropic messages
+	for i, tr := range toolResults {
+		if i >= len(compressedMessages) {
+			continue
+		}
+		compressedContent, _ := compressedMessages[i]["content"].(string)
+		if compressedContent == "" || len(compressedContent) >= len(tr.content) {
+			continue // phantom or no savings
+		}
+
+		msgMap := messages[tr.msgIdx].(map[string]interface{})
+		contentArr := msgMap["content"].([]interface{})
+		blockMap := contentArr[tr.blockIdx].(map[string]interface{})
+
+		// Preserve original content shape — array stays array, string stays string
+		switch blockMap["content"].(type) {
+		case []interface{}:
+			// Rebuild array with compressed text
+			blockMap["content"] = []interface{}{
+				map[string]interface{}{"type": "text", "text": compressedContent},
+			}
+		default:
+			blockMap["content"] = compressedContent
+		}
+	}
+
+	return messages
+}
+
 // handleAnthropicNonStreaming proxies non-streaming Anthropic responses and extracts token usage.
 func handleAnthropicNonStreaming(w http.ResponseWriter, upstreamResp *http.Response) (int, int) {
 	body, err := io.ReadAll(upstreamResp.Body)
@@ -361,4 +539,228 @@ func handleAnthropicNonStreaming(w http.ResponseWriter, upstreamResp *http.Respo
 	w.Write(body)
 
 	return tokensIn, tokensOut
+}
+
+// handleAnthropicTranslated handles Anthropic requests to providers that don't support
+// Anthropic format. It translates: Anthropic request → OpenAI request → provider →
+// OpenAI response → Anthropic response.
+func handleAnthropicTranslated(w http.ResponseWriter, r *http.Request,
+	rawBody map[string]interface{},
+	providerID, providerName, baseURL, modelID, keyID, keyName, keyValue, keyAccountID string,
+	isStream bool, startTime time.Time) {
+
+	// Convert Anthropic request to OpenAI format
+	openaiBody, err := translator.AnthropicToOpenAIRequest(rawBody)
+	if err != nil {
+		writeError(w, 400, fmt.Sprintf("translation error: %v", err))
+		return
+	}
+
+	// Override model ID
+	openaiBody["model"] = modelID
+
+	// Force usage reporting in streaming
+	if isStream {
+		openaiBody["stream_options"] = map[string]interface{}{"include_usage": true}
+	}
+
+	bodyBytes, err := json.Marshal(openaiBody)
+	if err != nil {
+		writeError(w, 500, "failed to marshal translated request")
+		return
+	}
+
+	// Build OpenAI-style upstream URL
+	upstreamURL := resolveUpstreamURL(baseURL, keyAccountID)
+	log.Printf("[TRANSLATE] Anthropic→OpenAI: %s %s (model=%s)", providerName, upstreamURL, modelID)
+
+	req, err := http.NewRequest("POST", upstreamURL, bytes.NewReader(bodyBytes))
+	if err != nil {
+		writeError(w, 500, "failed to create upstream request")
+		return
+	}
+
+	// Set auth (OpenAI-style Bearer token)
+	setProviderAuth(req, baseURL, keyValue)
+
+	// Use proxy if configured
+	client := sharedHTTPClient
+	var proxyUsed string
+	if proxyURL := getProviderProxy(providerID); proxyURL != "" {
+		proxyUsed = proxyURL
+		if transport, terr := makeProxyTransport(proxyURL); terr == nil {
+			client.Transport = transport
+		}
+	}
+
+	resp, err := client.Do(req)
+	latencyMs := time.Since(startTime).Milliseconds()
+
+	if err != nil {
+		logProxyRequest(providerID, providerName, modelID, keyID, keyName, "", proxyUsed, 0, 0, 0, latencyMs, err.Error())
+		writeError(w, 502, fmt.Sprintf("upstream request failed: %v", err))
+		return
+	}
+	defer resp.Body.Close()
+
+	// Handle non-200 with fallback
+	if resp.StatusCode != 200 {
+		errBody, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		errBodyStr := string(errBody)
+		if len(errBodyStr) > 500 {
+			errBodyStr = errBodyStr[:500]
+		}
+		autoDisableKey(keyID, keyName, resp.StatusCode, errBodyStr)
+
+		// Try fallback keys
+		tried := map[string]bool{keyID: true}
+		for {
+			nextKeyID, nextKeyName, nextKeyValue, _, ferr := getNextActiveKeyExcluding(providerID, tried)
+			if ferr != nil {
+				logProxyRequest(providerID, providerName, modelID, keyID, keyName, "", proxyUsed, resp.StatusCode, 0, 0, latencyMs, "all keys exhausted")
+				w.Header().Set("Content-Type", "application/json")
+				writeError(w, resp.StatusCode, fmt.Sprintf("all keys exhausted for provider %s", providerName))
+				return
+			}
+			tried[nextKeyID] = true
+
+			req2, _ := http.NewRequest("POST", upstreamURL, bytes.NewReader(bodyBytes))
+			setProviderAuth(req2, baseURL, nextKeyValue)
+			resp2, err2 := client.Do(req2)
+			latencyMs = time.Since(startTime).Milliseconds()
+
+			if err2 != nil {
+				logProxyRequest(providerID, providerName, modelID, nextKeyID, nextKeyName, "", proxyUsed, 0, 0, 0, latencyMs, err2.Error())
+				continue
+			}
+
+			if resp2.StatusCode == 200 {
+				// Success — translate response
+				if isStream {
+					tIn, tOut := handleTranslatedStreaming(w, resp2, modelID)
+					logProxyRequest(providerID, providerName, modelID, nextKeyID, nextKeyName, "", proxyUsed, 200, tIn, tOut, latencyMs, "")
+				} else {
+					tIn, tOut := handleTranslatedNonStreaming(w, resp2)
+					logProxyRequest(providerID, providerName, modelID, nextKeyID, nextKeyName, "", proxyUsed, 200, tIn, tOut, latencyMs, "")
+				}
+				return
+			}
+
+			resp2.Body.Close()
+			errBody2, _ := io.ReadAll(resp2.Body)
+			errBody2Str := string(errBody2)
+			if len(errBody2Str) > 500 {
+				errBody2Str = errBody2Str[:500]
+			}
+			autoDisableKey(nextKeyID, nextKeyName, resp2.StatusCode, errBody2Str)
+		}
+	}
+
+	// Success — translate response
+	if isStream {
+		tIn, tOut := handleTranslatedStreaming(w, resp, modelID)
+		logProxyRequest(providerID, providerName, modelID, keyID, keyName, "", proxyUsed, 200, tIn, tOut, latencyMs, "")
+	} else {
+		tIn, tOut := handleTranslatedNonStreaming(w, resp)
+		logProxyRequest(providerID, providerName, modelID, keyID, keyName, "", proxyUsed, 200, tIn, tOut, latencyMs, "")
+	}
+}
+
+// handleTranslatedStreaming converts OpenAI SSE stream to Anthropic SSE format
+func handleTranslatedStreaming(w http.ResponseWriter, upstreamResp *http.Response, model string) (int, int) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.WriteHeader(200)
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		log.Println("Warning: ResponseWriter does not support Flushing")
+		return 0, 0
+	}
+
+	st := translator.NewStreamTranslator(w, flusher.Flush, model)
+	tIn, tOut := st.ProcessReader(upstreamResp.Body)
+	return tIn, tOut
+}
+
+// handleTranslatedNonStreaming converts OpenAI JSON response to Anthropic JSON format
+func handleTranslatedNonStreaming(w http.ResponseWriter, upstreamResp *http.Response) (int, int) {
+	body, err := io.ReadAll(upstreamResp.Body)
+	if err != nil {
+		log.Printf("Error reading translated response: %v", err)
+		w.WriteHeader(500)
+		return 0, 0
+	}
+
+	var openaiResp map[string]interface{}
+	if err := json.Unmarshal(body, &openaiResp); err != nil {
+		// Can't parse — return as-is
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(upstreamResp.StatusCode)
+		w.Write(body)
+		return 0, 0
+	}
+
+	// Convert OpenAI response to Anthropic format
+	anthropicResp := translator.OpenAIToAnthropicResponse(openaiResp)
+
+	var tokensIn, tokensOut int
+	if usage, ok := anthropicResp["usage"].(map[string]interface{}); ok {
+		if it, ok := usage["input_tokens"].(int); ok {
+			tokensIn = it
+		}
+		if ot, ok := usage["output_tokens"].(int); ok {
+			tokensOut = ot
+		}
+	}
+
+	respBytes, _ := json.Marshal(anthropicResp)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	w.Write(respBytes)
+
+	return tokensIn, tokensOut
+}
+
+// truncateAnthropicToolNames truncates tool names >64 chars in Anthropic format requests.
+// Modifies rawBody in-place. Handles both top-level tools[] and tool_use in messages[].
+func truncateAnthropicToolNames(rawBody map[string]interface{}) {
+	// Truncate tool definitions
+	if tools, ok := rawBody["tools"].([]interface{}); ok {
+		for _, t := range tools {
+			if tm, ok := t.(map[string]interface{}); ok {
+				if name, ok := tm["name"].(string); ok && len(name) > 64 {
+					tm["name"] = name[:64]
+				}
+			}
+		}
+	}
+
+	// Truncate tool_use names in messages
+	if messages, ok := rawBody["messages"].([]interface{}); ok {
+		for _, msg := range messages {
+			mm, ok := msg.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			content, ok := mm["content"].([]interface{})
+			if !ok {
+				continue
+			}
+			for _, block := range content {
+				bm, ok := block.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				if bm["type"] == "tool_use" {
+					if name, ok := bm["name"].(string); ok && len(name) > 64 {
+						bm["name"] = name[:64]
+					}
+				}
+			}
+		}
+	}
 }
