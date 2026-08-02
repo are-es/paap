@@ -48,3 +48,4 @@ data/*.db*
 
 # Graphify output
 graphify-out/
+docs/
