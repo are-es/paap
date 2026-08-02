@@ -21,10 +21,7 @@ CGO_ENABLED=1 go build -o bin/paap-server ./cmd/server/
 cd web && npm run build
 
 # deploy
-sudo systemctl stop paap && mv bin/paap bin/paap-server && sudo systemctl start paap
-
-# stop
-sudo systemctl stop paap
+sudo systemctl restart paap
 
 # health
 curl -s http://localhost:9090/api/health
@@ -37,28 +34,23 @@ Run via systemd, not `paap start`. The unit sets `WorkingDirectory=/mnt/hdd/ares
 ```
 cmd/server/
   main.go          entry point, mux routing, static file serving, SPA fallback
-  routing.go       /v1/chat/completions proxy, group routing, auth middleware, key selection
+  routing.go       /v1/chat/completions proxy, group routing, auth middleware
   providers.go     provider / key / model CRUD
   groups.go        model groups + prompt injection
   gateway.go       gateway keys + system settings (+ 5s settings cache)
-  logs.go          request logging + usage stats + /v1/models discovery
+  logs.go          request logging + usage stats
   proxy.go         proxy pool CRUD
   proxy_tester.go  background proxy latency/country tester
   anigravity.go    Anigravity provider (uses streamingHTTPClient, no timeout)
-  anthropic.go     /v1/messages handler + Anthropic→OpenAI translation integration
-  streaming.go     SSE passthrough + token extraction
+  anthropic.go     /v1/messages translation
+  streaming.go     SSE passthrough
   compression.go   compression middleware
-internal/
-  translator/
-    translator.go      Anthropic↔OpenAI request/response conversion
-    streaming.go        OpenAI SSE → Anthropic SSE stream translator
-    translator_test.go  unit tests
-  db/
-    db.go            schema + migrations + seed
+  qoder*.go        DEAD CODE — see Cleanup
+internal/db/
+  db.go            schema + migrations + seed
 web/src/
   app/             Next.js routes
   lib/api.ts       ALL frontend HTTP calls live here
-  lib/provider-logos.ts  provider logo mapping (builtin_id → asset path)
   components/      UI
 .agent/            project context (memory.md, status.md, notes.md, roadmap.md, prd/)
 graphify-out/      knowledge graph
@@ -68,29 +60,17 @@ graphify-out/      knowledge graph
 
 ## Request flow
 
-1. Client hits `/v1/chat/completions` (OpenAI) or `/v1/messages` (Anthropic) with a gateway key
-2. Auth middleware validates the gateway key (Bearer token for OpenAI, x-api-key for Anthropic)
+1. Client hits `/v1/chat/completions` with a gateway key
+2. Auth middleware validates the gateway key
 3. Model string `provider/model` resolves to a provider, or a group name resolves to a model set
-4. Model routing: `claude-` prefix is stripped (Claude Code compatibility), then match by provider ID, builtin_id, or slugified name
-5. Compression pipeline runs on the request — three independent stages:
+4. Compression pipeline runs on the request — three independent stages:
    - **instruction injection** (`compression_mode`, e.g. `caveman:ultra,ponytail:ultra`) prepends terseness rules to the system message, text loaded from `config/<mode>.md`
    - **RTK** (`rtk_enabled` + `rtk_level`) shells out to the `rtk` binary to shrink tool results
    - **caveman regex** (`caveman_compress_enabled` + `compression_level`) squeezes tool/assistant prose
-6. **Translation** (Anthropic path): if `supports_anthropic=0`, translator converts Anthropic request → OpenAI format before forwarding. Response is converted back to Anthropic format. All providers default to translator path.
-7. Provider dispatch: forward to upstream `/chat/completions` (OpenAI format)
-8. Key selection: round-robin, or race N active keys and take the first response. Keys with `fail_count >= 3` are auto-disabled.
-9. Optional proxy: if `proxy_enabled`, pick the fastest active proxy from the pool
-10. Response: passthrough for OpenAI path, translated for Anthropic path
-
-## Translator
-
-`internal/translator/` converts between Anthropic Messages API and OpenAI Chat Completions API.
-
-- **Request**: messages (text, image, tool_use, tool_result), tools (input_schema → parameters), tool_choice, system prompt (top-level → system message)
-- **Response**: content blocks, tool_calls, finish_reason mapping (stop→end_turn, length→max_tokens, tool_calls→tool_use)
-- **Streaming**: stateful `StreamTranslator` converts OpenAI SSE chunks to Anthropic SSE events (message_start, content_block_delta, message_delta, message_stop)
-- **Tool names**: auto-truncated to 64 chars (provider limit)
-- All providers use `supports_anthropic=0` (translator path) by default
+5. Provider dispatch: special-cased per provider where needed, otherwise generic OpenAI-compatible forward
+6. Key selection: round-robin, or race N active keys and take the first response
+7. Optional proxy: if `proxy_enabled`, pick the fastest active proxy from the pool
+8. Response is pure passthrough — PAAP only transforms the request
 
 ## Compression
 
@@ -106,14 +86,6 @@ grep -E '^## ' config/caveman.md    # must show '## Levels' and '## Shared Rules
 `detectFilter()` in `rtk.go` must return a name that exists in rtk's filter set (`rtk pipe --filter bogus` prints the list). An invalid name makes rtk exit non-zero and the code fails open — compression silently stops. Returning `""` means "no filter fits", and the caller skips compression, because bare `rtk pipe` with no `--filter` is a passthrough that costs a subprocess and saves nothing.
 
 Error tool results (`is_error: true` / `status: "error"`) are never compressed — the model needs traces verbatim.
-
-## Built-in Providers
-
-Providers with `provider_type='builtin'` are seeded in `db.go`. Each has a `builtin_id` (used for logo lookup) and `icon` field (filename in `web/public/assets/`).
-
-Current builtins: xiaomi, meta, google, kimchi, openrouter, grok-cli, anigravity, ollamacloud, runapi, stepfun, hcnsec.
-
-Logo mapping: `web/src/lib/provider-logos.ts` — maps `builtin_id` to asset path. To add a new builtin provider logo, add the file to `web/public/assets/` and add a mapping entry.
 
 ## Conventions
 
@@ -134,13 +106,11 @@ Logo mapping: `web/src/lib/provider-logos.ts` — maps `builtin_id` to asset pat
 - **`DELETE /api/logs` really does clear all logs and cost history.** Do not probe it to check routing.
 - **`config/caveman.md` / `config/ponytail.md` are NOT Hermes skill files.** They are parsed for `## Levels` / `## Shared Rules` headers. Overwriting one with a `SKILL.md` silently disables that compression mode — no error, the only symptom is a lower `text_len=` in the log.
 - **An invalid rtk filter name fails open.** `rtk` exits non-zero, PAAP logs one line and returns uncompressed content. Compression appears to work while doing nothing.
-- **`resp2.Body` must be closed in fallback loops.** Both `routing.go` and `anthropic.go` had resource leaks where streaming success paths didn't close the response body.
-- **`autoDisableKey` disables on 500+ when `fail_count >= 3`.** Keys that keep getting server errors get disabled, not just auth failures.
 
 ## Cleanup queue
 
 - Qoder is removed from the product but 950 lines remain: `qoder.go`, `qoder_cosy.go`, `qoder_oauth.go`, plus the dispatch at `routing.go:409-413`. Safe to delete — no DB rows reference it.
-- **Port RTK filters to native Go** — drop `exec.Command` entirely. Reference implementation: 9router `open-sse/rtk/` at `~/Downloads/9router-master/`. Gains: no subprocess per tool output, no `rtk` binary dependency, and support for the message shapes PAAP currently misses — Claude `tool_result` (string + array), OpenAI Responses `function_call_output`, Kiro `toolResults`, and `{role:"tool", content:[{type:"text"}]}. Today only `{role:"tool", content:string}` is handled, so `/v1/messages` requests get zero RTK. ~800-1000 lines; delegate to OpenCode.
+- **Port RTK filters to native Go** — drop `exec.Command` entirely. Reference implementation: 9router `open-sse/rtk/` at `~/Downloads/9router-master/`. Gains: no subprocess per tool output, no `rtk` binary dependency, and support for the message shapes PAAP currently misses — Claude `tool_result` (string + array), OpenAI Responses `function_call_output`, Kiro `toolResults`, and `{role:"tool", content:[{type:"text"}]}`. Today only `{role:"tool", content:string}` is handled, so `/v1/messages` requests get zero RTK. ~800-1000 lines; delegate to OpenCode.
 - `ClientUsesRTK()` becomes unnecessary once the native port lands — compressed output no longer matches raw-format patterns, so autodetect rejects it and idempotence is structural. Today's version is coarse: a single `"rtk ` match disables compression for every tool output in the request.
 - `handleDeleteOffline` (`web/src/app/proxy/page.tsx:69`) awaits deletes serially with no error handling.
 - 7 raw `fetch()` calls left in `api.ts`: `addConnection`, `deleteConnection`, `updateModels`, `clearLogs`, `deleteGroup`, `shutdown`, `restart`. Methods are correct; failures are silent.
