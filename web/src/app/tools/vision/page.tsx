@@ -11,6 +11,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ConfirmModal } from "@/components/ui/confirm-modal";
 
 export default function VisionSetupPage() {
   const queryClient = useQueryClient();
@@ -34,6 +35,7 @@ export default function VisionSetupPage() {
   const [enabled, setEnabled] = useState(false);
   const [saving, setSaving] = useState(false);
   const [initialized, setInitialized] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   // Initialize state from tool data
   useEffect(() => {
@@ -89,7 +91,7 @@ export default function VisionSetupPage() {
 
   const handleDelete = async () => {
     if (!visionTool) return;
-    if (!confirm("Hapus Vision tool?")) return;
+    setConfirmDelete(false);
     await api.deleteTool(visionTool.id);
     setInitialized(false);
     queryClient.invalidateQueries({ queryKey: ["tools"] });
@@ -132,7 +134,7 @@ export default function VisionSetupPage() {
           {visionTool && (
             <>
               <button
-                onClick={handleDelete}
+                onClick={() => setConfirmDelete(true)}
                 className="p-2 rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
                 title="Delete"
               >
@@ -232,6 +234,16 @@ export default function VisionSetupPage() {
           <li>5. Model vision proses gambar langsung</li>
         </ul>
       </div>
+
+      <ConfirmModal
+        open={confirmDelete}
+        title="Delete Vision Tool"
+        message="Hapus Vision tool? Ini tidak bisa dibatalkan."
+        confirmLabel="Delete"
+        variant="danger"
+        onConfirm={handleDelete}
+        onCancel={() => setConfirmDelete(false)}
+      />
     </div>
   );
 }

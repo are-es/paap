@@ -11,6 +11,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ConfirmModal } from "@/components/ui/confirm-modal";
 
 const INTERVAL_OPTIONS = [
   { value: "3", label: "3 min" },
@@ -26,6 +27,7 @@ export default function SettingsPage() {
   const [clearing, setClearing] = useState(false);
   const [restarting, setRestarting] = useState(false);
   const [shuttingDown, setShuttingDown] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<null | "clear" | "restart" | "shutdown">(null);
 
   const [proxyInterval, setProxyInterval] = useState<string | null>(null);
 
@@ -42,25 +44,23 @@ export default function SettingsPage() {
     queryClient.invalidateQueries({ queryKey: ["settings"] });
   };
 
-  const handleClearAll = async () => {
-    if (!confirm("Clear all logs, cost data, and usage stats? API keys and providers will NOT be affected.")) return;
-    setClearing(true);
-    await api.clearLogs();
-    queryClient.invalidateQueries({ queryKey: ["logs"] });
-    queryClient.invalidateQueries({ queryKey: ["cost"] });
-    setClearing(false);
-  };
-
-  const handleRestart = async () => {
-    if (!confirm("Restart PAAP server? Connections will be briefly interrupted.")) return;
-    setRestarting(true);
-    await api.restart();
-  };
-
-  const handleShutdown = async () => {
-    if (!confirm("Shutdown PAAP server? You will lose connection.")) return;
-    setShuttingDown(true);
-    await api.shutdown();
+  const handleConfirm = async () => {
+    if (confirmAction === "clear") {
+      setClearing(true);
+      setConfirmAction(null);
+      await api.clearLogs();
+      queryClient.invalidateQueries({ queryKey: ["logs"] });
+      queryClient.invalidateQueries({ queryKey: ["cost"] });
+      setClearing(false);
+    } else if (confirmAction === "restart") {
+      setRestarting(true);
+      setConfirmAction(null);
+      await api.restart();
+    } else if (confirmAction === "shutdown") {
+      setShuttingDown(true);
+      setConfirmAction(null);
+      await api.shutdown();
+    }
   };
 
   return (
@@ -80,7 +80,7 @@ export default function SettingsPage() {
           <select
             value={currentInterval}
             onChange={(e) => updateInterval(e.target.value)}
-            className="w-full px-2.5 py-1.5 text-xs rounded border border-input bg-background font-mono focus:outline-none focus:border-primary/50"
+            className="w-full px-3 py-2 rounded-lg border border-input bg-background text-sm focus:outline-none focus:ring-1 focus:ring-ring"
           >
             {INTERVAL_OPTIONS.map((opt) => (
               <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -88,60 +88,74 @@ export default function SettingsPage() {
           </select>
         </div>
 
-        {/* CARD 2: CLEAR ALL */}
+        {/* CARD 2: DATA */}
         <div className="bg-primary/[0.04] border border-primary/15 rounded-lg p-4">
           <div className="flex items-center gap-2 mb-3">
             <Trash2 className="w-4 h-4 text-muted-foreground" />
-            <span className="text-sm font-medium">Clear All Data</span>
+            <span className="text-sm font-medium">Data Management</span>
           </div>
           <p className="text-[11px] text-muted-foreground mb-3">
-            Hapus semua logs, cost data, dan usage stats. API keys, providers, dan proxy TIDAK akan dihapus.
+            Hapus semua log, cost data, dan usage stats. API keys dan providers TIDAK terpengaruh.
           </p>
           <button
-            onClick={handleClearAll}
+            onClick={() => setConfirmAction("clear")}
             disabled={clearing}
-            className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs rounded border border-destructive/20 text-destructive bg-destructive/5 hover:bg-destructive/10 transition-colors font-medium disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-destructive/30 text-destructive hover:bg-destructive/10 disabled:opacity-50"
           >
-            {clearing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
-            Reset All Data
+            {clearing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+            {clearing ? "Clearing..." : "Clear All Data"}
           </button>
         </div>
 
         {/* CARD 3: SERVER */}
         <div className="bg-primary/[0.04] border border-primary/15 rounded-lg p-4">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <Power className="w-4 h-4 text-muted-foreground" />
-              <span className="text-sm font-medium">Server</span>
-            </div>
-            <span className="inline-flex items-center gap-1 text-[10px] font-medium text-green-600">
-              <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-              Active
-            </span>
+          <div className="flex items-center gap-2 mb-3">
+            <Power className="w-4 h-4 text-muted-foreground" />
+            <span className="text-sm font-medium">Server Control</span>
           </div>
-          <p className="text-[11px] text-muted-foreground mb-3">
-            Restart atau matikan server PAAP
-          </p>
           <div className="flex gap-2">
             <button
-              onClick={handleRestart}
+              onClick={() => setConfirmAction("restart")}
               disabled={restarting}
-              className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs rounded border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-amber-500/30 text-amber-500 hover:bg-amber-500/10 disabled:opacity-50"
             >
-              {restarting ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />}
-              Restart
+              {restarting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />}
+              {restarting ? "Restarting..." : "Restart"}
             </button>
             <button
-              onClick={handleShutdown}
+              onClick={() => setConfirmAction("shutdown")}
               disabled={shuttingDown}
-              className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs rounded border border-destructive/20 text-destructive bg-destructive/5 hover:bg-destructive/10 transition-colors disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-destructive/30 text-destructive hover:bg-destructive/10 disabled:opacity-50"
             >
-              {shuttingDown ? <Loader2 className="w-3 h-3 animate-spin" /> : <Power className="w-3 h-3" />}
-              Shutdown
+              {shuttingDown ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Power className="w-3.5 h-3.5" />}
+              {shuttingDown ? "Shutting down..." : "Shutdown"}
             </button>
           </div>
         </div>
       </div>
+
+      <ConfirmModal
+        open={confirmAction !== null}
+        title={
+          confirmAction === "clear" ? "Clear All Data" :
+          confirmAction === "restart" ? "Restart Server" :
+          "Shutdown Server"
+        }
+        message={
+          confirmAction === "clear" ? "Clear all logs, cost data, and usage stats? API keys and providers will NOT be affected." :
+          confirmAction === "restart" ? "Restart PAAP server? Connections will be briefly interrupted." :
+          "Shutdown PAAP server? You will lose connection."
+        }
+        confirmLabel={
+          confirmAction === "clear" ? "Clear All" :
+          confirmAction === "restart" ? "Restart" :
+          "Shutdown"
+        }
+        variant={confirmAction === "restart" ? "default" : "danger"}
+        onConfirm={handleConfirm}
+        onCancel={() => setConfirmAction(null)}
+        loading={clearing || restarting || shuttingDown}
+      />
     </div>
   );
 }

@@ -21,6 +21,7 @@ import {
   Layers,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ConfirmModal } from "@/components/ui/confirm-modal";
 
 const MODE_OPTIONS = [
   { value: "rr_race_keys", label: "RR + Race Keys", icon: Zap, desc: "Rotate models, race keys per model — best of both" },
@@ -206,10 +207,10 @@ function AddModelModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div className="w-full max-w-sm bg-primary/[0.04] rounded-xl border border-primary/15 p-5">
+      <div className="w-full max-w-sm bg-popover rounded-xl border border-border p-5 shadow-2xl">
         <div className="flex items-center justify-between mb-4">
           <h2 className="font-heading text-lg font-bold">Add Model</h2>
           <button onClick={onClose} className="p-1 rounded-md hover:bg-muted text-muted-foreground">
@@ -456,6 +457,7 @@ function NewGroupForm() {
 function DangerZoneSection({ groupId, groupName }: { groupId: string; groupName: string }) {
   const router = useRouter();
   const queryClient = useQueryClient();
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const deleteMutation = useMutation({
     mutationFn: () => api.deleteGroup(groupId),
@@ -473,13 +475,27 @@ function DangerZoneSection({ groupId, groupName }: { groupId: string; groupName:
           <p className="text-xs text-muted-foreground">This cannot be undone. All models will be removed from this group.</p>
         </div>
         <button
-          onClick={() => { if (confirm(`Delete group "${groupName}"?`)) deleteMutation.mutate(); }}
+          onClick={() => setConfirmDelete(true)}
           disabled={deleteMutation.isPending}
           className="px-4 py-2 text-sm rounded-lg bg-destructive text-destructive-foreground hover:bg-destructive/90 disabled:opacity-50 shrink-0"
         >
           {deleteMutation.isPending ? "Deleting..." : "Delete Group"}
         </button>
       </div>
+
+      <ConfirmModal
+        open={confirmDelete}
+        title="Delete Group"
+        message={`Delete group "${groupName}"? This cannot be undone. All models will be removed.`}
+        confirmLabel="Delete"
+        variant="danger"
+        onConfirm={() => {
+          setConfirmDelete(false);
+          deleteMutation.mutate();
+        }}
+        onCancel={() => setConfirmDelete(false)}
+        loading={deleteMutation.isPending}
+      />
     </Section>
   );
 }

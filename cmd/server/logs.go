@@ -44,12 +44,12 @@ func logList(w http.ResponseWriter, r *http.Request) {
 			page = v
 		}
 	}
-	perPage := 1000
+	perPage := 500
 	if l := q.Get("per_page"); l != "" {
 		if v, err := strconv.Atoi(l); err == nil && v > 0 {
 			perPage = v
-			if perPage > 1000 {
-				perPage = 1000
+			if perPage > 500 {
+				perPage = 500
 			}
 		}
 	}
@@ -520,12 +520,12 @@ func logProxyRequestWithTool(providerID, providerName, modelID, keyID, keyName, 
 		log.Printf("Failed to log request: %v", err)
 	}
 
-	// Auto-clear: keep only newest 1000 logs (cost_summary untouched)
+	// Auto-clear: keep only newest 500 logs (cost_summary untouched)
 	var count int
 	db.DB.QueryRow("SELECT COUNT(*) FROM logs").Scan(&count)
-	if count > 1000 {
-		db.DB.Exec(`DELETE FROM logs WHERE id NOT IN (SELECT id FROM logs ORDER BY created_at DESC LIMIT 1000)`)
-		log.Printf("[PAAP] Auto-cleared logs: %d → 1000", count)
+	if count > 500 {
+		db.DB.Exec(`DELETE FROM logs WHERE id NOT IN (SELECT id FROM logs ORDER BY created_at DESC LIMIT 500)`)
+		log.Printf("[PAAP] Auto-cleared logs: %d → 500", count)
 	}
 
 	// Update usage_stats (existing — survives log clear)

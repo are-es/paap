@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>PAAP Topology Redesign</title>
+<style>
+  :root {
+    --bg: #0b0c14;
+    --card: #131420;
+    --border: rgba(255,255,255,0.06);
+    --text: #e6e8ef;
+    --muted: #8a8fa6;
+    --cyan: #22d3ee;
+    --magenta: #e04090;
+    --amber: #f59e0b;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    min-height: 100vh;
+  }
+  .stage {
+    position: relative;
+    width: 100%;
+    max-width: 1100px;
+    margin: 0 auto;
+    aspect-ratio: 16 / 9;
+    border: 1px solid var(--border);
+    border-radius: 24px;
+    overflow: hidden;
+    background:
+      radial-gradient(circle at 50% 50%, rgba(34,211,238,0.08), transparent 55%),
+      linear-gradient(var(--border) 1px, transparent 1px),
+      linear-gradient(90deg, var(--border) 1px, transparent 1px);
+    background-size: 100% 100%, 32px 32px, 32px 32px;
+  }
+  .center-hub {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: 90px;
+    height: 90px;
+    border-radius: 50%;
+    background: var(--card);
+    border: 2px solid rgba(34,211,238,0.4);
+    box-shadow: 0 0 30px rgba(34,211,238,0.25), inset 0 0 18px rgba(34,211,238,0.15);
+    display: grid;
+    place-items: center;
+    z-index: 3;
+  }
+  .center-hub::after {
+    content: "";
+    position: absolute;
+    inset: -18px;
+    border-radius: 50%;
+    border: 1px dashed rgba(34,211,238,0.35);
+    animation: spin 24s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .node {
+    position: absolute;
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: var(--card);
+    border: 2px solid rgba(255,255,255,0.08);
+    box-shadow: 0 10px 24px rgba(0,0,0,0.35);
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+    transition: transform .25s ease, border-color .3s ease, box-shadow .3s ease;
+    z-index: 2;
+  }
+  .node:hover { transform: translate(-50%, -50%) scale(1.08); }
+  .node.active {
+    border-color: var(--cyan);
+    box-shadow: 0 0 26px rgba(34,211,238,0.35), 0 10px 24px rgba(0,0,0,0.35);
+  }
+  .node.idle { border-color: rgba(255,255,255,0.12); }
+  .node.offline { opacity: .45; border-color: rgba(224,64,144,0.25); }
+
+  .ring {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    border-radius: 50%;
+    border: 1px solid rgba(255,255,255,0.05);
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+  }
+  .tooltip {
+    position: fixed;
+    pointer-events: none;
+    background: rgba(11,12,20,0.92);
+    border: 1px solid var(--border);
+    backdrop-filter: blur(12px);
+    border-radius: 12px;
+    padding: 10px 12px;
+    font-size: 12px;
+    line-height: 1.4;
+    box-shadow: 0 18px 40px rgba(0,0,0,0.5);
+    z-index: 50;
+    opacity: 0;
+    transition: opacity .15s ease;
+  }
+  .tooltip.show { opacity: 1; }
+
+  .legend {
+    position: absolute;
+    left: 18px;
+    top: 18px;
+    display: flex;
+    gap: 14px;
+    z-index: 4;
+  }
+  .legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: var(--muted);
+    background: rgba(19,18,32,0.7);
+    border: 1px solid var(--border);
+    padding: 6px 10px;
+    border-radius: 999px;
+    backdrop-filter: blur(10px);
+  }
+  .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--cyan);
+    box-shadow: 0 0 8px rgba(34,211,238,0.5);
+  }
+  .dot.idle { background: #7c829a; box-shadow: none; }
+  .dot.offline { background: var(--magenta); opacity: .5; box-shadow: none; }
+
+  .title {
+    position: absolute;
+    right: 18px;
+    top: 18px;
+    z-index: 4;
+    text-align: right;
+  }
+  .title h1 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: .04em;
+  }
+  .title p {
+    margin: 4px 0 0;
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  .panel {
+    max-width: 1100px;
+    margin: 18px auto 40px;
+    padding: 0 18px;
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 12px;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    padding: 16px;
+    cursor: pointer;
+    transition: transform .2s ease, border-color .2s ease;
+  }
+  .card:hover { transform: translateY(-2px); border-color: rgba(255,255,255,0.12); }
+  .card h3 {
+    margin: 0;
+    font-size: 12px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: .08em;
+  }
+  .card .value {
+    margin-top: 8px;
+    font-size: 22px;
+    font-weight: 700;
+  }
+  .card .sub {
+    margin-top: 4px;
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .accent-cyan { color: var(--cyan); }
+  .accent-magenta { color: var(--magenta); }
+  .accent-amber { color: var(--amber); }
+
+  svg.connections {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 1;
+  }
+  .node-wrap {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    z-index: 2;
+  }
+  .node-inner {
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: var(--card);
+    border: 2px solid rgba(255,255,255,0.08);
+    box-shadow: 0 10px 24px rgba(0,0,0,0.35);
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+    transition: transform .25s ease, border-color .3s ease, box-shadow .3s ease;
+  }
+  .node-wrap.active .node-inner {
+    border-color: var(--cyan);
+    box-shadow: 0 0 26px rgba(34,211,238,0.35), 0 10px 24px rgba(0,0,0,0.35);
+  }
+  .node-wrap.idle .node-inner { border-color: rgba(255,255,255,0.12); }
+  .node-wrap.offline .node-inner { opacity: .45; border-color: rgba(224,64,144,0.25); }
+  .node-wrap:hover .node-inner { transform: scale(1.08); }
+
+  .pulse {
+    position: absolute;
+    border-radius: 50%;
+    border: 1px solid var(--cyan);
+    opacity: 0;
+    animation: ping 1.6s cubic-bezier(0,0,0.2,1) infinite;
+    pointer-events: none;
+  }
+  @keyframes ping {
+    0% { transform: scale(.9); opacity: .55; }
+    75%,100% { transform: scale(1.7); opacity: 0; }
+  }
+</style>
+</head>
+<body>
+
+<div class="stage" id="stage">
+  <div class="legend">
+    <span><span class="dot"></span> Active</span>
+    <span><span class="dot idle"></span> Idle</span>
+    <span><span class="dot offline"></span> Offline</span>
+  </div>
+
+  <div class="title">
+    <h1>PAAP Topology</h1>
+    <p>Redesign concept</p>
+  </div>
+
+  <div class="center-hub" id="hub">
+    <svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="var(--cyan)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 2a14.5 14.5 0 0 0 0 20" />
+      <path d="M2 12h20" />
+    </svg>
+  </div>
+
+  <svg class="connections" id="connections"></svg>
+  <div id="nodes"></div>
+</div>
+
+<div class="panel" id="panel">
+  <div class="card">
+    <h3>Providers</h3>
+    <div class="value" id="vProviders">0</div>
+    <div class="sub">Registered</div>
+  </div>
+  <div class="card">
+    <h3>Active</h3>
+    <div class="value accent-cyan" id="vActive">0</div>
+    <div class="sub">Live traffic</div>
+  </div>
+  <div class="card">
+    <h3>Idle</h3>
+    <div class="value" id="vIdle">0</div>
+    <div class="sub">Standby</div>
+  </div>
+  <div class="card">
+    <h3>Offline</h3>
+    <div class="value accent-magenta" id="vOffline">0</div>
+    <div class="sub">Down</div>
+  </div>
+  <div class="card">
+    <h3>Load</h3>
+    <div class="value accent-amber" id="vLoad">0%</div>
+    <div class="sub">Cluster utilization</div>
+  </div>
+</div>
+
+<div class="tooltip" id="tooltip">
+  <div style="font-weight:600" id="ttName">Provider</div>
+  <div style="color:var(--muted);margin-top:4px" id="ttMeta">0 keys</div>
+</div>
+
+<script>
+  const demoProviders = [
+    { name: "Google", status: "active" },
+    { name: "OpenRouter", status: "active" },
+    { name: "Anigravity", status: "active" },
+    { name: "Xiaomi", status: "idle" },
+    { name: "Meta", status: "idle" },
+    { name: "DeepSeek", status: "idle" },
+    { name: "Groq", status: "offline" },
+    { name: "Ollama", status: "idle" },
+    { name: "Cloudflare", status: "offline" },
+    { name: "RunAPI", status: "active" },
+  ];
+
+  const stage = document.getElementById("stage");
+  const connectionsEl = document.getElementById("connections");
+  const nodesEl = document.getElementById("nodes");
+  const tooltip = document.getElementById("tooltip");
+
+  const colors = {
+    google: "#4285f4",
+    openrouter: "#6366f1",
+    anigravity: "#f59e0b",
+    xiaomi: "#ff6900",
+    meta: "#0668e1",
+    deepseek: "#0ea5e9",
+    groq: "#ef4444",
+    ollama: "#10b981",
+    cloudflare: "#f48120",
+    runapi: "#8b5cf6",
+  };
+
+  function providerColor(name) {
+    const k = name.toLowerCase();
+    for (const [key, value] of Object.entries(colors)) if (k.includes(key)) return value;
+    return "#71717a";
+  }
+
+  function placeNodes() {
+    const rect = stage.getBoundingClientRect();
+    const w = rect.width, h = rect.height;
+    const cx = w / 2, cy = h / 2;
+    const count = demoProviders.length;
+    const maxR = Math.min(w, h) * 0.38;
+
+    const positions = [];
+    if (count <= 3) {
+      for (let i = 0; i < count; i++) {
+        const a = (i / count) * Math.PI * 2 - Math.PI / 2;
+        positions.push({ x: cx + Math.cos(a) * maxR, y: cy + Math.sin(a) * maxR });
+      }
+    } else {
+      const ringCount = count <= 6 ? 2 : 3;
+      const perRing = Array.from({ length: ringCount }, () => Math.ceil(count / ringCount));
+      let idx = 0;
+      for (let r = 0; r < ringCount; r++) {
+        const radius = ((r + 1) / ringCount) * maxR;
+        const n = Math.min(perRing[r], count - idx);
+        for (let i = 0; i < n; i++) {
+          const a = (i / n) * Math.PI * 2 - Math.PI / 2;
+          positions.push({ x: cx + Math.cos(a) * radius, y: cy + Math.sin(a) * radius });
+          idx++;
+        }
+      }
+      while (positions.length < count) {
+        const a = Math.random() * Math.PI * 2;
+        const r = Math.random() * maxR;
+        positions.push({ x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r });
+      }
+    }
+    return positions.slice(0, count);
+  }
+
+  function nearest(nodes) {
+    const edges = [];
+    for (let i = 0; i < nodes.length; i++) {
+      const dists = nodes.map((n, j) => ({ j, d: Math.hypot(n.x - nodes[i].x, n.y - nodes[i].y) }))
+        .sort((a, b) => a.d - b.d)
+        .slice(1, 4);
+      for (const k of dists) if (k.d < Math.min(220, nodes.length * 18)) edges.push([i, k.j]);
+    }
+    return edges;
+  }
+
+  function render() {
+    const rect = stage.getBoundingClientRect();
+    const w = rect.width, h = rect.height;
+    const cx = w / 2, cy = h / 2;
+    const positions = placeNodes();
+
+    // rings
+    stage.querySelectorAll(".ring").forEach(el => el.remove());
+    [0.28, 0.55, 0.82].forEach((scale, i) => {
+      const ring = document.createElement("div");
+      ring.className = "ring";
+      const size = Math.min(w, h) * scale;
+      ring.style.width = size + "px";
+      ring.style.height = size + "px";
+      stage.appendChild(ring);
+    });
+
+    connectionsEl.innerHTML = "";
+    nodesEl.innerHTML = "";
+
+    const edges = nearest(positions);
+    edges.forEach(([a, b]) => {
+      const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      line.setAttribute("x1", positions[a].x);
+      line.setAttribute("y1", positions[a].y);
+      line.setAttribute("x2", positions[b].x);
+      line.setAttribute("y2", positions[b].y);
+      line.setAttribute("stroke", "rgba(34,211,238,0.12)");
+      line.setAttribute("stroke-width", "1");
+      line.setAttribute("stroke-dasharray", "5,5");
+      connectionsEl.appendChild(line);
+    });
+
+    let active = 0, idle = 0, offline = 0;
+    demoProviders.forEach((p, i) => {
+      if (p.status === "active") active++;
+      else if (p.status === "idle") idle++;
+      else offline++;
+
+      const wrap = document.createElement("div");
+      wrap.className = `node-wrap ${p.status}`;
+      wrap.style.left = positions[i].x + "px";
+      wrap.style.top = positions[i].y + "px";
+
+      const inner = document.createElement("div");
+      inner.className = "node-inner";
+      inner.innerHTML = `<div style="font-weight:700;color:${providerColor(p.name)}">${p.name[0]}</div>`;
+
+      if (p.status === "active") {
+        const pulse = document.createElement("div");
+        pulse.className = "pulse";
+        pulse.style.inset = "-10px";
+        wrap.appendChild(pulse);
+      }
+
+      wrap.appendChild(inner);
+      nodesEl.appendChild(wrap);
+
+      wrap.addEventListener("mouseenter", (e) => {
+        tooltip.classList.add("show");
+        document.getElementById("ttName").textContent = p.name;
+        document.getElementById("ttMeta").textContent = `${Math.floor(Math.random()*12)+1} keys · ${p.status.toUpperCase()}`;
+        positionTooltip(e);
+      });
+      wrap.addEventListener("mousemove", positionTooltip);
+      wrap.addEventListener("mouseleave", () => tooltip.classList.remove("show"));
+    });
+
+    document.getElementById("vProviders").textContent = demoProviders.length;
+    document.getElementById("vActive").textContent = active;
+    document.getElementById("vIdle").textContent = idle;
+    document.getElementById("vOffline").textContent = offline;
+    document.getElementById("vLoad").textContent = Math.round((active / Math.max(1, demoProviders.length)) * 100) + "%";
+  }
+
+  function positionTooltip(e) {
+    tooltip.style.left = (e.clientX + 14) + "px";
+    tooltip.style.top = (e.clientY - 12) + "px";
+  }
+
+  window.addEventListener("resize", render);
+  render();
+</script>
+</body>
+</html>

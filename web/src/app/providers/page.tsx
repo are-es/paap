@@ -16,6 +16,7 @@ import {
 import { Plus, Trash2, Key, Cpu, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AddProviderModal } from "@/components/providers/add-provider-modal";
+import { ConfirmModal } from "@/components/ui/confirm-modal";
 
 export default function ProvidersPage() {
   const [addOpen, setAddOpen] = useState(false);
@@ -76,6 +77,7 @@ export default function ProvidersPage() {
 function ProviderCard({ provider }: { provider: Provider }) {
   const queryClient = useQueryClient();
   const neon = providerNeonColor(provider.name);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const deleteMutation = useMutation({
     mutationFn: (id: number | string) => api.deleteProvider(id),
@@ -133,14 +135,26 @@ function ProviderCard({ provider }: { provider: Provider }) {
         <button
           onClick={(e) => {
             e.stopPropagation();
-            if (!confirm(`Delete provider "${provider.name}"? This cannot be undone.`)) return;
-            deleteMutation.mutate(provider.id);
+            setConfirmDelete(true);
           }}
           className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-destructive/10"
         >
           <X className="w-4 h-4 text-muted-foreground hover:text-destructive" />
         </button>
       )}
+
+      <ConfirmModal
+        open={confirmDelete}
+        title={`Delete Provider`}
+        message={`Delete provider "${provider.name}"? This cannot be undone.`}
+        confirmLabel="Delete"
+        variant="danger"
+        onConfirm={() => {
+          setConfirmDelete(false);
+          deleteMutation.mutate(provider.id);
+        }}
+        onCancel={() => setConfirmDelete(false)}
+      />
     </div>
   );
 }

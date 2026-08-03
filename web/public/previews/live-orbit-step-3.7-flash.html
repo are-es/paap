@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PAAP · Live Orbit — step-3.7-flash</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:#08080f;color:#e0e0e8;font-family:'Inter',-apple-system,sans-serif;min-height:100vh}
+  .header{padding:32px 40px 0;text-align:center}
+  .header h1{font-size:32px;font-weight:800;margin-bottom:6px;background:linear-gradient(135deg,#22d3ee,#a78bfa);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+  .header p{color:#64748b;font-size:14px}
+  .tabs{display:flex;justify-content:center;gap:8px;padding:28px 20px 20px;flex-wrap:wrap}
+  .tab{padding:10px 20px;border-radius:12px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.03);color:#94a3b8;font-size:13px;font-weight:600;cursor:pointer;transition:all 0.3s;display:flex;align-items:center;gap:8px}
+  .tab:hover{border-color:rgba(255,255,255,0.15);color:#e0e0e8}
+  .tab.active{background:rgba(34,211,238,0.1);border-color:rgba(34,211,238,0.3);color:#22d3ee}
+  .tab .icon{font-size:18px}
+  .panel{display:none;padding:0 40px 40px;animation:fadeIn 0.4s ease}
+  .panel.active{display:block}
+  @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  .panel-header{text-align:center;margin-bottom:24px}
+  .panel-header h2{font-size:22px;font-weight:700;margin-bottom:4px}
+  .panel-header p{color:#64748b;font-size:13px}
+  .orbit-wrap{display:flex;justify-content:center}
+  .orbit{position:relative;width:560px;height:520px;border-radius:20px;border:1px solid rgba(255,255,255,0.06);overflow:hidden}
+  .layout-tag{position:absolute;top:12px;right:12px;padding:3px 10px;border-radius:16px;font-size:10px;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;z-index:20}
+  .legend{display:flex;justify-content:center;gap:28px;margin-top:24px;font-size:11px;color:#64748b}
+  .legend-item{display:flex;align-items:center;gap:7px}
+  .legend-dot{width:7px;height:7px;border-radius:50%}
+  .legend-dot.active{box-shadow:0 0 6px currentColor}
+  .legend-dot.idle{background:#475569}
+  .legend-dot.error{background:#ef4444;opacity:0.4}
+  .node{position:absolute;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;cursor:pointer;transition:all 0.4s cubic-bezier(0.16,1,0.3,1);z-index:5}
+  .node:hover{transform:scale(1.2)}
+  .center{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:24px;z-index:10}
+  @media(max-width:640px){
+    .header{padding:24px 20px 0}.header h1{font-size:24px}
+    .tabs{padding:20px 12px 16px;gap:6px}.tab{padding:8px 14px;font-size:12px}
+    .panel{padding:0 16px 32px}.orbit{width:100%;max-width:400px;height:380px}
+  }
+
+  /* ORBITAL */
+  #orbital .orbit{background:radial-gradient(circle at center,rgba(34,211,238,0.04) 0%,#0c0c16 70%)}
+  #orbital .orbit::before{content:'';position:absolute;inset:0;background:linear-gradient(rgba(34,211,238,0.03) 1px,transparent 1px),linear-gradient(90deg,rgba(34,211,238,0.03) 1px,transparent 1px);background-size:28px 28px;opacity:0.5}
+  #orbital .layout-tag{background:rgba(34,211,238,0.1);border:1px solid rgba(34,211,238,0.2);color:#22d3ee}
+  #orbital .legend-dot.active{background:#22d3ee;color:#22d3ee}
+  #orbital .node{width:42px;height:42px;font-size:13px;background:linear-gradient(135deg,#131320,#1a1a30);border:2px solid rgba(255,255,255,0.08)}
+  #orbital .node.active{border-color:#22d3ee;box-shadow:0 0 18px rgba(34,211,238,0.5),0 0 40px rgba(34,211,238,0.15)}
+  #orbital .center{width:56px;height:56px;background:#14142a;border:2px solid #22d3ee;box-shadow:0 0 28px rgba(34,211,238,0.35);animation:pulse-cyan 3s ease-in-out infinite}
+  @keyframes pulse-cyan{0%,100%{box-shadow:0 0 28px rgba(34,211,238,0.35)}50%{box-shadow:0 0 40px rgba(34,211,238,0.55)}}
+  #orbital .ring{position:absolute;border-radius:50%;border:1px dashed rgba(34,211,238,0.08);top:50%;left:50%;transform:translate(-50%,-50%)}
+
+  /* HEXGRID */
+  #hexgrid .orbit{background:linear-gradient(135deg,rgba(167,139,250,0.03),rgba(244,114,182,0.03))}
+  #hexgrid .orbit::before{content:'';position:absolute;inset:0;background:linear-gradient(60deg,rgba(167,139,250,0.025) 1px,transparent 1px),linear-gradient(-60deg,rgba(244,114,182,0.025) 1px,transparent 1px);background-size:36px 62px;opacity:0.5}
+  #hexgrid .layout-tag{background:rgba(167,139,250,0.1);border:1px solid rgba(167,139,250,0.2);color:#a78bfa}
+  #hexgrid .legend-dot.active{background:#a78bfa;color:#a78bfa}
+  #hexgrid .node{width:68px;height:68px;font-size:14px;background:linear-gradient(135deg,#131320,#1a1a30);clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%)}
+  #hexgrid .node.active{background:linear-gradient(135deg,#2d1b69,#4a1942);box-shadow:0 0 20px rgba(167,139,250,0.4)}
+  #hexgrid .center{width:80px;height:80px;background:linear-gradient(135deg,#1e1e2e,#2a2a3e);clip-path:polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);box-shadow:0 0 40px rgba(167,139,250,0.3);font-size:28px}
+  #hexgrid .hex-row{position:absolute;left:50%;transform:translateX(-50%);display:flex;gap:16px}
+
+  /* GALAXY */
+  #galaxy .orbit{background:radial-gradient(ellipse at center,rgba(251,191,36,0.04) 0%,#0c0c16 70%)}
+  #galaxy .orbit::before{content:'';position:absolute;inset:0;background-image:radial-gradient(circle,rgba(251,191,36,0.06) 1px,transparent 1px);background-size:20px 20px;opacity:0.5}
+  #galaxy .layout-tag{background:rgba(251,191,36,0.1);border:1px solid rgba(251,191,36,0.2);color:#fbbf24}
+  #galaxy .legend-dot.active{background:#fbbf24;color:#fbbf24}
+  #galaxy .node{width:38px;height:38px;font-size:12px;background:linear-gradient(135deg,#1a1810,#25230a);border:2px solid rgba(251,191,36,0.12)}
+  #galaxy .node.active{border-color:#fbbf24;box-shadow:0 0 16px rgba(251,191,36,0.5),0 0 32px rgba(251,191,36,0.15)}
+  #galaxy .center{width:60px;height:60px;background:radial-gradient(circle,#2a2510,#14120a);border:2px solid #fbbf24;box-shadow:0 0 40px rgba(251,191,36,0.4),0 0 80px rgba(251,191,36,0.15);animation:pulse-amber 4s ease-in-out infinite}
+  @keyframes pulse-amber{0%,100%{box-shadow:0 0 40px rgba(251,191,36,0.4)}50%{box-shadow:0 0 60px rgba(251,191,36,0.6)}}
+  #galaxy .spiral-arm{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:1}
+
+  /* NEURAL */
+  #neural .orbit{background:linear-gradient(180deg,rgba(16,185,129,0.03) 0%,rgba(59,130,246,0.03) 100%)}
+  #neural .orbit::before{content:'';position:absolute;inset:0;background:linear-gradient(rgba(16,185,129,0.02) 1px,transparent 1px),linear-gradient(90deg,rgba(59,130,246,0.02) 1px,transparent 1px);background-size:40px 40px;opacity:0.5}
+  #neural .layout-tag{background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.2);color:#10b981}
+  #neural .legend-dot.active{background:#10b981;color:#10b981}
+  #neural .node{width:44px;height:44px;font-size:13px;background:linear-gradient(135deg,#0a1a15,#0f2520);border:2px solid rgba(16,185,129,0.12)}
+  #neural .node.active{border-color:#10b981;box-shadow:0 0 18px rgba(16,185,129,0.5)}
+  #neural .center{width:56px;height:56px;background:#0a1a15;border:2px solid #10b981;box-shadow:0 0 30px rgba(16,185,129,0.35);font-size:24px}
+  #neural .layer-line{position:absolute;top:0;width:1px;height:100%;background:linear-gradient(180deg,transparent,rgba(16,185,129,0.08),transparent)}
+
+  /* CONSTELLATION */
+  #constellation .orbit{background:radial-gradient(circle at 40% 40%,rgba(99,102,241,0.05) 0%,#0c0c16 70%)}
+  #constellation .orbit::before{content:'';position:absolute;inset:0;background-image:radial-gradient(circle,rgba(255,255,255,0.03) 1px,transparent 1px);background-size:16px 16px;opacity:0.5}
+  #constellation .layout-tag{background:rgba(99,102,241,0.1);border:1px solid rgba(99,102,241,0.2);color:#818cf8}
+  #constellation .legend-dot.active{background:#818cf8;color:#818cf8}
+  #constellation .node{width:36px;height:36px;font-size:11px;background:radial-gradient(circle,#1a1a30,#12121f);border:1.5px solid rgba(99,102,241,0.15)}
+  #constellation .node.active{border-color:#818cf8;box-shadow:0 0 14px rgba(99,102,241,0.5),0 0 28px rgba(99,102,241,0.15)}
+  #constellation .node::after{content:'';position:absolute;inset:-4px;border-radius:50%;border:1px solid transparent}
+  #constellation .node.active::after{border-color:rgba(99,102,241,0.25);animation:twinkle 3s ease-in-out infinite}
+  @keyframes twinkle{0%,100%{opacity:0.3;transform:scale(1)}50%{opacity:1;transform:scale(1.15)}}
+  #constellation .center{width:50px;height:50px;background:radial-gradient(circle,#1e1e3a,#12121f);border:2px solid #818cf8;box-shadow:0 0 30px rgba(99,102,241,0.35);font-size:22px}
+  #constellation .constellation-line{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:1}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>PAAP · Live Orbit</h1>
+  <p>5 layout options — pick one for your dashboard · model: step-3.7-flash</p>
+</div>
+
+<div class="tabs">
+  <div class="tab active" onclick="show('orbital')"><span class="icon">🪐</span> Orbital</div>
+  <div class="tab" onclick="show('hexgrid')"><span class="icon">⬡</span> Hex Grid</div>
+  <div class="tab" onclick="show('galaxy')"><span class="icon">🌌</span> Galaxy</div>
+  <div class="tab" onclick="show('neural')"><span class="icon">🧠</span> Neural</div>
+  <div class="tab" onclick="show('constellation')"><span class="icon">✨</span> Constellation</div>
+</div>
+
+<!-- ORBITAL -->
+<div id="orbital" class="panel active">
+  <div class="panel-header"><h2>🪐 Orbital</h2><p>Concentric rings around center — classic topology</p></div>
+  <div class="orbit-wrap"><div class="orbit">
+    <span class="layout-tag">ORBITAL</span>
+    <div class="ring" style="width:180px;height:180px"></div>
+    <div class="ring" style="width:320px;height:320px"></div>
+    <div class="ring" style="width:460px;height:460px"></div>
+    <div class="center">⚡</div>
+    <div class="node active" style="top:180px;left:259px">Xi</div>
+    <div class="node" style="top:259px;left:339px">DS</div>
+    <div class="node active" style="top:339px;left:259px">M</div>
+    <div class="node" style="top:259px;left:179px">CF</div>
+    <div class="node" style="top:100px;left:259px">G</div>
+    <div class="node active" style="top:150px;left:380px">K</div>
+    <div class="node" style="top:259px;left:430px">O</div>
+    <div class="node" style="top:370px;left:380px">R</div>
+    <div class="node" style="top:420px;left:259px">A</div>
+    <div class="node" style="top:370px;left:139px">RN</div>
+    <div class="node" style="top:259px;left:89px">AG</div>
+    <div class="node" style="top:150px;left:139px">M</div>
+  </div></div>
+  <div class="legend"><div class="legend-item"><div class="legend-dot active"></div>Active</div><div class="legend-item"><div class="legend-dot idle"></div>Idle</div><div class="legend-item"><div class="legend-dot error"></div>Offline</div></div>
+</div>
+
+<!-- HEXGRID -->
+<div id="hexgrid" class="panel">
+  <div class="panel-header"><h2>⬡ Hex Grid</h2><p>Honeycomb pattern — organized & efficient</p></div>
+  <div class="orbit-wrap"><div class="orbit">
+    <span class="layout-tag">HEXGRID</span>
+    <div class="center">⚡</div>
+    <div class="hex-row" style="top:80px"><div class="node active"><span>Xi</span></div><div class="node"><span>DS</span></div><div class="node active"><span>M</span></div><div class="node"><span>CF</span></div></div>
+    <div class="hex-row" style="top:195px;left:calc(50% + 38px);transform:translateX(-50%)"><div class="node"><span>G</span></div><div class="node active"><span>K</span></div><div class="node"><span>O</span></div><div class="node"><span>R</span></div></div>
+    <div class="hex-row" style="top:310px"><div class="node"><span>A</span></div><div class="node"><span>RN</span></div><div class="node"><span>AG</span></div><div class="node"><span>M</span></div></div>
+    <div class="hex-row" style="top:425px;left:calc(50% + 38px);transform:translateX(-50%)"><div class="node"><span>CF</span></div><div class="node"><span>DS</span></div><div class="node"><span>O</span></div></div>
+  </div></div>
+  <div class="legend"><div class="legend-item"><div class="legend-dot active"></div>Active</div><div class="legend-item"><div class="legend-dot idle"></div>Idle</div><div class="legend-item"><div class="legend-dot error"></div>Offline</div></div>
+</div>
+
+<!-- GALAXY -->
+<div id="galaxy" class="panel">
+  <div class="panel-header"><h2>🌌 Galaxy</h2><p>Spiral arms — cosmic & dynamic</p></div>
+  <div class="orbit-wrap"><div class="orbit">
+    <span class="layout-tag">GALAXY</span>
+    <svg class="spiral-arm" viewBox="0 0 560 520"><path d="M280 260 Q320 200 380 180 Q440 160 460 200" fill="none" stroke="rgba(251,191,36,0.08)" stroke-width="60" stroke-linecap="round"/><path d="M280 260 Q220 320 180 380 Q140 440 180 460" fill="none" stroke="rgba(251,191,36,0.06)" stroke-width="50" stroke-linecap="round"/><path d="M280 260 Q340 300 400 340 Q460 380 440 420" fill="none" stroke="rgba(251,191,36,0.05)" stroke-width="45" stroke-linecap="round"/></svg>
+    <div class="center">⚡</div>
+    <div class="node active" style="top:200px;left:310px">Xi</div><div class="node" style="top:160px;left:360px">DS</div><div class="node active" style="top:140px;left:420px">K</div><div class="node" style="top:165px;left:470px">O</div>
+    <div class="node" style="top:310px;left:240px">G</div><div class="node" style="top:360px;left:195px">CF</div><div class="node" style="top:410px;left:175px">RN</div><div class="node" style="top:445px;left:200px">A</div>
+    <div class="node active" style="top:310px;left:330px">M</div><div class="node" style="top:355px;left:385px">R</div><div class="node" style="top:395px;left:425px">AG</div><div class="node" style="top:425px;left:410px">M</div>
+  </div></div>
+  <div class="legend"><div class="legend-item"><div class="legend-dot active"></div>Active</div><div class="legend-item"><div class="legend-dot idle"></div>Idle</div><div class="legend-item"><div class="legend-dot error"></div>Offline</div></div>
+</div>
+
+<!-- NEURAL -->
+<div id="neural" class="panel">
+  <div class="panel-header"><h2>🧠 Neural</h2><p>Layered network — brain-inspired</p></div>
+  <div class="orbit-wrap"><div class="orbit">
+    <span class="layout-tag">NEURAL</span>
+    <div class="layer-line" style="left:25%"></div><div class="layer-line" style="left:50%"></div><div class="layer-line" style="left:75%"></div>
+    <div class="center">⚡</div>
+    <div class="node active" style="top:100px;left:100px">Xi</div><div class="node" style="top:220px;left:100px">G</div><div class="node" style="top:340px;left:100px">CF</div>
+    <div class="node active" style="top:80px;left:230px">K</div><div class="node" style="top:180px;left:230px">DS</div><div class="node active" style="top:280px;left:230px">M</div><div class="node" style="top:380px;left:230px">RN</div>
+    <div class="node" style="top:120px;left:360px">O</div><div class="node" style="top:240px;left:360px">R</div><div class="node" style="top:360px;left:360px">AG</div>
+    <div class="node" style="top:160px;left:470px">A</div><div class="node" style="top:300px;left:470px">M</div>
+  </div></div>
+  <div class="legend"><div class="legend-item"><div class="legend-dot active"></div>Active</div><div class="legend-item"><div class="legend-dot idle"></div>Idle</div><div class="legend-item"><div class="legend-dot error"></div>Offline</div></div>
+</div>
+
+<!-- CONSTELLATION -->
+<div id="constellation" class="panel">
+  <div class="panel-header"><h2>✨ Constellation</h2><p>Golden angle distribution — natural & organic</p></div>
+  <div class="orbit-wrap"><div class="orbit">
+    <span class="layout-tag">CONSTELLATION</span>
+    <svg class="constellation-line" viewBox="0 0 560 520">
+      <line x1="280" y1="260" x2="310" y2="190" stroke="rgba(99,102,241,0.12)" stroke-width="1"/>
+      <line x1="310" y1="190" x2="370" y2="220" stroke="rgba(99,102,241,0.1)" stroke-width="1"/>
+      <line x1="370" y1="220" x2="340" y2="300" stroke="rgba(99,102,241,0.08)" stroke-width="1"/>
+      <line x1="340" y1="300" x2="260" y2="330" stroke="rgba(99,102,241,0.1)" stroke-width="1"/>
+      <line x1="260" y1="330" x2="200" y2="280" stroke="rgba(99,102,241,0.08)" stroke-width="1"/>
+      <line x1="200" y1="280" x2="230" y2="200" stroke="rgba(99,102,241,0.12)" stroke-width="1"/>
+      <line x1="230" y1="200" x2="310" y2="190" stroke="rgba(99,102,241,0.1)" stroke-width="1"/>
+      <line x1="280" y1="260" x2="420" y2="310" stroke="rgba(99,102,241,0.06)" stroke-width="1"/>
+      <line x1="280" y1="260" x2="150" y2="370" stroke="rgba(99,102,241,0.06)" stroke-width="1"/>
+      <line x1="420" y1="310" x2="450" y2="400" stroke="rgba(99,102,241,0.05)" stroke-width="1"/>
+      <line x1="150" y1="370" x2="180" y2="450" stroke="rgba(99,102,241,0.05)" stroke-width="1"/>
+    </svg>
+    <div class="center">⚡</div>
+    <div class="node active" style="top:172px;left:292px">Xi</div><div class="node" style="top:202px;left:352px">DS</div><div class="node active" style="top:282px;left:322px">K</div><div class="node" style="top:312px;left:242px">G</div><div class="node" style="top:262px;left:182px">CF</div><div class="node" style="top:182px;left:212px">M</div><div class="node" style="top:352px;left:402px">O</div><div class="node" style="top:432px;left:432px">R</div><div class="node" style="top:352px;left:132px">A</div><div class="node" style="top:432px;left:162px">RN</div><div class="node" style="top:120px;left:430px">AG</div><div class="node" style="top:450px;left:300px">M</div>
+  </div></div>
+  <div class="legend"><div class="legend-item"><div class="legend-dot active"></div>Active</div><div class="legend-item"><div class="legend-dot idle"></div>Idle</div><div class="legend-item"><div class="legend-dot error"></div>Offline</div></div>
+</div>
+
+<script>
+function show(id){document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));document.getElementById(id).classList.add('active');event.currentTarget.classList.add('active')}
+</script>
+
+</body>
+</html>
