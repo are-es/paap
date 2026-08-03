@@ -1,83 +1,58 @@
 "use client";
 
-import * as React from "react";
-import { cn } from "@/lib/utils";
+import { useEffect, useRef } from "react";
 import { X } from "lucide-react";
+import { cn } from "@/lib/utils";
 
-interface ModalProps {
+export function Modal({
+  open,
+  onClose,
+  children,
+  className,
+  title,
+}: {
   open: boolean;
   onClose: () => void;
   children: React.ReactNode;
   className?: string;
   title?: string;
-}
+}) {
+  const ref = useRef<HTMLDivElement>(null);
 
-export function Modal({ open, onClose, children, className, title }: ModalProps) {
-  const overlayRef = React.useRef<HTMLDivElement>(null);
-
-  React.useEffect(() => {
+  useEffect(() => {
     if (!open) return;
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
+    const handleKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     document.addEventListener("keydown", handleKey);
     return () => document.removeEventListener("keydown", handleKey);
   }, [open, onClose]);
 
-  React.useEffect(() => {
-    if (open) {
-      document.body.style.overflow = "hidden";
-    } else {
-      document.body.style.overflow = "";
-    }
-    return () => {
-      document.body.style.overflow = "";
-    };
-  }, [open]);
-
   if (!open) return null;
-
-  const handleOverlayClick = (e: React.MouseEvent) => {
-    if (e.target === overlayRef.current) onClose();
-  };
 
   return (
     <div
-      ref={overlayRef}
-      onClick={handleOverlayClick}
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 animate-in fade-in-0 duration-200"
+      ref={ref}
+      onClick={(e) => { if (e.target === ref.current) onClose(); }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
     >
       <div
         role="dialog"
         aria-modal="true"
-        aria-label={title}
-        className={cn(
-          "relative w-full max-w-lg rounded-xl border border-border bg-popover text-popover-foreground animate-in zoom-in-95 fade-in-0 duration-200",
-          className
-        )}
+        className={cn("relative w-full max-w-lg rounded-xl border border-border bg-popover shadow-2xl", className)}
       >
         {title && (
-          <div className="flex items-center justify-between px-6 py-4 border-b border-border">
-            <h2 className="text-lg font-semibold">{title}</h2>
-            <button
-              onClick={onClose}
-              className="rounded-md p-1 text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
-              aria-label="Close"
-            >
+          <div className="flex items-center justify-between px-5 py-3 border-b border-border">
+            <h2 className="text-base font-semibold">{title}</h2>
+            <button onClick={onClose} className="p-1 rounded-md hover:bg-muted text-muted-foreground">
               <X className="h-4 w-4" />
             </button>
           </div>
         )}
         {!title && (
-          <button
-            onClick={onClose}
-            className="absolute right-3 top-3 rounded-md p-1 text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors z-10"
-            aria-label="Close"
-          >
+          <button onClick={onClose} className="absolute right-3 top-3 p-1 rounded-md hover:bg-muted text-muted-foreground z-10">
             <X className="h-4 w-4" />
           </button>
         )}
-        <div className="px-6 py-4">{children}</div>
+        <div className="p-5">{children}</div>
       </div>
     </div>
   );

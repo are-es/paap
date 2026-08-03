@@ -10,8 +10,7 @@ import {
   ProviderTypeBadge,
   StatusPill,
   providerNeonColor,
-  NEON_BORDER_HOVER,
-  NEON_ACCENT_STRIP,
+  getNeonClasses,
 } from "@/components/providers/provider-helpers";
 import { Plus, Trash2, Key, Cpu, X } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -92,18 +91,20 @@ function ProviderCard({ provider }: { provider: Provider }) {
     window.location.href = `/providers/setup?id=${encodeURIComponent(String(provider.id))}`;
   };
 
+  const neonClasses = getNeonClasses(neon);
+
   return (
-    <div
-      onClick={handleClick}
-      className={cn(
-        "group relative rounded-xl border border-primary/15 bg-primary/[0.04] p-5 cursor-pointer transition-all duration-200 flex flex-col gap-4",
-        "before:absolute before:top-0 before:left-0 before:bottom-0 before:w-[3px] before:rounded-l-xl before:opacity-0 before:transition-opacity",
-        NEON_ACCENT_STRIP[neon],
-        "before:group-hover:opacity-100",
-        NEON_BORDER_HOVER[neon],
-        "hover:translate-y-[-2px]"
-      )}
-    >
+  <div
+    onClick={handleClick}
+    className={cn(
+      "group relative rounded-xl border border-primary/15 bg-primary/[0.04] p-5 cursor-pointer transition-all duration-200 flex flex-col gap-4",
+      "before:absolute before:top-0 before:left-0 before:bottom-0 before:w-[3px] before:rounded-l-xl before:opacity-0 before:transition-opacity",
+      neonClasses.strip,
+      "before:group-hover:opacity-100",
+      neonClasses.hover,
+      "hover:translate-y-[-2px]"
+    )}
+  >
       <div className="flex items-start justify-between">
         <div className="flex items-center gap-2">
           <ProviderIcon provider={provider} size="md" />

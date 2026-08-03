@@ -154,7 +154,6 @@ export default function SettingsPage() {
         variant={confirmAction === "restart" ? "default" : "danger"}
         onConfirm={handleConfirm}
         onCancel={() => setConfirmAction(null)}
-        loading={clearing || restarting || shuttingDown}
       />
     </div>
   );

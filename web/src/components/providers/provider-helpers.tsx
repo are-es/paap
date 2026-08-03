@@ -1,40 +1,26 @@
-import { cn } from "@/lib/utils";
 import { getProviderInitials, getProviderLogo } from "@/lib/provider-logos";
 import type { Provider } from "@/lib/api";
 import Image from "next/image";
 
-type NeonColor = "cyan" | "magenta" | "green" | "amber" | "purple";
+const COLORS = ["#22d3ee", "#f472b6", "#34d399", "#fbbf24", "#a78bfa"] as const;
 
-const neonCycle: NeonColor[] = ["cyan", "magenta", "green", "amber", "purple"];
-
-export function providerNeonColor(name: string): NeonColor {
+export function providerNeonColor(name: string): string {
   const sum = name.split("").reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
-  return neonCycle[sum % neonCycle.length] ?? "cyan";
+  return COLORS[sum % COLORS.length] ?? COLORS[0];
 }
 
-const neonStyles: Record<NeonColor, { bg: string; text: string; border: string }> = {
-  cyan: { bg: "bg-neon-cyan/10", text: "text-neon-cyan", border: "border-neon-cyan/20" },
-  magenta: { bg: "bg-neon-magenta/10", text: "text-neon-magenta", border: "border-neon-magenta/20" },
-  green: { bg: "bg-neon-green/10", text: "text-neon-green", border: "border-neon-green/20" },
-  amber: { bg: "bg-neon-amber/10", text: "text-neon-amber", border: "border-neon-amber/20" },
-  purple: { bg: "bg-neon-purple/10", text: "text-neon-purple", border: "border-neon-purple/20" },
+// Tailwind classes for neon colors (used by provider cards)
+const NEON_MAP: Record<string, { hover: string; strip: string }> = {
+  "#22d3ee": { hover: "hover:border-neon-cyan/40", strip: "before:bg-neon-cyan" },
+  "#f472b6": { hover: "hover:border-neon-magenta/40", strip: "before:bg-neon-magenta" },
+  "#34d399": { hover: "hover:border-neon-green/40", strip: "before:bg-neon-green" },
+  "#fbbf24": { hover: "hover:border-neon-amber/40", strip: "before:bg-neon-amber" },
+  "#a78bfa": { hover: "hover:border-neon-purple/40", strip: "before:bg-neon-purple" },
 };
 
-export const NEON_BORDER_HOVER: Record<NeonColor, string> = {
-  cyan: "hover:border-neon-cyan/40",
-  magenta: "hover:border-neon-magenta/40",
-  green: "hover:border-neon-green/40",
-  amber: "hover:border-neon-amber/40",
-  purple: "hover:border-neon-purple/40",
-};
-
-export const NEON_ACCENT_STRIP: Record<NeonColor, string> = {
-  cyan: "before:bg-neon-cyan",
-  magenta: "before:bg-neon-magenta",
-  green: "before:bg-neon-green",
-  amber: "before:bg-neon-amber",
-  purple: "before:bg-neon-purple",
-};
+export function getNeonClasses(color: string) {
+  return NEON_MAP[color] ?? NEON_MAP[COLORS[0]];
+}
 
 export function ProviderIcon({
   provider,
@@ -47,10 +33,9 @@ export function ProviderIcon({
 }) {
   const logo = getProviderLogo(provider);
   const initials = getProviderInitials(provider.name);
-  const neon = providerNeonColor(provider.name);
-  const styles = neonStyles[neon];
+  const color = providerNeonColor(provider.name);
 
-  const sizeClasses = {
+  const sizeMap = {
     sm: "w-8 h-8 text-sm rounded-lg",
     md: "w-10 h-10 text-base rounded-[10px]",
     lg: "w-12 h-12 text-[22px] rounded-xl",
@@ -58,82 +43,48 @@ export function ProviderIcon({
 
   return (
     <div
-      className={cn(
-        "shrink-0 flex items-center justify-center font-heading font-bold border",
-        styles.bg,
-        styles.text,
-        styles.border,
-        sizeClasses[size],
-        className
-      )}
-      aria-hidden={logo ? "true" : undefined}
+      className={`${sizeMap[size]} flex items-center justify-center font-bold shrink-0 ${className ?? ""}`}
+      style={{ background: `${color}15`, border: `1.5px solid ${color}30` }}
     >
       {logo ? (
-        <Image
-          src={logo}
-          alt=""
-          width={size === "lg" ? 32 : 24}
-          height={size === "lg" ? 32 : 24}
-          className="object-contain"
-        />
+        <Image src={logo} alt="" width={size === "sm" ? 18 : size === "lg" ? 28 : 22} height={size === "sm" ? 18 : size === "lg" ? 28 : 22} className="rounded-sm object-contain" unoptimized />
       ) : (
-        initials
+        <span style={{ color }}>{initials}</span>
       )}
     </div>
   );
 }
 
-export function AuthTypeBadge({ authType }: { authType: Provider["auth_type"] }) {
-  const isKey = authType === "apikey";
+export function AuthTypeBadge({ authType }: { authType: string }) {
   return (
-    <span className="text-[11px] text-muted-foreground font-medium">
-      {isKey ? "API Key" : "OAuth"}
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-muted text-muted-foreground border border-border">
+      {authType === "connection" ? "OAuth" : "API Key"}
     </span>
   );
 }
 
-export function ProviderTypeBadge({
-  providerType,
-}: {
-  providerType: Provider["provider_type"];
-}) {
-  if (providerType === "custom") return null;
+export function ProviderTypeBadge({ providerType }: { providerType: string }) {
   return (
-    <>
-      <span className="text-[11px] text-muted-foreground">·</span>
-      <span className="text-[11px] text-muted-foreground font-medium">
-        Built-in
-      </span>
-    </>
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider border ${
+      providerType === "builtin"
+        ? "bg-primary/10 text-primary border-primary/20"
+        : "bg-muted text-muted-foreground border-border"
+    }`}>
+      {providerType === "builtin" ? "Built-in" : "Custom"}
+    </span>
   );
 }
 
-export function StatusPill({
-  status,
-  label,
-}: {
-  status: Provider["status"];
-  label?: string;
-}) {
+export function StatusPill({ status }: { status: string }) {
   const isOnline = status === "online";
   return (
-    <span className="inline-flex items-center gap-1 text-[11px] font-medium">
-      <span
-        className={cn(
-          "w-1.5 h-1.5 rounded-full",
-          isOnline ? "bg-green-500" : "bg-red-400"
-        )}
-      />
-      <span className={isOnline ? "text-green-600" : "text-red-400"}>
-        {label ?? (isOnline ? "Online" : "Offline")}
-      </span>
+    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider ${
+      isOnline
+        ? "bg-green-100 text-green-700 border border-green-200"
+        : "bg-muted text-muted-foreground border border-border"
+    }`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${isOnline ? "bg-green-500 animate-pulse" : "bg-muted-foreground"}`} />
+      {status}
     </span>
   );
-}
-
-export function maskKey(value: string): string {
-  if (!value || value.length <= 8) return value;
-  const visible = value.slice(-4);
-  const prefix = value.slice(0, Math.min(4, value.indexOf("-") + 1 || 4));
-  return `${prefix}${String.fromCharCode(8226).repeat(8)}${visible}`;
 }

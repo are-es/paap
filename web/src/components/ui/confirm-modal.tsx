@@ -1,19 +1,6 @@
 "use client";
 
 import { X, AlertTriangle } from "lucide-react";
-import { cn } from "@/lib/utils";
-
-interface ConfirmModalProps {
-  open: boolean;
-  title: string;
-  message: string;
-  confirmLabel?: string;
-  cancelLabel?: string;
-  variant?: "danger" | "default";
-  onConfirm: () => void;
-  onCancel: () => void;
-  loading?: boolean;
-}
 
 export function ConfirmModal({
   open,
@@ -24,8 +11,16 @@ export function ConfirmModal({
   variant = "default",
   onConfirm,
   onCancel,
-  loading = false,
-}: ConfirmModalProps) {
+}: {
+  open: boolean;
+  title: string;
+  message: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  variant?: "danger" | "default";
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
   if (!open) return null;
 
   return (
@@ -49,23 +44,18 @@ export function ConfirmModal({
           </button>
         </div>
         <div className="flex justify-end gap-2">
-          <button
-            onClick={onCancel}
-            className="px-3 py-1.5 text-sm rounded-lg border border-border hover:bg-muted"
-          >
+          <button onClick={onCancel} className="px-3 py-1.5 text-sm rounded-lg border border-border hover:bg-muted">
             {cancelLabel}
           </button>
           <button
             onClick={onConfirm}
-            disabled={loading}
-            className={cn(
-              "px-3 py-1.5 text-sm rounded-lg transition-shadow disabled:opacity-50",
+            className={`px-3 py-1.5 text-sm rounded-lg transition-shadow ${
               variant === "danger"
                 ? "bg-destructive text-destructive-foreground hover:bg-destructive/90"
                 : "bg-primary text-primary-foreground hover:opacity-90"
-            )}
+            }`}
           >
-            {loading ? "Processing..." : confirmLabel}
+            {confirmLabel}
           </button>
         </div>
       </div>

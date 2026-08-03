@@ -494,7 +494,6 @@ function DangerZoneSection({ groupId, groupName }: { groupId: string; groupName:
           deleteMutation.mutate();
         }}
         onCancel={() => setConfirmDelete(false)}
-        loading={deleteMutation.isPending}
       />
     </Section>
   );
