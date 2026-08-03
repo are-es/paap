@@ -32,6 +32,12 @@ export default function DashboardPage() {
     queryFn: () => api.getGatewayKeys(),
   });
 
+  const costQuery = useQuery({
+    queryKey: ["cost"],
+    queryFn: () => api.getCost(),
+    refetchInterval: 30_000,
+  });
+
   const addKeyMutation = useMutation({
     mutationFn: () => api.addGatewayKey({ name: keyName }),
     onSuccess: () => {
@@ -55,11 +61,25 @@ export default function DashboardPage() {
   const settings = settingsQuery.data;
   const providers = providersQuery.data ?? [];
   const gatewayKeys = gatewayKeysQuery.data ?? [];
+  const cost = costQuery.data;
+
+  const formatCost = (val?: number) => {
+    if (val === undefined || val === null) return "$0.00";
+    if (val < 0.01) return "<$0.01";
+    return `$${val.toFixed(2)}`;
+  };
+
+  const formatTokens = (val?: number) => {
+    if (!val) return "0";
+    if (val >= 1_000_000) return `${(val / 1_000_000).toFixed(1)}M`;
+    if (val >= 1_000) return `${(val / 1_000).toFixed(1)}K`;
+    return val.toString();
+  };
 
   const stats = [
-    { label: "Requests (24h)", value: "12,341" },
-    { label: "Success Rate", value: "99.2%" },
-    { label: "Cost (24h)", value: "$42.18" },
+    { label: "Requests (24h)", value: cost?.summary?.today?.req_count?.toString() ?? "0" },
+    { label: "Tokens In (24h)", value: formatTokens(cost?.summary?.today?.tokens_in) },
+    { label: "Cost (24h)", value: formatCost(cost?.summary?.today?.cost_usd) },
     { label: "Active Providers", value: providers.filter(p => p.status === "online").length.toString() },
   ];
 

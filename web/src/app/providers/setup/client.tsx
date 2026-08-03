@@ -107,10 +107,9 @@ export function ProviderSetupClient() {
         </div>
       </div>
 
-      {provider?.auth_type === "connection" ? (
+      <KeysSection providerId={providerId} />
+      {provider?.auth_type === "connection" && (
         <ConnectionsSection providerId={providerId} />
-      ) : (
-        <KeysSection providerId={providerId} />
       )}
       <ModelsSection providerId={providerId} />
       <PlaygroundSection providerId={providerId} />
@@ -422,9 +421,20 @@ function KeysSection({ providerId }: { providerId: string }) {
                   )}
                 />
               </button>
-              <Key className="w-4 h-4 text-neon-cyan/50 shrink-0" />
+              {key.source === "connection" ? (
+                <Globe className="w-4 h-4 text-purple-400/70 shrink-0" />
+              ) : (
+                <Key className="w-4 h-4 text-neon-cyan/50 shrink-0" />
+              )}
               <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium">{key.name || "Unnamed"}</div>
+                <div className="text-sm font-medium flex items-center gap-2">
+                  {key.name || "Unnamed"}
+                  {key.source === "connection" && (
+                    <span className="px-1.5 py-0.5 rounded text-[10px] bg-purple-500/10 text-purple-400 border border-purple-500/20 font-mono">
+                      OAuth
+                    </span>
+                  )}
+                </div>
                 <div className="font-mono text-xs text-muted-foreground truncate">{displayKey}</div>
               </div>
               {key.fail_count != null && key.fail_count > 0 && (
@@ -741,7 +751,6 @@ const queryClient = useQueryClient();
 
 const keysQuery = useQuery({ queryKey: ["keys", providerId], queryFn: () => api.getKeys(providerId) });
 const modelsQuery = useQuery({ queryKey: ["models", providerId], queryFn: () => api.getModels(providerId) });
-const connectionsQuery = useQuery({ queryKey: ["connections", providerId], queryFn: () => api.getConnections(providerId) });
 
 const testMutation = useMutation({
 mutationFn: () => api.runPlayground(providerId, { key_id: keyId, model_id: model, prompt }),
@@ -757,7 +766,6 @@ onError: (err: Error) => { setError(err.message); setResults(null); },
 });
 
 const activeKeys = keysQuery.data?.filter((k) => k.is_active) ?? [];
-const activeConnections = connectionsQuery.data?.filter((c) => c.is_active) ?? [];
 const selectedModels = modelsQuery.data?.filter((m) => m.selected) ?? [];
 
 return (
@@ -771,7 +779,6 @@ className="px-3 py-2 rounded-lg border border-input bg-background text-sm focus:
 >
 <option value="">All Keys</option>
 {activeKeys.map((k) => <option key={k.id} value={k.id}>{k.name || k.key.slice(0, 12) + "..."}</option>)}
-{activeConnections.map((c) => <option key={c.id} value={c.id}>{c.name || c.email || c.id}</option>)}
 </select>
           <select
             value={model}

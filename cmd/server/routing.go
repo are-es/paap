@@ -231,7 +231,8 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// ── RTK Tool Output Compression ──────────────────────────
-	rtkEnabled := getSettingStrCached("rtk_enabled", "true") == "true"
+	// Headroom v0.33.0+ runs RTK internally, so skip standalone RTK to avoid double compression
+	rtkEnabled := getSettingStrCached("rtk_enabled", "true") == "true" && getSettingStrCached("headroom_enabled", "false") != "true"
 	if rtkEnabled && IsRTKAvailable() {
 		if msgs, ok := rawBody["messages"].([]interface{}); ok {
 			var msgMaps []map[string]interface{}

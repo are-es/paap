@@ -134,3 +134,7 @@ xiaomi, meta, google, kimchi, openrouter, grok-cli, anigravity, ollamacloud, run
 - `config/*.md` are compression configs, not skill files
 - Tools system: Vision auto-routes image requests to configured model
 - `[1m]` suffix from Claude Code is stripped automatically
+
+## Roadmap
+
+See `.agent/roadmap.md` for current task breakdown and progress.

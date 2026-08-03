@@ -754,10 +754,13 @@ func providerTestPrompt(w http.ResponseWriter, r *http.Request, providerID strin
 		return
 	}
 
-	// Get keys: specific key_id or all active keys (skip for connection-type providers)
+	// Get keys: specific key_id or all active keys
+	// For connection-type providers, check provider_connections too
 	var rows *sql.Rows
-	if authType == "connection" {
-		// Connection-type providers use provider_connections, not api_keys
+	if authType == "connection" && keyIDStr != "" {
+		// User selected a specific connection — look it up directly
+		rows = nil
+	} else if authType == "connection" {
 		rows = nil
 	} else if keyIDStr != "" {
 		rows, err = db.DB.Query("SELECT id, name, key_encrypted, COALESCE(account_id,'') FROM api_keys WHERE id=? AND provider_id=?", keyIDStr, providerID)
@@ -939,9 +942,16 @@ func providerTestPrompt(w http.ResponseWriter, r *http.Request, providerID strin
 
 	if len(formatted) == 0 {
 		// Fallback: check provider_connections for OAuth tokens
+		// If a specific connection was selected (key_id matches a connection), use that one
 		var connID, connEmail, connToken string
-		connErr := db.DB.QueryRow(`SELECT id, email, access_token FROM provider_connections 
-			WHERE provider_id=? AND is_active=1 ORDER BY created_at DESC LIMIT 1`, providerID).Scan(&connID, &connEmail, &connToken)
+		var connErr error
+		if keyIDStr != "" {
+			connErr = db.DB.QueryRow(`SELECT id, COALESCE(email,''), COALESCE(access_token, COALESCE(api_key,''))
+				FROM provider_connections WHERE id=? AND provider_id=? AND is_active=1`, keyIDStr, providerID).Scan(&connID, &connEmail, &connToken)
+		} else {
+			connErr = db.DB.QueryRow(`SELECT id, COALESCE(email,''), COALESCE(access_token, COALESCE(api_key,''))
+				FROM provider_connections WHERE provider_id=? AND is_active=1 ORDER BY created_at DESC LIMIT 1`, providerID).Scan(&connID, &connEmail, &connToken)
+		}
 		if connErr == nil && connToken != "" {
 			// Use connection token to make request
 			startTime := time.Now()
@@ -1800,12 +1810,46 @@ func providerKeyList(w http.ResponseWriter, r *http.Request, providerID string) 
 			"id": id, "name": name, "key": keyVal, "is_active": isActive == 1,
 			"last_used": lastUsed, "created_at": createdAt,
 			"fail_count": failCount, "last_error": lastError,
+			"source": "apikey",
 		}
 		if accountID != "" {
 			item["account_id"] = accountID
 		}
 		list = append(list, item)
 	}
+
+	// Also return provider_connections (for connection-type providers like Grok CLI OAuth)
+	connRows, connErr := db.DB.Query(`SELECT id, COALESCE(name,''), COALESCE(email,''),
+		CASE WHEN access_token != '' THEN '***' || SUBSTR(access_token, -4) ELSE '' END as token_preview,
+		is_active, created_at, COALESCE(fail_count,0), COALESCE(test_status,'')
+		FROM provider_connections WHERE provider_id=?`, providerID)
+	if connErr == nil {
+		defer connRows.Close()
+		for connRows.Next() {
+			var id, name, email, tokenPreview, testStatus string
+			var isActive, failCount int
+			var createdAt int64
+			connRows.Scan(&id, &name, &email, &tokenPreview, &isActive, &createdAt, &failCount, &testStatus)
+			displayName := name
+			if displayName == "" {
+				displayName = email
+			}
+			if displayName == "" {
+				displayName = "connection-" + id[:8]
+			}
+			item := map[string]interface{}{
+				"id": id, "name": displayName, "key": tokenPreview, "is_active": isActive == 1,
+				"created_at": fmt.Sprintf("%d", createdAt),
+				"fail_count": failCount, "last_error": testStatus,
+				"source": "connection",
+			}
+			if email != "" {
+				item["email"] = email
+			}
+			list = append(list, item)
+		}
+	}
+
 	if list == nil {
 		list = []map[string]interface{}{}
 	}

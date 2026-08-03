@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dolvin/paap/internal/db"
@@ -185,14 +186,14 @@ func logClear(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ── DELETE /api/clear-all — clear logs + usage_stats (NOT cost_summary)
+// ── DELETE /api/clear-all — clear all data tables
 
 func clearAll(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "DELETE" {
 		writeError(w, 405, "method not allowed")
 		return
 	}
-	tables := []string{"logs", "usage_stats"}
+	tables := []string{"logs", "usage_stats", "cost_summary", "race_logs"}
 	for _, t := range tables {
 		if _, err := db.DB.Exec("DELETE FROM " + t); err != nil {
 			writeError(w, 500, fmt.Sprintf("failed to clear %s: %v", t, err))
@@ -451,22 +452,41 @@ func logExport(w http.ResponseWriter, r *http.Request) {
 }
 
 // ── Model pricing (per 1M tokens) ───────────────────────────
+// Pricing loaded from model_pricing table at startup + cached.
+// Fallback hardcoded entries for models not in DB.
 
-var modelPricing = map[string][2]float64{
-	// Xiaomi
+var modelPricingDB map[string][2]float64
+var modelPricingOnce sync.Once
+
+func loadModelPricingFromDB() {
+	modelPricingOnce.Do(func() {
+		modelPricingDB = map[string][2]float64{}
+		rows, err := db.DB.Query("SELECT model_id, input_per_1m, output_per_1m FROM model_pricing")
+		if err != nil {
+			log.Printf("[PAAP] Failed to load model_pricing: %v", err)
+			return
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id string
+			var inp, outp float64
+			rows.Scan(&id, &inp, &outp)
+			modelPricingDB[strings.ToLower(id)] = [2]float64{inp, outp}
+		}
+		log.Printf("[PAAP] Loaded %d model pricing entries from DB", len(modelPricingDB))
+	})
+}
+
+// Fallback pricing for models not in DB
+var modelPricingFallback = map[string][2]float64{
 	"mimo-v2.5":     {0.14, 0.28},
 	"mimo-v2.5-pro": {0.435, 0.87},
-	// DeepSeek
 	"deepseek-v4-flash": {0.14, 0.28},
 	"deepseek-v4-pro":   {0.435, 0.87},
-	// Kimchi
 	"minimax-m3": {0.51, 2.04},
-	// Google AI Studio
 	"gemini-2.5-flash": {0.15, 0.60},
 	"gemini-2.5-pro":   {1.25, 10.00},
-	// Meta Model API — Muse Spark 1.1
 	"muse-spark-1.1": {1.25, 4.25},
-	// TokenGO models (per 1M tokens)
 	"deepseek/deepseek-v4-flash": {0.098, 0.196},
 	"deepseek/deepseek-v4-pro":   {0.435, 0.87},
 	"moonshotai/kimi-k2.6":       {0.61, 3.07},
@@ -479,24 +499,49 @@ var modelPricing = map[string][2]float64{
 	"z-ai/glm-5.2":               {1.26, 3.96},
 }
 
+const defaultInputPer1M = 1.0
+const defaultOutputPer1M = 3.0
+
 func calculateCost(modelID string, tokensIn, tokensOut int) float64 {
-	if pricing, ok := modelPricing[modelID]; ok {
+	loadModelPricingFromDB()
+	lower := strings.ToLower(modelID)
+
+	// 1) Exact match in DB
+	if pricing, ok := modelPricingDB[lower]; ok {
 		return (float64(tokensIn)/1_000_000)*pricing[0] + (float64(tokensOut)/1_000_000)*pricing[1]
 	}
-	lower := strings.ToLower(modelID)
-	if strings.Contains(lower, "muse-spark") || strings.Contains(lower, "muse") || (strings.Contains(lower, "llama") && strings.Contains(lower, "meta")) {
-		return (float64(tokensIn)/1_000_000)*1.25 + (float64(tokensOut)/1_000_000)*4.25
+
+	// 2) Exact match in fallback
+	if pricing, ok := modelPricingFallback[modelID]; ok {
+		return (float64(tokensIn)/1_000_000)*pricing[0] + (float64(tokensOut)/1_000_000)*pricing[1]
 	}
-	if strings.HasSuffix(modelID, ":free") {
+
+	// 3) Fuzzy match in DB — strip provider prefix, try base name
+	if parts := strings.SplitN(modelID, "/", 2); len(parts) == 2 {
+		baseName := strings.ToLower(parts[1])
+		if pricing, ok := modelPricingDB[baseName]; ok {
+			return (float64(tokensIn)/1_000_000)*pricing[0] + (float64(tokensOut)/1_000_000)*pricing[1]
+		}
+		// Also try full provider/model in DB
+		if pricing, ok := modelPricingDB[lower]; ok {
+			return (float64(tokensIn)/1_000_000)*pricing[0] + (float64(tokensOut)/1_000_000)*pricing[1]
+		}
+	}
+
+	// 4) Fuzzy match in DB — substring match
+	for dbID, pricing := range modelPricingDB {
+		if strings.Contains(lower, dbID) || strings.Contains(dbID, lower) {
+			return (float64(tokensIn)/1_000_000)*pricing[0] + (float64(tokensOut)/1_000_000)*pricing[1]
+		}
+	}
+
+	// 5) Free models
+	if strings.HasSuffix(modelID, ":free") || strings.HasPrefix(modelID, "@cf/") {
 		return 0
 	}
-	if strings.HasPrefix(modelID, "@cf/") {
-		return 0
-	}
-	if strings.Contains(lower, "pro") || strings.Contains(lower, "opus") || strings.Contains(lower, "ultra") {
-		return (float64(tokensIn)/1_000_000)*1.0 + (float64(tokensOut)/1_000_000)*3.0
-	}
-	return (float64(tokensIn)/1_000_000)*0.14 + (float64(tokensOut)/1_000_000)*0.28
+
+	// 6) Default rate
+	return (float64(tokensIn)/1_000_000)*defaultInputPer1M + (float64(tokensOut)/1_000_000)*defaultOutputPer1M
 }
 
 // ── Log writer — inserts log + updates usage_stats + cost_summary
