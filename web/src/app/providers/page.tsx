@@ -1,21 +1,19 @@
 "use client";
 
-import { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { api, type Provider } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import {
   ProviderIcon,
   AuthTypeBadge,
   ProviderTypeBadge,
-  StatusPill,
   providerNeonColor,
   getNeonClasses,
 } from "@/components/providers/provider-helpers";
-import { Plus, Trash2, Key, Cpu, X } from "lucide-react";
+import { Plus, Layers, KeyRound } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AddProviderModal } from "@/components/providers/add-provider-modal";
-import { ConfirmModal } from "@/components/ui/confirm-modal";
+import { useState } from "react";
 
 export default function ProvidersPage() {
   const [addOpen, setAddOpen] = useState(false);
@@ -37,24 +35,24 @@ export default function ProvidersPage() {
       </div>
 
       {providersQuery.isLoading && (
-        <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))" }}>
+        <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(420px, 1fr))" }}>
           {Array.from({ length: 6 }).map((_, i) => (
             <div
               key={i}
-              className="h-44 rounded-xl border border-primary/15 bg-primary/[0.04] animate-pulse"
+              className="h-24 rounded-lg border border-primary/15 bg-primary/[0.04] animate-pulse"
             />
           ))}
         </div>
       )}
 
       {providersQuery.isError && (
-        <div className="rounded-xl border border-neon-magenta/20 bg-neon-magenta/5 p-4 text-sm text-neon-magenta">
+        <div className="rounded-lg border border-neon-magenta/20 bg-neon-magenta/5 p-4 text-sm text-neon-magenta">
           Failed to load providers: {(providersQuery.error as Error).message}
         </div>
       )}
 
       {!providersQuery.isLoading && providers.length === 0 && (
-        <div className="rounded-xl border border-dashed border-primary/15 bg-primary/[0.04] p-10 text-center">
+        <div className="rounded-lg border border-dashed border-primary/15 bg-primary/[0.04] p-10 text-center">
           <p className="text-sm text-muted-foreground">No providers configured yet.</p>
           <Button className="mt-4" onClick={() => setAddOpen(true)}>
             <Plus className="w-4 h-4 mr-1" /> Add Provider
@@ -62,7 +60,7 @@ export default function ProvidersPage() {
         </div>
       )}
 
-      <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))" }}>
+      <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(420px, 1fr))" }}>
         {providers.map((provider) => (
           <ProviderCard key={provider.id} provider={provider} />
         ))}
@@ -74,14 +72,7 @@ export default function ProvidersPage() {
 }
 
 function ProviderCard({ provider }: { provider: Provider }) {
-  const queryClient = useQueryClient();
   const neon = providerNeonColor(provider.name);
-  const [confirmDelete, setConfirmDelete] = useState(false);
-
-  const deleteMutation = useMutation({
-    mutationFn: (id: number | string) => api.deleteProvider(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["providers"] }),
-  });
 
   const totalKeys = provider.key_count ?? provider.connection_count ?? 0;
   const activeKeys = provider.active_key_count ?? 0;
@@ -94,66 +85,46 @@ function ProviderCard({ provider }: { provider: Provider }) {
   const neonClasses = getNeonClasses(neon);
 
   return (
-  <div
-    onClick={handleClick}
-    className={cn(
-      "group relative rounded-xl border border-border bg-card min-h-[80px] p-5 cursor-pointer transition-all duration-200 flex flex-col gap-4",
-      "before:absolute before:top-0 before:left-0 before:bottom-0 before:w-[3px] before:rounded-l-xl before:opacity-0 before:transition-opacity",
-      neonClasses.strip,
-      "before:group-hover:opacity-100",
-      neonClasses.hover,
-      "hover:scale-[1.02] hover:shadow-lg"
-    )}
-    style={{ "--glow-color": `${neon}30` } as React.CSSProperties}
-  >
-      {/* Row 1: Icon + Name + Status + Badges */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <ProviderIcon provider={provider} size="md" />
-          <h2 className="font-heading text-base font-bold whitespace-nowrap">{provider.name}</h2>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <StatusPill status={provider.status} />
-          <AuthTypeBadge authType={provider.auth_type} />
-          <ProviderTypeBadge providerType={provider.provider_type} />
-        </div>
-      </div>
-
-      {/* Row 2: base_url + N models · N keys */}
-      <div className="flex items-center justify-between">
-        <p className="text-xs text-muted-foreground truncate max-w-[250px]">{provider.base_url}</p>
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <span>{provider.model_count ?? 0} models</span>
-          <span>·</span>
-          <span>{countLabel} keys</span>
-        </div>
-      </div>
-  
-      {provider.provider_type !== "builtin" && (
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            setConfirmDelete(true);
-          }}
-          className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-destructive/10"
-        >
-          <X className="w-4 h-4 text-muted-foreground hover:text-destructive" />
-        </button>
+    <div
+      onClick={handleClick}
+      className={cn(
+        "group relative flex rounded-lg border border-border bg-card overflow-hidden cursor-pointer transition-all duration-200",
+        neonClasses.hover,
+        "hover:shadow-lg hover:shadow-primary/5 hover:-translate-y-0.5"
       )}
+      style={{ "--glow-color": `${neon}30` } as React.CSSProperties}
+    >
+      {/* Color stripe */}
+      <div className="w-1 shrink-0" style={{ background: neon }} />
 
-      <ConfirmModal
-        open={confirmDelete}
-        title={`Delete Provider`}
-        message={`Delete provider "${provider.name}"? This cannot be undone.`}
-        confirmLabel="Delete"
-        variant="danger"
-        onConfirm={() => {
-          setConfirmDelete(false);
-          deleteMutation.mutate(provider.id);
-        }}
-        onCancel={() => setConfirmDelete(false)}
-      />
+      {/* Content */}
+      <div className="flex items-start gap-3 p-4 flex-1 min-w-0">
+        <ProviderIcon provider={provider} size="lg" />
+
+        <div className="flex-1 min-w-0">
+          {/* Top row: name left, badges right */}
+          <div className="flex items-start justify-between gap-2 mb-2">
+            <h2 className="font-heading text-sm font-bold whitespace-nowrap mt-px">{provider.name}</h2>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <ProviderTypeBadge providerType={provider.provider_type} />
+              <AuthTypeBadge authType={provider.auth_type} />
+              <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", provider.status === "online" ? "bg-emerald-400/70" : "bg-zinc-500/60")} />
+            </div>
+          </div>
+
+          {/* Stats row */}
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Layers className="h-3 w-3" />
+              <span className="text-foreground font-medium">{provider.model_count ?? 0}</span> models
+            </div>
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <KeyRound className="h-3 w-3" />
+              <span className="text-foreground font-medium">{countLabel}</span> keys
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
-

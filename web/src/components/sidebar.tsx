@@ -128,22 +128,8 @@ export function Sidebar() {
           ) : (
             <Moon className="w-5 h-5 shrink-0" />
           )}
-          {!collapsed && <span>{theme === "dark" ? "Light mode" : "Dark mode"}</span>}
+
         </button>
-
-        <Link
-          href="/docs"
-          className={cn(
-            "flex items-center gap-3 px-3 py-2 rounded-lg text-sm w-full transition-colors",
-            collapsed ? "justify-center" : "",
-            "text-muted-foreground hover:bg-secondary hover:text-foreground"
-          )}
-          title={collapsed ? "Docs" : undefined}
-        >
-          <BookOpen className="w-5 h-5 shrink-0" />
-          {!collapsed && <span>Docs</span>}
-        </Link>
-
         <button
           onClick={toggleCollapsed}
           aria-expanded={mounted ? !collapsed : true}

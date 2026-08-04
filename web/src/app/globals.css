@@ -86,6 +86,7 @@
   --neon-magenta: oklch(0.55 0.18 25);
   --neon-amber: oklch(0.75 0.15 75);
   --neon-green: oklch(0.62 0.15 155);
+  --neon-red: oklch(0.62 0.2 25);
   --neon-purple: oklch(0.55 0.12 290);
   --glow-sm: 0 0 0px;
   --glow-md: 0 0 0px;
@@ -130,6 +131,7 @@
   --neon-magenta: oklch(0.55 0.18 25);
   --neon-amber: oklch(0.75 0.15 75);
   --neon-green: oklch(0.62 0.15 155);
+  --neon-red: oklch(0.62 0.2 25);
   --neon-purple: oklch(0.55 0.12 290);
   --glow-intensity: 0;
 }

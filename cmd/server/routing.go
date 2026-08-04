@@ -205,6 +205,12 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			text := getCompressionInstruction(mode, level)
 			if text != "" {
+				// Caveman voice injection — terse style
+				if mode == "caveman" && getSettingStrCached("caveman_voice", "true") == "true" {
+					text += `
+
+CAVEMAN VOICE: Drop articles (a/an/the), filler (just/really/basically/actually/simply), pleasantries, hedging. Fragments OK. Short synonyms (big not extensive, fix not implement a solution for). Code blocks, file paths, commands, errors, URLs: keep exact. No decorative emoji. No narrating tool calls. No status phrases. State the thing, the action, the reason. Then next step.`
+				}
 				if combinedText != "" {
 					combinedText += "\n\n"
 				}

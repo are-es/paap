@@ -28,12 +28,15 @@ import {
   ArrowLeft,
   Globe,
 } from "lucide-react";
+import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { cn } from "@/lib/utils";
 
 export function ProviderSetupClient() {
   const searchParams = useSearchParams();
   const providerId = searchParams.get("id") ?? "";
   const queryClient = useQueryClient();
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const deleteMutation = useMutation({ mutationFn: (id: number | string) => api.deleteProvider(id), onSuccess: () => { window.location.href = "/providers"; } });
 
   const providerQuery = useQuery({
     queryKey: ["provider", providerId],
@@ -107,6 +110,17 @@ export function ProviderSetupClient() {
         </div>
       </div>
 
+      {provider?.provider_type !== "builtin" && (
+        <div className="flex justify-end">
+          <button
+            onClick={() => setConfirmDelete(true)}
+            className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-destructive px-3 py-1.5 rounded border border-border hover:border-destructive/30 hover:bg-destructive/5 transition-colors"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            Delete Provider
+          </button>
+        </div>
+      )}
       <KeysSection providerId={providerId} />
       {provider?.auth_type === "connection" && (
         <ConnectionsSection providerId={providerId} />
@@ -114,6 +128,8 @@ export function ProviderSetupClient() {
       <ModelsSection providerId={providerId} />
       <PlaygroundSection providerId={providerId} />
     </div>
+      <ConfirmModal open={confirmDelete} title="Delete Provider" message={"Delete provider " + (provider?.name || "") + "? This cannot be undone."} confirmLabel="Delete" variant="danger" onConfirm={() => { setConfirmDelete(false); if (providerId) deleteMutation.mutate(providerId); }} onCancel={() => setConfirmDelete(false)} />
+    </>
   );
 }
 
@@ -187,6 +203,8 @@ function NeonCollapse({
 
 function AddKeyModal({ onClose, providerId }: { onClose: () => void; providerId: string }) {
   const queryClient = useQueryClient();
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const deleteMutation = useMutation({ mutationFn: (id: number | string) => api.deleteProvider(id), onSuccess: () => { window.location.href = "/providers"; } });
   const [tab, setTab] = useState<"single" | "bulk">("single");
   const [singleKey, setSingleKey] = useState("");
   const [bulkText, setBulkText] = useState("");
@@ -318,6 +336,8 @@ function AddKeyModal({ onClose, providerId }: { onClose: () => void; providerId:
 
 function KeysSection({ providerId }: { providerId: string }) {
   const queryClient = useQueryClient();
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const deleteMutation = useMutation({ mutationFn: (id: number | string) => api.deleteProvider(id), onSuccess: () => { window.location.href = "/providers"; } });
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [visibleKeyId, setVisibleKeyId] = useState<number | null>(null);
@@ -477,6 +497,8 @@ function KeysSection({ providerId }: { providerId: string }) {
 
 function ConnectionsSection({ providerId }: { providerId: string }) {
   const queryClient = useQueryClient();
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const deleteMutation = useMutation({ mutationFn: (id: number | string) => api.deleteProvider(id), onSuccess: () => { window.location.href = "/providers"; } });
   const [oauthFlow, setOauthFlow] = useState<{
     verification_uri: string;
     verification_uri_complete: string;
@@ -632,6 +654,8 @@ function ConnectionsSection({ providerId }: { providerId: string }) {
 
 function ModelsSection({ providerId }: { providerId: string }) {
   const queryClient = useQueryClient();
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const deleteMutation = useMutation({ mutationFn: (id: number | string) => api.deleteProvider(id), onSuccess: () => { window.location.href = "/providers"; } });
   const [detecting, setDetecting] = useState(false);
   const [newModel, setNewModel] = useState("");
 
@@ -748,6 +772,8 @@ const [prompt, setPrompt] = useState("hi");
 const [results, setResults] = useState<PlaygroundResult[] | null>(null);
 const [error, setError] = useState<string | null>(null);
 const queryClient = useQueryClient();
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const deleteMutation = useMutation({ mutationFn: (id: number | string) => api.deleteProvider(id), onSuccess: () => { window.location.href = "/providers"; } });
 
 const keysQuery = useQuery({ queryKey: ["keys", providerId], queryFn: () => api.getKeys(providerId) });
 const modelsQuery = useQuery({ queryKey: ["models", providerId], queryFn: () => api.getModels(providerId) });
