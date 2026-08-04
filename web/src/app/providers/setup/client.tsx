@@ -706,14 +706,25 @@ function ModelsSection({ providerId }: { providerId: string }) {
         <span className="text-sm text-muted-foreground">
           <span className="text-neon-green font-mono">{models.filter((m) => m.selected).length}</span> selected
         </span>
-        <button
-          onClick={() => detectMutation.mutate()}
-          disabled={detecting}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-border hover:border-neon-green/40 hover:bg-neon-green/5 disabled:opacity-50 transition-all"
-        >
-          {detecting ? <Loader2 className="w-3.5 h-3.5 animate-spin text-neon-green" /> : <Wand2 className="w-3.5 h-3.5 text-neon-green" />}
-          Detect Models
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => detectMutation.mutate()}
+            disabled={detecting}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-border hover:border-neon-green/40 hover:bg-neon-green/5 disabled:opacity-50 transition-all"
+          >
+            {detecting ? <Loader2 className="w-3.5 h-3.5 animate-spin text-neon-green" /> : <Wand2 className="w-3.5 h-3.5 text-neon-green" />}
+            Detect Models
+          </button>
+          {models.length > 0 && (
+            <button
+              onClick={() => { if (confirm(`Delete all ${models.length} models?`)) models.forEach((m: any) => removeMutation.mutate(m.name)); }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-destructive/30 text-destructive hover:bg-destructive/10 transition-all"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              Delete All
+            </button>
+          )}
+        </div>
       </div>
       <div className="flex flex-wrap gap-1.5">
         {models.map((model) => (
