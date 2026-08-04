@@ -110,20 +110,13 @@ func clearAllData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Clear logs
+	// Clear logs only
 	db.DB.Exec("DELETE FROM logs")
 	db.DB.Exec("DELETE FROM cost_summary")
 	db.DB.Exec("DELETE FROM usage_stats")
 	db.DB.Exec("DELETE FROM race_logs")
 
-	// Clear providers and keys
-	db.DB.Exec("DELETE FROM api_keys")
-	db.DB.Exec("DELETE FROM providers")
-	db.DB.Exec("DELETE FROM models")
-	db.DB.Exec("DELETE FROM groups")
-	db.DB.Exec("DELETE FROM group_models")
-
-	// Keep system_settings and gateway_keys
+	// Keep providers, keys, models, groups, system_settings, gateway_keys
 
 	writeJSON(w, map[string]interface{}{
 		"status":  "ok",

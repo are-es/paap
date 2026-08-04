@@ -275,20 +275,7 @@ func decodeToolFromBody(r *http.Request) (*Tool, error) {
 	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
 		return nil, err
 	}
-	// Normalize route_model: if it's a JSON array, keep as-is string; if plain string, wrap in array
-	if rmRaw, ok := raw["route_model"]; ok {
-		rmStr := string(rmRaw)
-		if strings.HasPrefix(strings.TrimSpace(rmStr), "\"") {
-			// Plain JSON string — wrap in array
-			var s string
-			json.Unmarshal(rmRaw, &s)
-			arr, _ := json.Marshal([]string{s})
-			raw["route_model"] = json.RawMessage(`"` + strings.ReplaceAll(string(arr), `"`, `\"`) + `"`)
-		} else if strings.HasPrefix(strings.TrimSpace(rmStr), "[") {
-			// Already array — store as JSON string in the field
-			raw["route_model"] = json.RawMessage(`"` + strings.ReplaceAll(strings.ReplaceAll(strings.TrimSpace(rmStr), `"`, `\"`), "\n", "") + `"`)
-		}
-	}
+	// Don't manipulate route_model here — ParseRouteModels() handles parsing
 	// Re-marshal and decode into Tool
 	b, _ := json.Marshal(raw)
 	var t Tool

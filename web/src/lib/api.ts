@@ -367,6 +367,9 @@ export const api = {
   clearLogs: () =>
     fetchApi<{ status: string; message: string }>("/api/logs", { method: "DELETE" }),
 
+  clearAll: () =>
+    fetchApi<{ status: string; message: string }>("/api/clear-all", { method: "POST" }),
+
   getCost: () => fetchApi<CostSummary>("/api/logs/cost"),
 
   exportLogs: (format: "csv" | "json") =>

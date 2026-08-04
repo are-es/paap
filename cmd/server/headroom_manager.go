@@ -231,6 +231,11 @@ func headroomToggle(newEnabled bool) {
 			return
 		}
 		startHeadroomMonitor()
+		// Auto-disable RTK when headroom is on
+		if getSettingStrCached("rtk_enabled", "false") == "true" {
+			setSetting("rtk_enabled", "false")
+			log.Printf("[PAAP] RTK auto-disabled (headroom active)")
+		}
 	} else {
 		stopHeadroomMonitor()
 		stopHeadroom()

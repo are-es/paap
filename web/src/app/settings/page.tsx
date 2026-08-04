@@ -51,7 +51,7 @@ export default function SettingsPage() {
     if (confirmAction === "clear") {
       setClearing(true);
       setConfirmAction(null);
-      await api.clearLogs();
+      await api.clearAll();
       queryClient.invalidateQueries({ queryKey: ["logs"] });
       queryClient.invalidateQueries({ queryKey: ["cost"] });
       setClearing(false);

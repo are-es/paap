@@ -55,6 +55,7 @@ export function ProviderSetupClient() {
   }
 
   return (
+    <>
     <div className="p-6 md:p-8 min-h-full">
       <nav className="flex items-center gap-1.5 text-sm text-muted-foreground mb-6">
         <Link href="/providers" className="inline-flex items-center gap-1 hover:text-neon-cyan transition-colors">
@@ -203,8 +204,6 @@ function NeonCollapse({
 
 function AddKeyModal({ onClose, providerId }: { onClose: () => void; providerId: string }) {
   const queryClient = useQueryClient();
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const deleteMutation = useMutation({ mutationFn: (id: number | string) => api.deleteProvider(id), onSuccess: () => { window.location.href = "/providers"; } });
   const [tab, setTab] = useState<"single" | "bulk">("single");
   const [singleKey, setSingleKey] = useState("");
   const [bulkText, setBulkText] = useState("");
@@ -336,8 +335,6 @@ function AddKeyModal({ onClose, providerId }: { onClose: () => void; providerId:
 
 function KeysSection({ providerId }: { providerId: string }) {
   const queryClient = useQueryClient();
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const deleteMutation = useMutation({ mutationFn: (id: number | string) => api.deleteProvider(id), onSuccess: () => { window.location.href = "/providers"; } });
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [visibleKeyId, setVisibleKeyId] = useState<number | null>(null);
@@ -347,7 +344,7 @@ function KeysSection({ providerId }: { providerId: string }) {
     queryFn: () => api.getKeys(providerId),
   });
 
-  const deleteMutation = useMutation({
+  const deleteKeyMutation = useMutation({
     mutationFn: (keyId: number) => api.deleteKey(providerId, keyId),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["keys", providerId] }),
   });
@@ -477,7 +474,7 @@ function KeysSection({ providerId }: { providerId: string }) {
                 {copiedId === key.id ? <Check className="w-3.5 h-3.5 text-neon-green" /> : <Copy className="w-3.5 h-3.5" />}
               </button>
               <button
-                onClick={() => deleteMutation.mutate(key.id)}
+                onClick={() => deleteKeyMutation.mutate(key.id)}
                 className="p-1 hover:bg-neon-magenta/10 rounded text-neon-magenta"
               >
                 <Trash2 className="w-3.5 h-3.5" />
@@ -513,7 +510,7 @@ function ConnectionsSection({ providerId }: { providerId: string }) {
     queryFn: () => api.getConnections(providerId),
   });
 
-  const deleteMutation = useMutation({
+  const deleteConnectionMutation = useMutation({
     mutationFn: (connId: number) => api.deleteConnection(providerId, connId),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["connections", providerId] }),
   });
@@ -602,7 +599,7 @@ function ConnectionsSection({ providerId }: { providerId: string }) {
               {conn.email && <div className="text-xs text-muted-foreground">{conn.email}</div>}
             </div>
             <button
-              onClick={() => deleteMutation.mutate(conn.id)}
+              onClick={() => deleteConnectionMutation.mutate(conn.id)}
               className="p-1 hover:bg-destructive/10 rounded text-muted-foreground hover:text-destructive"
             >
               <Trash2 className="w-3.5 h-3.5" />

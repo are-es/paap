@@ -51,11 +51,6 @@ export default function ToolsPage() {
               </div>
               <div className="flex-1 min-w-0">
                 <h2 className="font-medium text-sm">Vision</h2>
-                <p className="text-[10px] text-muted-foreground mt-0.5">
-                  {visionTool?.enabled
-                    ? `→ ${visionTool.route_model}`
-                    : "Auto-route gambar ke model vision"}
-                </p>
               </div>
               <div className={cn(
                 "w-2 h-2 rounded-full shrink-0",
