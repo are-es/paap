@@ -4,6 +4,7 @@ import localFont from "next/font/local";
 import { Sidebar } from "@/components/sidebar";
 import { Providers } from "@/components/providers";
 import { ThemeProvider } from "@/components/theme-provider";
+import { LanguageProvider } from "@/lib/language-context";
 import "./globals.css";
 
 const bricolage = localFont({
@@ -50,10 +51,12 @@ export default function RootLayout({
     >
       <body className="min-h-full flex font-sans">
         <ThemeProvider>
-          <Providers>
-            <Sidebar />
-            <main className="flex-1 overflow-auto">{children}</main>
-          </Providers>
+          <LanguageProvider>
+            <Providers>
+              <Sidebar />
+              <main className="flex-1 overflow-auto">{children}</main>
+            </Providers>
+          </LanguageProvider>
         </ThemeProvider>
       </body>
     </html>

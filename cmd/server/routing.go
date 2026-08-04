@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/dolvin/paap/cmd/server/compression"
 	"github.com/dolvin/paap/internal/db"
 )
 
@@ -311,23 +312,77 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	// ── Caveman Pipeline (post-RTK/headroom tool output compression) ──
+	cavemanPipelineEnabled := getSettingStrCached("caveman_pipeline_enabled", "true") == "true"
+	if cavemanPipelineEnabled {
+		if msgs, ok := rawBody["messages"].([]interface{}); ok {
+			var msgMaps []map[string]interface{}
+			for _, m := range msgs {
+				if mm, ok := m.(map[string]interface{}); ok {
+					msgMaps = append(msgMaps, mm)
+				}
+			}
+			pipelineCfg := compression.DefaultPipelineConfig
+			// Per-pipeline toggles (all default true)
+			if getSettingStrCached("caveman_pipeline_flint_chipper", "true") != "true" {
+				pipelineCfg.FlintChipper = false
+			}
+			if getSettingStrCached("caveman_pipeline_ansi_strip", "true") != "true" {
+				pipelineCfg.AnsiStrip = false
+			}
+			if getSettingStrCached("caveman_pipeline_stone_tablet", "true") != "true" {
+				pipelineCfg.StoneTablet = false
+			}
+			if getSettingStrCached("caveman_pipeline_blank_collapse", "true") != "true" {
+				pipelineCfg.BlankCollapse = false
+			}
+			if getSettingStrCached("caveman_pipeline_general_truncate", "true") != "true" {
+				pipelineCfg.GeneralTruncate = false
+			}
+
+			msgMaps = compression.ApplyPipelineToMessages(msgMaps, pipelineCfg)
+
+			// Read deduplication
+			if getSettingStrCached("caveman_pipeline_read_dedup", "true") == "true" {
+				readCache := compression.GetGlobalReadCache()
+				msgMaps, _ = readCache.CheckReadToolMessages(msgMaps)
+			}
+
+			rawBody["messages"] = func() []interface{} {
+				out := make([]interface{}, len(msgMaps))
+				for i, m := range msgMaps {
+					out[i] = m
+				}
+				return out
+			}()
+		}
+	}
 	// ── Tool System: auto-route based on content detection ───
 	var toolUsed string
 	var originalModel string
-	if toolRouteModel := ProcessTools(rawBody); toolRouteModel != "" {
+	if toolMatch := ProcessTools(rawBody); toolMatch != nil {
 		// Remember original model for logging
 		originalModel = modelName
-		// Find which tool triggered
-		for _, t := range GetActiveTools() {
-			if t.RouteModel == toolRouteModel {
-				toolUsed = t.Name
-				break
+		toolUsed = toolMatch.ToolName
+		// Try each model in fallback chain
+		var routedModel string
+		for _, candidate := range toolMatch.Models {
+			if _, _, _, _, _, _, _, _, routeErr := routeByModel(candidate); routeErr != nil {
+				log.Printf("[PAAP] [TOOLS] Vision fallback: %s failed (%v), trying next", candidate, routeErr)
+				continue
 			}
+			routedModel = candidate
+			break
 		}
-		// Override model to tool's route model
-		rawBody["model"] = toolRouteModel
-		modelName = toolRouteModel
-		log.Printf("[PAAP] [TOOLS] Model overridden: %s → %s (tool: %s)", originalModel, toolRouteModel, toolUsed)
+		if routedModel != "" {
+			rawBody["model"] = routedModel
+			modelName = routedModel
+			log.Printf("[PAAP] [TOOLS] Model overridden: %s → %s (tool: %s)", originalModel, routedModel, toolUsed)
+		} else {
+			log.Printf("[PAAP] [TOOLS] All vision models exhausted, using original: %s", modelName)
+			toolUsed = ""
+			originalModel = ""
+		}
 	}
 
 	// ── Vision Tool (legacy): replace images with text descriptions ────
@@ -468,10 +523,13 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Execute upstream request with auto-disable + fallback
+	reqStartTime := time.Now()
 	resp, err := client.Do(req)
+	ttfbMs := time.Since(reqStartTime).Milliseconds()
 	latencyMs := time.Since(startTime).Milliseconds()
 	paapOverheadMs := time.Since(paapOverheadStart).Milliseconds()
 	log.Printf("[PAAP] PAAP overhead: %dms (before provider request)", paapOverheadMs)
+	log.Printf("[PAAP] TTFB (provider response start): %dms | total: %dms | model: %s", ttfbMs, latencyMs, modelID)
 
 	if isMerlin {
 		if err != nil {

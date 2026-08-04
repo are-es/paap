@@ -74,20 +74,29 @@ func anthropicMessagesHandler(w http.ResponseWriter, r *http.Request) {
 	// ── Tool System: auto-route based on content detection (Anthropic format) ───
 	var toolUsed string
 	var originalModel string
-	if toolRouteModel := ProcessTools(rawBody); toolRouteModel != "" {
+	if toolMatch := ProcessTools(rawBody); toolMatch != nil {
 		// Remember original model for logging
 		originalModel = modelName
-		// Find which tool triggered
-		for _, t := range GetActiveTools() {
-			if t.RouteModel == toolRouteModel {
-				toolUsed = t.Name
-				break
+		toolUsed = toolMatch.ToolName
+		// Try each model in fallback chain
+		var routedModel string
+		for _, candidate := range toolMatch.Models {
+			if _, _, _, _, _, _, _, _, routeErr := routeByModel(candidate); routeErr != nil {
+				log.Printf("[PAAP] [TOOLS] Anthropic vision fallback: %s failed (%v), trying next", candidate, routeErr)
+				continue
 			}
+			routedModel = candidate
+			break
 		}
-		// Override model to tool's route model
-		rawBody["model"] = toolRouteModel
-		modelName = toolRouteModel
-		log.Printf("[PAAP] [TOOLS] Anthropic model overridden: %s → %s (tool: %s)", originalModel, toolRouteModel, toolUsed)
+		if routedModel != "" {
+			rawBody["model"] = routedModel
+			modelName = routedModel
+			log.Printf("[PAAP] [TOOLS] Anthropic model overridden: %s → %s (tool: %s)", originalModel, routedModel, toolUsed)
+		} else {
+			log.Printf("[PAAP] [TOOLS] All vision models exhausted, using original: %s", modelName)
+			toolUsed = ""
+			originalModel = ""
+		}
 	}
 
 	// Ensure minimum max_tokens

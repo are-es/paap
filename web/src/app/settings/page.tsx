@@ -9,9 +9,11 @@ import {
   RotateCcw,
   Power,
   Loader2,
+  Languages,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
+import { useLanguage, LANGUAGES } from "@/lib/language-context";
 
 const INTERVAL_OPTIONS = [
   { value: "3", label: "3 min" },
@@ -23,6 +25,7 @@ const INTERVAL_OPTIONS = [
 ];
 
 export default function SettingsPage() {
+  const { lang, setLang, t } = useLanguage();
   const queryClient = useQueryClient();
   const [clearing, setClearing] = useState(false);
   const [restarting, setRestarting] = useState(false);
@@ -65,9 +68,31 @@ export default function SettingsPage() {
 
   return (
     <div className="p-6 md:p-8 min-h-full">
-      <h1 className="font-heading text-xl font-bold mb-6">Settings</h1>
+      <h1 className="font-heading text-xl font-bold mb-6">{t("settings.title")}</h1>
 
       <div className="space-y-4">
+        {/* CARD 0: LANGUAGE */}
+        <div className="bg-primary/[0.04] border border-primary/15 rounded-lg p-4">
+          <div className="flex items-center gap-2 mb-1">
+            <Languages className="w-4 h-4 text-muted-foreground" />
+            <span className="text-sm font-medium">{t("settings.language")}</span>
+          </div>
+          <p className="text-[11px] text-muted-foreground mb-3">
+            {t("settings.languageDesc")}
+          </p>
+          <select
+            value={lang}
+            onChange={(e) => setLang(e.target.value as any)}
+            className="w-full px-3 py-2 rounded-lg border border-input bg-background text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+          >
+            {LANGUAGES.map((l) => (
+              <option key={l.code} value={l.code}>
+                {l.flag} {l.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
         {/* CARD 1: PROXY */}
         <div className="bg-primary/[0.04] border border-primary/15 rounded-lg p-4">
           <div className="flex items-center gap-2 mb-3">

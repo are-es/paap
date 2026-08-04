@@ -36,20 +36,20 @@ export function ProviderIcon({
   const color = providerNeonColor(provider.name);
 
   const sizeMap = {
-    sm: "w-8 h-8 text-sm rounded-lg",
-    md: "w-10 h-10 text-base rounded-[10px]",
-    lg: "w-12 h-12 text-[22px] rounded-xl",
+    sm: "w-10 h-10 text-sm rounded-lg",
+    md: "w-12 h-12 text-lg rounded-[10px]",       // 48px
+    lg: "w-16 h-16 text-2xl rounded-xl",           // 64px
   };
 
   return (
     <div
-      className={`${sizeMap[size]} flex items-center justify-center font-bold shrink-0 ${className ?? ""}`}
-      style={{ background: `${color}15`, border: `1.5px solid ${color}30` }}
+      className={`${sizeMap[size]} flex items-center justify-center font-extrabold shrink-0 bg-card border ${className ?? ""}`}
+      style={{ borderColor: `${color}30` }}
     >
       {logo ? (
-        <Image src={logo} alt="" width={size === "sm" ? 18 : size === "lg" ? 28 : 22} height={size === "sm" ? 18 : size === "lg" ? 28 : 22} className="rounded-sm object-contain" unoptimized />
+        <Image src={logo} alt="" width={size === "sm" ? 20 : size === "lg" ? 36 : 26} height={size === "sm" ? 20 : size === "lg" ? 36 : 26} className="rounded-sm object-contain" unoptimized />
       ) : (
-        <span style={{ color }}>{initials}</span>
+        <span className="text-lg" style={{ color }}>{initials}</span>
       )}
     </div>
   );

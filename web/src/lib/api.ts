@@ -95,7 +95,8 @@ export interface Tool {
   name: string;
   type: string;
   enabled: boolean;
-  route_model: string;
+  route_model: string;       // JSON array string stored in DB
+  route_models?: string[];   // Parsed array (from backend)
   priority: number;
   config: string;
 }

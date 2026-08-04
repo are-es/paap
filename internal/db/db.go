@@ -2,8 +2,10 @@ package db
 
 import (
 	"database/sql"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -357,6 +359,28 @@ func migrate() error {
 	// === Builtin compression skills REMOVED — use folder-based skills only ===
 	// Skills are loaded from ~/.paap/skills/ folder (JSON/MD files)
 	// No more builtin skills in DB
+
+	// === Migration: convert route_model from single string to JSON array ===
+	// Existing entries like "provider/model" become ["provider/model"]
+	rows, qErr := DB.Query("SELECT id, route_model FROM tools")
+	if qErr == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var id, routeModel string
+			if err := rows.Scan(&id, &routeModel); err != nil {
+				continue
+			}
+			// Skip if already JSON array
+			if strings.HasPrefix(strings.TrimSpace(routeModel), "[") {
+				continue
+			}
+			// Convert single model string to JSON array
+			if routeModel != "" {
+				jsonArr, _ := json.Marshal([]string{routeModel})
+				DB.Exec("UPDATE tools SET route_model=? WHERE id=?", string(jsonArr), id)
+			}
+		}
+	}
 
 	return nil
 }

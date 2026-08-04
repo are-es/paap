@@ -396,6 +396,7 @@ func headroomStatus(w http.ResponseWriter, r *http.Request) {
 		"url":       url,
 		"reachable": reachable,
 		"installed": binary != "",
+		"managed":   true, // PAAP auto-manages headroom lifecycle
 	}
 
 	switch {
@@ -405,7 +406,7 @@ func headroomStatus(w http.ResponseWriter, r *http.Request) {
 		// restart needed.
 	case binary == "":
 		resp["hint"] = "Headroom belum terinstall"
-		resp["command"] = "pip install headroom-ai"
+		resp["command"] = "pip install \"headroom-ai[all]\""
 	default:
 		host, port := "127.0.0.1", "8787"
 		if u, err := neturl.Parse(url); err == nil {

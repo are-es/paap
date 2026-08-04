@@ -17,9 +17,11 @@ import {
   ChevronRight,
   Sun,
   Moon,
+  BookOpen,
 } from "lucide-react";
 import { useTheme } from "@/components/theme-provider";
 import { cn } from "@/lib/utils";
+import { useLanguage } from "@/lib/language-context";
 
 const STORAGE_KEY = "paap-sidebar-collapsed";
 
@@ -39,6 +41,18 @@ export function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
   const [mounted, setMounted] = useState(false);
   const { theme, toggle } = useTheme();
+  const { t } = useLanguage();
+
+  const navItems = [
+    { href: "/", label: t("nav.dashboard"), icon: LayoutDashboard },
+    { href: "/providers", label: t("nav.providers"), icon: Server },
+    { href: "/tools", label: t("nav.tools"), icon: Wrench },
+    { href: "/skills", label: "Compression", icon: Sparkles },
+    { href: "/logs", label: t("nav.logs"), icon: ScrollText },
+    { href: "/groups", label: t("nav.groups"), icon: Layers },
+    { href: "/proxy", label: t("nav.proxy"), icon: Globe },
+    { href: "/settings", label: t("nav.settings"), icon: Settings },
+  ];
 
   useEffect(() => {
     const saved = typeof window !== "undefined" ? localStorage.getItem(STORAGE_KEY) : null;
@@ -116,6 +130,19 @@ export function Sidebar() {
           )}
           {!collapsed && <span>{theme === "dark" ? "Light mode" : "Dark mode"}</span>}
         </button>
+
+        <Link
+          href="/docs"
+          className={cn(
+            "flex items-center gap-3 px-3 py-2 rounded-lg text-sm w-full transition-colors",
+            collapsed ? "justify-center" : "",
+            "text-muted-foreground hover:bg-secondary hover:text-foreground"
+          )}
+          title={collapsed ? "Docs" : undefined}
+        >
+          <BookOpen className="w-5 h-5 shrink-0" />
+          {!collapsed && <span>Docs</span>}
+        </Link>
 
         <button
           onClick={toggleCollapsed}

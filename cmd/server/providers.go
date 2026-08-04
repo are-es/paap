@@ -755,13 +755,14 @@ func providerTestPrompt(w http.ResponseWriter, r *http.Request, providerID strin
 	}
 
 	// Get keys: specific key_id or all active keys
-	// For connection-type providers, check provider_connections too
+	// For connection-type providers, also check api_keys with key_type='oauth'
 	var rows *sql.Rows
 	if authType == "connection" && keyIDStr != "" {
-		// User selected a specific connection — look it up directly
-		rows = nil
+		// User selected a specific key — look it up directly (works for both apikey and oauth)
+		rows, err = db.DB.Query("SELECT id, name, key_encrypted, COALESCE(account_id,'') FROM api_keys WHERE id=? AND provider_id=?", keyIDStr, providerID)
 	} else if authType == "connection" {
-		rows = nil
+		// No specific key selected — get all active keys (including oauth-type)
+		rows, err = db.DB.Query("SELECT id, name, key_encrypted, COALESCE(account_id,'') FROM api_keys WHERE provider_id=? AND is_active=1", providerID)
 	} else if keyIDStr != "" {
 		rows, err = db.DB.Query("SELECT id, name, key_encrypted, COALESCE(account_id,'') FROM api_keys WHERE id=? AND provider_id=?", keyIDStr, providerID)
 	} else {

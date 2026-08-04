@@ -18,28 +18,48 @@ const (
 
 // ── Tool Definition ─────────────────────────────────────
 type Tool struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Type        string `json:"type"`
-	Enabled     bool   `json:"enabled"`
-	RouteModel  string `json:"route_model"`  // Model to route to when triggered
-	Priority    int    `json:"priority"`     // Higher = checked first
-	Config      string `json:"config"`       // JSON config specific to tool type
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Type        string   `json:"type"`
+	Enabled     bool     `json:"enabled"`
+	RouteModel  string   `json:"route_model"`  // JSON array string: ["model1","model2"]
+	RouteModels []string `json:"route_models"` // Parsed model chain
+	Priority    int      `json:"priority"`
+	Config      string   `json:"config"`
 }
 
 // ToolRow is used for scanning from SQLite (enabled is int, not bool)
 type ToolRow struct {
-	ID          string
-	Name        string
-	Type        string
-	Enabled     int
-	RouteModel  string
-	Priority    int
-	Config      string
+	ID         string
+	Name       string
+	Type       string
+	Enabled    int
+	RouteModel string
+	Priority   int
+	Config     string
+}
+
+// ParseRouteModels parses the JSON array in RouteModel into RouteModels slice
+func (t *Tool) ParseRouteModels() {
+	t.RouteModels = nil
+	rm := strings.TrimSpace(t.RouteModel)
+	if rm == "" {
+		return
+	}
+	// Try JSON array first
+	if strings.HasPrefix(rm, "[") {
+		var models []string
+		if err := json.Unmarshal([]byte(rm), &models); err == nil {
+			t.RouteModels = models
+			return
+		}
+	}
+	// Fallback: treat as single model string
+	t.RouteModels = []string{rm}
 }
 
 func (r *ToolRow) toTool() *Tool {
-	return &Tool{
+	t := &Tool{
 		ID:         r.ID,
 		Name:       r.Name,
 		Type:       r.Type,
@@ -48,6 +68,14 @@ func (r *ToolRow) toTool() *Tool {
 		Priority:   r.Priority,
 		Config:     r.Config,
 	}
+	t.ParseRouteModels()
+	return t
+}
+
+// ToolMatch holds the result of tool detection: which tool triggered and the fallback model chain
+type ToolMatch struct {
+	ToolName string
+	Models   []string // Ordered fallback chain
 }
 
 // ── Tool System ─────────────────────────────────────────
@@ -135,16 +163,16 @@ func hasImageContent(messages []interface{}) bool {
 // ── Tool Processing ─────────────────────────────────────
 
 // ProcessTools checks if any tool should handle the request
-// Returns the model to route to, or empty string if no tool matches
-func ProcessTools(rawBody map[string]interface{}) string {
+// Returns ToolMatch with model chain, or nil if no tool matches
+func ProcessTools(rawBody map[string]interface{}) *ToolMatch {
 	tools := GetActiveTools()
 	if len(tools) == 0 {
-		return ""
+		return nil
 	}
 
 	messages, _ := rawBody["messages"].([]interface{})
 	if len(messages) == 0 {
-		return ""
+		return nil
 	}
 
 	for _, tool := range tools {
@@ -155,8 +183,12 @@ func ProcessTools(rawBody map[string]interface{}) string {
 		switch tool.Type {
 		case ToolTypeVision:
 			if hasImageContent(messages) {
-				log.Printf("[PAAP] [TOOLS] Vision tool triggered — routing to %s", tool.RouteModel)
-				return tool.RouteModel
+				models := tool.RouteModels
+				if len(models) == 0 {
+					models = []string{tool.RouteModel}
+				}
+				log.Printf("[PAAP] [TOOLS] Vision tool triggered — fallback chain: %v", models)
+				return &ToolMatch{ToolName: tool.Name, Models: models}
 			}
 		// Future tools can be added here
 		// case ToolTypeWebSearch:
@@ -166,7 +198,7 @@ func ProcessTools(rawBody map[string]interface{}) string {
 		}
 	}
 
-	return ""
+	return nil
 }
 
 // ── Tool CRUD ───────────────────────────────────────────
@@ -236,6 +268,37 @@ func DeleteTool(id string) error {
 
 // ── Tool API Handlers ───────────────────────────────────
 
+// normalizeToolRouteModel reads raw JSON body, converts route_model from
+// array/string to a consistent JSON array string, then re-decodes into Tool.
+func decodeToolFromBody(r *http.Request) (*Tool, error) {
+	var raw map[string]json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+		return nil, err
+	}
+	// Normalize route_model: if it's a JSON array, keep as-is string; if plain string, wrap in array
+	if rmRaw, ok := raw["route_model"]; ok {
+		rmStr := string(rmRaw)
+		if strings.HasPrefix(strings.TrimSpace(rmStr), "\"") {
+			// Plain JSON string — wrap in array
+			var s string
+			json.Unmarshal(rmRaw, &s)
+			arr, _ := json.Marshal([]string{s})
+			raw["route_model"] = json.RawMessage(`"` + strings.ReplaceAll(string(arr), `"`, `\"`) + `"`)
+		} else if strings.HasPrefix(strings.TrimSpace(rmStr), "[") {
+			// Already array — store as JSON string in the field
+			raw["route_model"] = json.RawMessage(`"` + strings.ReplaceAll(strings.ReplaceAll(strings.TrimSpace(rmStr), `"`, `\"`), "\n", "") + `"`)
+		}
+	}
+	// Re-marshal and decode into Tool
+	b, _ := json.Marshal(raw)
+	var t Tool
+	if err := json.Unmarshal(b, &t); err != nil {
+		return nil, err
+	}
+	t.ParseRouteModels()
+	return &t, nil
+}
+
 func toolListHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "GET" {
 		writeError(w, 405, "method not allowed")
@@ -254,8 +317,8 @@ func toolCreateHandler(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 405, "method not allowed")
 		return
 	}
-	var t Tool
-	if err := json.NewDecoder(r.Body).Decode(&t); err != nil {
+	t, err := decodeToolFromBody(r)
+	if err != nil {
 		writeError(w, 400, "invalid JSON")
 		return
 	}
@@ -266,7 +329,7 @@ func toolCreateHandler(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "name and type are required")
 		return
 	}
-	if err := CreateTool(&t); err != nil {
+	if err := CreateTool(t); err != nil {
 		writeError(w, 500, err.Error())
 		return
 	}
@@ -290,13 +353,13 @@ func toolRoutes(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, t)
 
 	case "PUT":
-		var t Tool
-		if err := json.NewDecoder(r.Body).Decode(&t); err != nil {
+		t, err := decodeToolFromBody(r)
+		if err != nil {
 			writeError(w, 400, "invalid JSON")
 			return
 		}
 		t.ID = id
-		if err := UpdateTool(&t); err != nil {
+		if err := UpdateTool(t); err != nil {
 			writeError(w, 500, err.Error())
 			return
 		}

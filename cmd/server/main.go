@@ -157,6 +157,10 @@ func main() {
 	// ── OAuth (grok-cli device code flow) ─────────────────
 	mux.HandleFunc("/api/oauth/", oauthRoutes)
 
+	// ── MCP (Model Context Protocol) ──────────────────────
+	mux.HandleFunc("/mcp/message", authMiddleware(mcpMessageHandler))
+	mux.HandleFunc("/mcp/status", mcpStatusHandler)
+
 	// ── OpenAI-compatible proxy (/v1/...) ───────────────────
 	mux.HandleFunc("/v1/chat/completions", authMiddleware(chatCompletionsHandler))
 	mux.HandleFunc("/v1/models", authMiddleware(modelList))
@@ -183,6 +187,9 @@ func main() {
 
 	// Start background proxy tester
 	go backgroundProxyTest()
+
+	// Auto-start headroom if enabled
+	initHeadroomOnStartup()
 
 	addr := ":" + port
 	log.Printf("PAAP listening on http://localhost%s", addr)

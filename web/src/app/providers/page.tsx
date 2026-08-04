@@ -97,41 +97,38 @@ function ProviderCard({ provider }: { provider: Provider }) {
   <div
     onClick={handleClick}
     className={cn(
-      "group relative rounded-xl border border-primary/15 bg-primary/[0.04] p-5 cursor-pointer transition-all duration-200 flex flex-col gap-4",
+      "group relative rounded-xl border border-border bg-card min-h-[80px] p-5 cursor-pointer transition-all duration-200 flex flex-col gap-4",
       "before:absolute before:top-0 before:left-0 before:bottom-0 before:w-[3px] before:rounded-l-xl before:opacity-0 before:transition-opacity",
       neonClasses.strip,
       "before:group-hover:opacity-100",
       neonClasses.hover,
-      "hover:translate-y-[-2px]"
+      "hover:scale-[1.02] hover:shadow-lg"
     )}
+    style={{ "--glow-color": `${neon}30` } as React.CSSProperties}
   >
-      <div className="flex items-start justify-between">
-        <div className="flex items-center gap-2">
+      {/* Row 1: Icon + Name + Status + Badges */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
           <ProviderIcon provider={provider} size="md" />
-          <h2 className="font-heading text-base font-semibold">{provider.name}</h2>
+          <h2 className="font-heading text-base font-bold whitespace-nowrap">{provider.name}</h2>
         </div>
         <div className="flex items-center gap-1.5">
+          <StatusPill status={provider.status} />
           <AuthTypeBadge authType={provider.auth_type} />
           <ProviderTypeBadge providerType={provider.provider_type} />
         </div>
       </div>
 
-      <p className="text-xs text-muted-foreground truncate">{provider.base_url}</p>
-
+      {/* Row 2: base_url + N models · N keys */}
       <div className="flex items-center justify-between">
-        <StatusPill status={provider.status} />
-        <div className="flex items-center gap-3 text-xs text-muted-foreground">
-          <span className="flex items-center gap-1">
-            <Key className="w-3 h-3" />
-            {countLabel}
-          </span>
-          <span className="flex items-center gap-1">
-            <Cpu className="w-3 h-3" />
-            {provider.model_count ?? 0}
-          </span>
+        <p className="text-xs text-muted-foreground truncate max-w-[250px]">{provider.base_url}</p>
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <span>{provider.model_count ?? 0} models</span>
+          <span>·</span>
+          <span>{countLabel} keys</span>
         </div>
       </div>
-
+  
       {provider.provider_type !== "builtin" && (
         <button
           onClick={(e) => {

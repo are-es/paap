@@ -210,19 +210,19 @@ export function ProviderTopology({ providers }: ProviderTopologyProps) {
               onMouseLeave={() => setTooltip(null)}
             >
               <div
-                className="w-[50px] h-[50px] rounded-[13px] flex items-center justify-center overflow-hidden transition-all"
+                className="w-[56px] h-[56px] rounded-[14px] flex flex-col items-center justify-center overflow-hidden transition-all"
                 style={{
                   background: "var(--background, #0f0f1a)",
                   border: `2px solid ${isActive ? color + "80" : color + "30"}`,
                   boxShadow: isActive
                     ? `0 0 20px ${color}50, 0 2px 8px rgba(0,0,0,0.4)`
-                    : `0 0 16px ${color}15, 0 2px 8px rgba(0,0,0,0.4)`,
+                    : `0 2px 8px rgba(0,0,0,0.2)`,
                 }}
               >
                 {logo ? (
-                  <Image src={logo} alt="" width={26} height={26} className="rounded-sm object-contain" unoptimized />
+                  <Image src={logo} alt="" width={32} height={32} className="rounded-sm object-contain" unoptimized />
                 ) : (
-                  <span className="text-base font-bold" style={{ color }}>{prov.name.charAt(0)}</span>
+                  <span className="text-lg font-bold" style={{ color }}>{prov.name.length >= 2 ? prov.name.slice(0, 2).toUpperCase() : prov.name.charAt(0)}</span>
                 )}
               </div>
               <span className="text-[10px] font-semibold mt-1 truncate max-w-[60px] text-center" style={{ color }}>{prov.name}</span>
