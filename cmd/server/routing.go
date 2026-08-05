@@ -922,12 +922,8 @@ func handleGroupRaceAll(w http.ResponseWriter, r *http.Request, modelName, group
 	fmt.Sscanf(stealthStr, "%d", &stealthMode)
 
 	var ctx context.Context
-	var cancel context.CancelFunc
-	if stealthMode == 1 {
-		ctx = context.Background()
-	} else {
-		ctx, cancel = context.WithCancel(context.Background())
-	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	for _, t := range tasks {
 		go func(t raceTask) {
