@@ -45,7 +45,6 @@ func findRTKBinary() string {
 			"/usr/local/bin/rtk",
 			"/usr/bin/rtk",
 			os.Getenv("HOME") + "/.local/bin/rtk",
-			"/home/dolvin/.local/bin/rtk",
 		}
 
 		for _, loc := range locations {

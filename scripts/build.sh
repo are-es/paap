@@ -1,9 +1,11 @@
 #!/bin/bash
 # PAAP Full Build Script
-# Usage: bash /mnt/hdd/ares-workspace/paap/scripts/build.sh
+# Usage: bash scripts/build.sh
 
 set -e
-cd /mnt/hdd/ares-workspace/paap
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$PROJECT_DIR"
 
 echo "=== PAAP Build ==="
 
@@ -21,4 +23,4 @@ go build -o bin/paap-server ./cmd/server
 
 echo ""
 echo "=== Build Complete ==="
-echo "Run: paap restart"
+echo "Run: ./bin/paap-server"

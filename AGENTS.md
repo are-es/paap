@@ -87,7 +87,7 @@ Write via `curl -X PUT http://localhost:9090/regedit/api/config -d '{"key":"open
 - **PII redaction**: Provider logs auto-redact SSN, credit cards, auth tokens, emails. Don't log raw provider responses.
 - **Tool encoding**: Forward compatible — unknown fields preserved, no schema enforcement.
 - **Xiaomi mode**: Client tools stripped from request (provider limitation). MCP still works via proxy-level injection.
-- **venv**: PAAP uses `/mnt/hdd/venv-paap/` (system site-packages break installs — `externally-managed-environment`).
+- **venv**: Create a dedicated venv (`python -m venv venv`) — system site-packages break installs (`externally-managed-environment`).
 - **DB**: SQLite WAL mode. Path in `serviceFile`.
 - **Agent mode**: Claude Code runs with `--dangerously-skip-permissions` (auto-accept all edits). NOT safe for production.
 - **Workflow**: Typical: `go build -o bin/paap ./cmd/server && npm run build && ./bin/paap`
