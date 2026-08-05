@@ -246,7 +246,7 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]interface{}{
 		"name":              "PAAP — Pangkalan API",
 		"status":            "ok",
-		"version":           "0.1.0",
+		"version":           "1.0.0",
 		"gateway_key_count": gwKeyCount,
 	})
 }
