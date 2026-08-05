@@ -4,19 +4,33 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import {
-  ChevronRight,
-  Wand2,
-  Volume2,
-  X,
-  Loader2,
-  Plus,
-  ToggleLeft,
-  ToggleRight,
-} from "lucide-react";
+import { useLanguage } from "@/lib/language-context";
+import { ChevronRight, Wand2, Volume2, X, Loader2, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { DocsModal, DocsButton } from "@/components/ui/docs-modal";
 
-// Add Model Modal — same as vision
+function getMcpDocs(t: (key: string) => string) {
+  return [
+    {
+      title: t("mcp_docs_overview_title"),
+      content: t("mcp_docs_overview_content"),
+    },
+    {
+      title: t("mcp_docs_setup_title"),
+      content: t("mcp_docs_setup_content"),
+    },
+    {
+      title: t("mcp_docs_usage_title"),
+      content: t("mcp_docs_usage_content"),
+    },
+    {
+      title: t("mcp_docs_troubleshoot_title"),
+      content: t("mcp_docs_troubleshoot_content"),
+    },
+  ];
+}
+
+// Add Model Modal
 function AddModelModal({ open, onClose, providers, existingModel, onAdd }: {
   open: boolean;
   onClose: () => void;
@@ -99,6 +113,7 @@ function ModelTag({ label, onRemove }: { label: string; onRemove: () => void }) 
 
 export default function MCPToolsPage() {
   const queryClient = useQueryClient();
+  const { t } = useLanguage();
 
   const settingsQuery = useQuery({ queryKey: ["settings"], queryFn: () => api.getSettings() });
   const providersQuery = useQuery({ queryKey: ["providers"], queryFn: () => api.getProviders() });
@@ -110,11 +125,13 @@ export default function MCPToolsPage() {
   const [imageGenModel, setImageGenModel] = useState("");
   const [ttsProvider, setTtsProvider] = useState("");
   const [ttsModel, setTtsModel] = useState("");
-  const [ttsVoice, setTtsVoice] = useState("");
   const [initialized, setInitialized] = useState(false);
 
   const [showImageModal, setShowImageModal] = useState(false);
   const [showTtsModal, setShowTtsModal] = useState(false);
+  const [showDocs, setShowDocs] = useState(false);
+
+  const mcpDocs = getMcpDocs(t);
 
   useEffect(() => {
     if (settings && settings.mcp_enabled !== undefined && !initialized) {
@@ -123,7 +140,6 @@ export default function MCPToolsPage() {
       setImageGenModel(settings.mcp_image_model || "");
       setTtsProvider(settings.mcp_tts_provider || "");
       setTtsModel(settings.mcp_tts_model || "");
-      setTtsVoice(settings.mcp_tts_voice || "alloy");
       setInitialized(true);
     }
   }, [settings, initialized]);
@@ -173,7 +189,7 @@ export default function MCPToolsPage() {
     <div className="p-6 md:p-8 min-h-full">
       {/* Breadcrumb */}
       <nav className="flex items-center gap-1.5 text-sm text-muted-foreground mb-6">
-        <Link href="/tools" className="hover:text-foreground transition-colors">Tools</Link>
+        <Link href="/tools" className="hover:text-foreground transition-colors">{t("nav_tools")}</Link>
         <ChevronRight className="w-3.5 h-3.5" />
         <span className="text-foreground font-medium">MCP Tools</span>
       </nav>
@@ -182,11 +198,14 @@ export default function MCPToolsPage() {
       <div className="flex items-center justify-between gap-4 mb-8">
         <div>
           <h1 className="font-heading text-xl font-bold">MCP Tools</h1>
-          <p className="text-xs text-muted-foreground">Image generation, TTS, and vision via MCP server</p>
+          <p className="text-xs text-muted-foreground">{t("mcp_subtitle")}</p>
         </div>
-        <button onClick={handleToggle} className={cn("w-9 h-5 rounded-full relative transition-colors shrink-0", mcpEnabled ? "bg-primary" : "bg-muted")}>
-          <span className={cn("absolute top-0.5 w-4 h-4 rounded-full bg-background shadow transition-transform", mcpEnabled ? "left-[18px]" : "left-0.5")} />
-        </button>
+        <div className="flex items-center gap-2">
+          <DocsButton onClick={() => setShowDocs(true)} />
+          <button onClick={handleToggle} className={cn("w-9 h-5 rounded-full relative transition-colors shrink-0", mcpEnabled ? "bg-primary" : "bg-muted")}>
+            <span className={cn("absolute top-0.5 w-4 h-4 rounded-full bg-background shadow transition-transform", mcpEnabled ? "left-[18px]" : "left-0.5")} />
+          </button>
+        </div>
       </div>
 
       {/* 2 Vertical Cards */}
@@ -198,24 +217,24 @@ export default function MCPToolsPage() {
               <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
                 <Wand2 className="w-4 h-4 text-primary" />
               </div>
-              <span className="text-sm font-medium">Image Generation</span>
+              <span className="text-sm font-medium">{t("mcp_image_gen")}</span>
             </div>
             <span className={cn("text-[10px] px-1.5 py-0.5 rounded", imageGenModel ? "bg-neon-green/10 text-neon-green" : "bg-muted text-muted-foreground")}>
-              {imageGenModel ? "ON" : "OFF"}
+              {imageGenModel ? t("status_on") : t("status_off")}
             </span>
           </div>
           <div className="flex flex-wrap gap-2">
             {imageGenModel ? (
               <ModelTag label={`${providerName(imageGenProvider)}/${imageGenModel}`} onRemove={handleRemoveImageModel} />
             ) : (
-              <span className="text-xs text-muted-foreground">No model selected</span>
+              <span className="text-xs text-muted-foreground">{t("mcp_no_model")}</span>
             )}
             <button
               onClick={() => setShowImageModal(true)}
               className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded-md border border-dashed border-input hover:border-primary hover:text-primary transition-colors"
             >
               <Plus className="w-3 h-3" />
-              {imageGenModel ? "Change" : "Add"}
+              {imageGenModel ? t("btn_change") : t("btn_add")}
             </button>
           </div>
         </div>
@@ -227,24 +246,24 @@ export default function MCPToolsPage() {
               <div className="w-8 h-8 rounded-lg bg-neon-green/10 flex items-center justify-center">
                 <Volume2 className="w-4 h-4 text-neon-green" />
               </div>
-              <span className="text-sm font-medium">Text-to-Speech</span>
+              <span className="text-sm font-medium">{t("mcp_tts")}</span>
             </div>
             <span className={cn("text-[10px] px-1.5 py-0.5 rounded", ttsModel ? "bg-neon-green/10 text-neon-green" : "bg-muted text-muted-foreground")}>
-              {ttsModel ? "ON" : "OFF"}
+              {ttsModel ? t("status_on") : t("status_off")}
             </span>
           </div>
-          <div className="flex flex-wrap gap-2 items-center">
+          <div className="flex flex-wrap gap-2">
             {ttsModel ? (
               <ModelTag label={`${providerName(ttsProvider)}/${ttsModel}`} onRemove={handleRemoveTtsModel} />
             ) : (
-              <span className="text-xs text-muted-foreground">No model selected</span>
+              <span className="text-xs text-muted-foreground">{t("mcp_no_model")}</span>
             )}
             <button
               onClick={() => setShowTtsModal(true)}
               className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded-md border border-dashed border-input hover:border-primary hover:text-primary transition-colors"
             >
               <Plus className="w-3 h-3" />
-              {ttsModel ? "Change" : "Add"}
+              {ttsModel ? t("btn_change") : t("btn_add")}
             </button>
           </div>
         </div>
@@ -268,6 +287,7 @@ export default function MCPToolsPage() {
       {/* Modals */}
       <AddModelModal open={showImageModal} onClose={() => setShowImageModal(false)} providers={providers} existingModel={imageGenModel} onAdd={handleAddImageModel} />
       <AddModelModal open={showTtsModal} onClose={() => setShowTtsModal(false)} providers={providers} existingModel={ttsModel} onAdd={handleAddTtsModel} />
+      <DocsModal open={showDocs} onClose={() => setShowDocs(false)} title="MCP Tools" sections={mcpDocs} />
     </div>
   );
 }

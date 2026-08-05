@@ -5,16 +5,20 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { ProviderTopology } from "@/components/dashboard/topology";
 import { Modal } from "@/components/ui/modal";
+import { DocsModal, DocsButton } from "@/components/ui/docs-modal";
 import { Plus, Trash2, Copy, Check, Eye, EyeOff } from "lucide-react";
+import { useLanguage } from "@/lib/language-context";
 import { cn } from "@/lib/utils";
 
 export default function DashboardPage() {
   const queryClient = useQueryClient();
+  const { t } = useLanguage();
   const [showAddKey, setShowAddKey] = useState(false);
   const [keyName, setKeyName] = useState("");
   const [copied, setCopied] = useState<number | null>(null);
   const [showKeyId, setShowKeyId] = useState<number | null>(null);
   const [selectedKeyId, setSelectedKeyId] = useState<number | null>(null);
+  const [showDocs, setShowDocs] = useState(false);
 
   const settingsQuery = useQuery({
     queryKey: ["settings"],
@@ -89,10 +93,13 @@ export default function DashboardPage() {
         <div className="animate-in fade-in slide-in-from-y-2 duration-300">
           <div className="flex items-center justify-between mb-6">
             <h1 className="font-heading text-xl font-bold text-foreground">Dashboard</h1>
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-green-100 text-green-700 border border-green-200">
-              <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-              Online
-            </span>
+            <div className="flex items-center gap-2">
+              <DocsButton onClick={() => setShowDocs(true)} />
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-green-100 text-green-700 border border-green-200">
+                <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+                Online
+              </span>
+            </div>
           </div>
         </div>
 
@@ -249,6 +256,18 @@ export default function DashboardPage() {
             </div>
           </div>
         </Modal>
+
+        <DocsModal
+          open={showDocs}
+          onClose={() => setShowDocs(false)}
+          title={t("dashboard_docs_title")}
+          sections={[
+            { title: t("dashboard_docs_overview_title"), content: t("dashboard_docs_overview_content") },
+            { title: t("dashboard_docs_keys_title"), content: t("dashboard_docs_keys_content") },
+            { title: t("dashboard_docs_topology_title"), content: t("dashboard_docs_topology_content") },
+            { title: t("dashboard_docs_troubleshoot_title"), content: t("dashboard_docs_troubleshoot_content") },
+          ]}
+        />
       </main>
     </div>
   );

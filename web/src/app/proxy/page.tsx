@@ -10,11 +10,15 @@ import {
   Loader2,
   X,
 } from "lucide-react";
+import { DocsModal, DocsButton } from "@/components/ui/docs-modal";
+import { useLanguage } from "@/lib/language-context";
 import { cn } from "@/lib/utils";
 
 export default function ProxyPage() {
   const queryClient = useQueryClient();
   const [addOpen, setAddOpen] = useState(false);
+  const [showDocs, setShowDocs] = useState(false);
+  const { t } = useLanguage();
   const [testingAll, setTestingAll] = useState(false);
   const [testResults, setTestResults] = useState<Array<{ ip: string; latency: number; country: string; timedOut: boolean }> | null>(null);
 
@@ -87,6 +91,7 @@ export default function ProxyPage() {
       {/* HEADER */}
       <div className="flex items-center justify-between">
         <h1 className="font-heading text-xl font-bold">Proxy</h1>
+          <DocsButton onClick={() => setShowDocs(true)} />
         <div className="flex items-center gap-2">
           <label className="flex items-center gap-2 cursor-pointer">
             <span className="text-[11px] text-muted-foreground font-medium">Active</span>
@@ -196,6 +201,17 @@ export default function ProxyPage() {
 
       {/* ADD PROXY MODAL */}
       <AddProxyModal open={addOpen} onClose={() => setAddOpen(false)} />
+
+      <DocsModal
+        open={showDocs}
+        onClose={() => setShowDocs(false)}
+        title={t("proxy_docs_title")}
+        sections={[
+          { title: t("proxy_docs_overview_title"), content: t("proxy_docs_overview_content") },
+          { title: t("proxy_docs_setup_title"), content: t("proxy_docs_setup_content") },
+          { title: t("proxy_docs_troubleshoot_title"), content: t("proxy_docs_troubleshoot_content") },
+        ]}
+      />
 
       {/* TEST RESULTS POPUP */}
       {testResults && (

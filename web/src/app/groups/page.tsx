@@ -5,11 +5,15 @@ import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, type GroupItem, type GroupModel } from "@/lib/api";
 import { Plus, Layers, X } from "lucide-react";
+import { DocsModal, DocsButton } from "@/components/ui/docs-modal";
+import { useLanguage } from "@/lib/language-context";
 import { cn } from "@/lib/utils";
 
 export default function GroupsPage() {
   const queryClient = useQueryClient();
   const [addOpen, setAddOpen] = useState(false);
+  const [showDocs, setShowDocs] = useState(false);
+  const { t } = useLanguage();
 
   const groupsQuery = useQuery({
     queryKey: ["groups"],
@@ -24,6 +28,8 @@ export default function GroupsPage() {
     <div className="p-6 md:p-8 min-h-full">
       <div className="flex items-center justify-between mb-7">
         <h1 className="font-heading text-2xl font-bold">Groups</h1>
+        <div className="flex items-center gap-2">
+        <DocsButton onClick={() => setShowDocs(true)} />
         <button
           onClick={() => setAddOpen(true)}
           className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg bg-primary text-primary-foreground transition-shadow hover:opacity-90"
@@ -31,6 +37,7 @@ export default function GroupsPage() {
           <Plus className="w-4 h-4" />
           Add Group
         </button>
+        </div>
       </div>
 
       {groupsQuery.isLoading && (
@@ -69,6 +76,17 @@ export default function GroupsPage() {
       )}
 
       <AddGroupModal open={addOpen} onClose={() => setAddOpen(false)} />
+
+      <DocsModal
+        open={showDocs}
+        onClose={() => setShowDocs(false)}
+        title={t("groups_docs_title")}
+        sections={[
+          { title: t("groups_docs_overview_title"), content: t("groups_docs_overview_content") },
+          { title: t("groups_docs_setup_title"), content: t("groups_docs_setup_content") },
+          { title: t("groups_docs_troubleshoot_title"), content: t("groups_docs_troubleshoot_content") },
+        ]}
+      />
     </div>
   );
 }

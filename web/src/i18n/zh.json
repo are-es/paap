@@ -107,5 +107,17 @@
   "lang.chinese": "中文",
   "lang.japanese": "日本語",
   "lang.korean": "한국어",
-  "lang.arabic": "العربية"
+  "lang.arabic": "العربية",
+  "mcp_subtitle": "Image generation, TTS, and vision via MCP server",
+  "mcp_image_gen": "Image Generation",
+  "mcp_tts": "Text-to-Speech",
+  "mcp_no_model": "No model selected",
+  "mcp_docs_overview_title": "Overview",
+  "mcp_docs_overview_content": "PAAP MCP Server provides 3 tools callable by AI agents:\n\n- generate_image: Create images from text prompts\n- text_to_speech: Convert text to audio/speech\n- analyze_image: Analyze images using vision models\n\nEndpoints:\n- GET /mcp/status\n- POST /mcp/message (JSON-RPC 2.0)\n\nProtocol: JSON-RPC 2.0\nAuth: Bearer token (same as PAAP gateway key)",
+  "mcp_docs_setup_title": "Client Setup Guide",
+  "mcp_docs_setup_content": "See English documentation for setup instructions.",
+  "mcp_docs_usage_title": "Usage Examples",
+  "mcp_docs_usage_content": "See English documentation for usage examples.",
+  "mcp_docs_troubleshoot_title": "Troubleshooting - MCP Error Map",
+  "mcp_docs_troubleshoot_content": "See English documentation for troubleshooting guide."
 }

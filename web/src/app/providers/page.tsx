@@ -13,10 +13,14 @@ import {
 import { Plus, Layers, KeyRound } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AddProviderModal } from "@/components/providers/add-provider-modal";
+import { DocsModal, DocsButton } from "@/components/ui/docs-modal";
 import { useState } from "react";
+import { useLanguage } from "@/lib/language-context";
 
 export default function ProvidersPage() {
   const [addOpen, setAddOpen] = useState(false);
+  const [showDocs, setShowDocs] = useState(false);
+  const { t } = useLanguage();
 
   const providersQuery = useQuery({
     queryKey: ["providers"],
@@ -29,9 +33,12 @@ export default function ProvidersPage() {
     <div className="p-6 md:p-8 min-h-full">
       <div className="flex items-center justify-between mb-6">
         <h1 className="font-heading text-2xl font-bold">Providers</h1>
-        <Button onClick={() => setAddOpen(true)}>
-          <Plus className="w-4 h-4 mr-1" /> Add Provider
-        </Button>
+        <div className="flex items-center gap-2">
+          <DocsButton onClick={() => setShowDocs(true)} />
+          <Button onClick={() => setAddOpen(true)}>
+            <Plus className="w-4 h-4 mr-1" /> Add Provider
+          </Button>
+        </div>
       </div>
 
       {providersQuery.isLoading && (
@@ -67,6 +74,20 @@ export default function ProvidersPage() {
       </div>
 
       <AddProviderModal open={addOpen} onClose={() => setAddOpen(false)} />
+
+      <DocsModal
+        open={showDocs}
+        onClose={() => setShowDocs(false)}
+        title={t("providers_docs_title")}
+        sections={[
+          { title: t("providers_docs_overview_title"), content: t("providers_docs_overview_content") },
+          { title: t("providers_docs_setup_title"), content: t("providers_docs_setup_content") },
+          { title: t("providers_docs_keys_title"), content: t("providers_docs_keys_content") },
+          { title: t("providers_docs_models_title"), content: t("providers_docs_models_content") },
+          { title: t("providers_docs_playground_title"), content: t("providers_docs_playground_content") },
+          { title: t("providers_docs_troubleshoot_title"), content: t("providers_docs_troubleshoot_content") },
+        ]}
+      />
     </div>
   );
 }

@@ -14,6 +14,7 @@ import {
 import { cn } from "@/lib/utils";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { useLanguage, LANGUAGES } from "@/lib/language-context";
+import { DocsModal, DocsButton } from "@/components/ui/docs-modal";
 
 const INTERVAL_OPTIONS = [
   { value: "3", label: "3 min" },
@@ -27,6 +28,7 @@ const INTERVAL_OPTIONS = [
 export default function SettingsPage() {
   const { lang, setLang, t } = useLanguage();
   const queryClient = useQueryClient();
+  const [showDocs, setShowDocs] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [restarting, setRestarting] = useState(false);
   const [shuttingDown, setShuttingDown] = useState(false);
@@ -68,7 +70,10 @@ export default function SettingsPage() {
 
   return (
     <div className="p-6 md:p-8 min-h-full">
-      <h1 className="font-heading text-xl font-bold mb-6">{t("settings.title")}</h1>
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="font-heading text-xl font-bold">{t("settings.title")}</h1>
+        <DocsButton onClick={() => setShowDocs(true)} />
+      </div>
 
       <div className="space-y-4">
         {/* CARD 0: LANGUAGE */}
@@ -179,6 +184,19 @@ export default function SettingsPage() {
         variant={confirmAction === "restart" ? "default" : "danger"}
         onConfirm={handleConfirm}
         onCancel={() => setConfirmAction(null)}
+      />
+
+      <DocsModal
+        open={showDocs}
+        onClose={() => setShowDocs(false)}
+        title={t("settings_docs_title")}
+        sections={[
+          { title: t("settings_docs_overview_title"), content: t("settings_docs_overview_content") },
+          { title: t("settings_docs_language_title"), content: t("settings_docs_language_content") },
+          { title: t("settings_docs_data_title"), content: t("settings_docs_data_content") },
+          { title: t("settings_docs_server_title"), content: t("settings_docs_server_content") },
+          { title: t("settings_docs_troubleshoot_title"), content: t("settings_docs_troubleshoot_content") },
+        ]}
       />
     </div>
   );

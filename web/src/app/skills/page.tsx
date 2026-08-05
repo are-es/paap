@@ -6,6 +6,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type SettingsData } from "@/lib/api";
 import { Zap, Save, Gauge } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { DocsModal, DocsButton } from "@/components/ui/docs-modal";
+import { useLanguage } from "@/lib/language-context";
 
 interface CompressionMode {
   id: string;
@@ -62,10 +64,12 @@ function serializeModes(modes: Record<string, Level>): string {
 
 export default function SkillsPage() {
   const queryClient = useQueryClient();
+  const { t } = useLanguage();
   const [injectionEnabled, setInjectionEnabled] = useState(false);
   const [injectionText, setInjectionText] = useState("");
   const [injectionPosition, setInjectionPosition] = useState<"prepend" | "append">("prepend");
   const [injectionLoaded, setInjectionLoaded] = useState(false);
+  const [showDocs, setShowDocs] = useState(false);
 
   // Compression mode state — per-mode levels
   const [activeModes, setActiveModes] = useState<Record<string, Level>>({});
@@ -164,7 +168,10 @@ export default function SkillsPage() {
 
   return (
     <div className="p-6 md:p-8 min-h-full">
-      <h1 className="font-heading text-xl font-bold mb-6">Compression</h1>
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="font-heading text-xl font-bold">Compression</h1>
+        <DocsButton onClick={() => setShowDocs(true)} />
+      </div>
 
       <div className="space-y-4">
         {/* SYSTEM PROMPT */}
@@ -354,6 +361,20 @@ export default function SkillsPage() {
           )}
         </div>
       </div>
+
+      <DocsModal
+        open={showDocs}
+        onClose={() => setShowDocs(false)}
+        title={t("compression_docs_title")}
+        sections={[
+          { title: t("compression_docs_overview_title"), content: t("compression_docs_overview_content") },
+          { title: t("compression_docs_modes_title"), content: t("compression_docs_modes_content") },
+          { title: t("compression_docs_injection_title"), content: t("compression_docs_injection_content") },
+          { title: t("compression_docs_headroom_title"), content: t("compression_docs_headroom_content") },
+          { title: t("compression_docs_voice_title"), content: t("compression_docs_voice_content") },
+          { title: t("compression_docs_troubleshoot_title"), content: t("compression_docs_troubleshoot_content") },
+        ]}
+      />
     </div>
   );
 }

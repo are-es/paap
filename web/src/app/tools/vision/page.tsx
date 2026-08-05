@@ -15,6 +15,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
+import { DocsModal, DocsButton } from "@/components/ui/docs-modal";
+import { useLanguage } from "@/lib/language-context";
 
 // Add Model Modal — same pattern as Groups
 function AddModelModal({ open, onClose, providers, existingModels, onAdd }: {
@@ -89,6 +91,7 @@ function AddModelModal({ open, onClose, providers, existingModels, onAdd }: {
 
 export default function VisionSetupPage() {
   const queryClient = useQueryClient();
+  const { t } = useLanguage();
 
   const toolsQuery = useQuery({ queryKey: ["tools"], queryFn: () => api.getTools() });
   const providersQuery = useQuery({ queryKey: ["providers"], queryFn: () => api.getProviders() });
@@ -103,6 +106,7 @@ export default function VisionSetupPage() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showDocs, setShowDocs] = useState(false);
 
   // Initialize from tool data
   useEffect(() => {
@@ -207,6 +211,7 @@ export default function VisionSetupPage() {
         <div className="flex items-center gap-3 shrink-0">
           {visionTool && (
             <>
+              <DocsButton onClick={() => setShowDocs(true)} />
               <button onClick={() => setConfirmDelete(true)} className="p-2 rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors" title="Delete">
                 <Trash2 className="w-4 h-4" />
               </button>
@@ -297,6 +302,17 @@ export default function VisionSetupPage() {
         variant="danger"
         onConfirm={handleDelete}
         onCancel={() => setConfirmDelete(false)}
+      />
+
+      <DocsModal
+        open={showDocs}
+        onClose={() => setShowDocs(false)}
+        title={t("vision_docs_title")}
+        sections={[
+          { title: t("vision_docs_overview_title"), content: t("vision_docs_overview_content") },
+          { title: t("vision_docs_setup_title"), content: t("vision_docs_setup_content") },
+          { title: t("vision_docs_troubleshoot_title"), content: t("vision_docs_troubleshoot_content") },
+        ]}
       />
     </div>
   );

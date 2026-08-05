@@ -297,29 +297,29 @@ CAVEMAN VOICE: Drop articles (a/an/the), filler (just/really/basically/actually/
 		}()
 	}
 	// ── Caveman Content Compression ─────────────────────────
-	cavemanCompressEnabled := getSettingStrCached("caveman_compress_enabled", "true") == "true"
+	cavemanCompressEnabled := strings.Contains(getSettingStrCached("compression_mode", ""), "caveman")
 	if cavemanCompressEnabled {
 		if msgs, ok := rawBody["messages"].([]interface{}); ok {
 			cavemanLevel := getSettingStrCached("compression_level", "full")
 			for _, m := range msgs {
 				if mm, ok := m.(map[string]interface{}); ok {
-					if role, _ := mm["role"].(string); role == "tool" || role == "assistant" {
-						if content, ok := mm["content"].(string); ok && len(content) > 100 {
-							compressed := defaultCompressor.Compress(content, cavemanLevel)
-							savings := EstimateSavings(content, compressed)
-							if savings > 10 {
-								mm["content"] = compressed
-								log.Printf("[PAAP] Caveman compressed %s output: %d → %d bytes (%.1f%% savings)",
-									role, len(content), len(compressed), savings)
+					if role, _ := mm["role"].(string); role == "tool" {
+							if content, ok := mm["content"].(string); ok && len(content) > 100 {
+								compressed := defaultCompressor.Compress(content, cavemanLevel)
+								savings := EstimateSavings(content, compressed)
+								if savings > 10 {
+									mm["content"] = compressed
+									log.Printf("[PAAP] Caveman compressed tool output: %d → %d bytes (%.1f%% savings)",
+										len(content), len(compressed), savings)
+								}
 							}
 						}
-					}
 				}
 			}
 		}
 	}
 	// ── Caveman Pipeline (post-RTK/headroom tool output compression) ──
-	cavemanPipelineEnabled := getSettingStrCached("caveman_pipeline_enabled", "true") == "true"
+	cavemanPipelineEnabled := strings.Contains(getSettingStrCached("compression_mode", ""), "caveman")
 	if cavemanPipelineEnabled {
 		if msgs, ok := rawBody["messages"].([]interface{}); ok {
 			var msgMaps []map[string]interface{}
@@ -634,6 +634,7 @@ CAVEMAN VOICE: Drop articles (a/an/the), filler (just/really/basically/actually/
 					tIn, tOut, streamBody := handleStreaming(w, resp2)
 					resp2.Body.Close()
 					logProxyRequest(providerID, providerName, modelID, nextKeyID, nextKeyName, groupName, proxyUsed, 200, tIn, tOut, latencyMs, "", streamBody)
+				TrafficLog(TrafficEntry{Model: modelID, Provider: providerName, StatusCode: 200, LatencyMs: latencyMs, CompressMode: compressionMode, PAAPOverheadMs: paapOverheadMs, TTFBMs: ttfbMs, IsStream: true, TokensIn: tIn, TokensOut: tOut})
 				} else {
 					// Parse tokens from non-streaming response
 					bodyBytes2, _ := io.ReadAll(resp2.Body)
@@ -641,6 +642,7 @@ CAVEMAN VOICE: Drop articles (a/an/the), filler (just/really/basically/actually/
 					var tokensIn, tokensOut int
 					parseUsageJSON(bodyBytes2, &tokensIn, &tokensOut)
 					logProxyRequest(providerID, providerName, modelID, nextKeyID, nextKeyName, groupName, proxyUsed, 200, tokensIn, tokensOut, latencyMs, "", bodyBytes2)
+					TrafficLog(TrafficEntry{Model: modelID, Provider: providerName, StatusCode: 200, LatencyMs: latencyMs, CompressMode: compressionMode, PAAPOverheadMs: paapOverheadMs, TTFBMs: ttfbMs, IsStream: false, TokensIn: tokensIn, TokensOut: tokensOut})
 					w.Header().Set("Content-Type", "application/json")
 					w.Write(bodyBytes2)
 				}
