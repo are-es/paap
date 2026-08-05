@@ -24,15 +24,9 @@ const COMPRESSION_MODES: CompressionMode[] = [
     available: true,
   },
   {
-    id: "ponytail",
-    label: "Ponytail",
-    description: "Lazy senior dev discipline. YAGNI ladder. Smallest working diff.",
-    available: true,
-  },
-  {
     id: "rtk",
     label: "RTK",
-    description: "Rust Token Killer. Compress tool outputs (bash, grep, git, dll) 60-90%.",
+    description: "Rust Token Killer. Compress tool outputs (bash, grep, git). 60-90% reduction on tool output.",
     available: true,
   },
 ];
