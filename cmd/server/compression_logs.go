@@ -168,3 +168,46 @@ func clearCompressionLogsHandler(w http.ResponseWriter, r *http.Request) {
 		"deleted": affected,
 	})
 }
+
+// compressionSummaryHandler returns aggregated before/after tokens from logs table.
+func compressionSummaryHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	database := db.DB
+	if database == nil {
+		http.Error(w, "Database not initialized", http.StatusInternalServerError)
+		return
+	}
+
+	// Aggregate all requests with compression savings
+	var totalBefore, totalSaved, totalAfter int64
+	var count int64
+	err := database.QueryRow(`
+		SELECT COUNT(*), COALESCE(SUM(tokens_before), 0), COALESCE(SUM(tokens_saved), 0)
+		FROM logs WHERE tokens_saved > 0
+	`).Scan(&count, &totalBefore, &totalSaved)
+	if err != nil {
+		http.Error(w, "Query error", http.StatusInternalServerError)
+		return
+	}
+
+	totalAfter = totalBefore - totalSaved
+
+	resp := map[string]interface{}{
+		"request_count":  count,
+		"total_before":   totalBefore,
+		"total_after":    totalAfter,
+		"total_saved":    totalSaved,
+		"saved_percent":  func() float64 {
+			if totalBefore > 0 {
+				return float64(totalSaved) / float64(totalBefore) * 100
+			}
+			return 0
+		}(),
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}

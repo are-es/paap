@@ -135,6 +135,7 @@ func main() {
 	mux.HandleFunc("/api/settings", settingsHandler)
 	mux.HandleFunc("/api/headroom/status", headroomStatus)
 	mux.HandleFunc("/api/compression/logs", compressionLogsHandler)
+	mux.HandleFunc("/api/compression/summary", compressionSummaryHandler)
 	mux.HandleFunc("/api/compression/logs/clear", clearCompressionLogsHandler)
 	mux.HandleFunc("/api/system/shutdown", systemShutdown)
 	mux.HandleFunc("/api/system/restart", systemRestart)

@@ -43,10 +43,10 @@ export default function CompressionPage() {
     queryFn: () => api.getSettings(),
   });
 
-  // Compression logs
-  const logsQuery = useQuery({
-    queryKey: ["compression-logs"],
-    queryFn: () => api.getCompressionLogs({ limit: 300 }),
+  // Compression summary (before/after from logs table)
+  const summaryQuery = useQuery({
+    queryKey: ["compression-summary"],
+    queryFn: () => api.getCompressionSummary(),
     refetchInterval: 5000,
   });
 
@@ -101,7 +101,6 @@ export default function CompressionPage() {
     queryClient.invalidateQueries({ queryKey: ["settings"] });
   };
 
-  const logs = logsQuery.data ?? [];
 
   return (
     <div className="p-6 md:p-8 min-h-full">
@@ -199,11 +198,12 @@ export default function CompressionPage() {
         </div>
 
         {/* BEFORE / AFTER SUMMARY */}
-        {logs.length > 0 && (() => {
-          const totalOrig = logs.reduce((sum: number, l: any) => sum + (l.original_tokens || Math.round((l.original_size || 0) / 4)), 0);
-          const totalSaved = logs.reduce((sum: number, l: any) => sum + (l.saved_tokens || Math.round(((l.original_size || 0) - (l.compressed_size || 0)) / 4)), 0);
-          const totalAfter = totalOrig - totalSaved;
-          const pct = totalOrig > 0 ? Math.round((totalSaved / totalOrig) * 100) : 0;
+        {summaryQuery.data && (() => {
+          const s = summaryQuery.data as any;
+          const totalOrig = s.total_before || 0;
+          const totalSaved = s.total_saved || 0;
+          const totalAfter = s.total_after || 0;
+          const pct = Math.round(s.saved_percent || 0);
           return (
             <div className="grid grid-cols-3 gap-3">
               <div className="bg-primary/[0.04] border border-primary/15 rounded-lg p-4 text-center">

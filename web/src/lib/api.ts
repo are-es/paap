@@ -348,6 +348,15 @@ export const api = {
     if (params?.offset) qs.set("offset", String(params.offset));
     return fetchApi<LogEntry[]>(`/api/compression/logs?${qs}`);
   },
+  getCompressionSummary: () => {
+    return fetchApi<{
+      request_count: number;
+      total_before: number;
+      total_after: number;
+      total_saved: number;
+      saved_percent: number;
+    }>(`/api/compression/summary`);
+  },
 
   // --- Logs ---
   getLogs: (params?: {
