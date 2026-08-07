@@ -26,15 +26,15 @@ type ToolBudget struct {
 
 // DefaultToolBudgets are the per-tool line budgets, matching Caveman Code.
 var DefaultToolBudgets = map[string]ToolBudget{
-	"bash": {MaxLines: 80, HeadLines: 50, TailLines: 30},
-	"read": {MaxLines: 300, HeadLines: 200, TailLines: 100},
-	"grep": {MaxLines: 120, HeadLines: 80, TailLines: 40},
-	"find": {MaxLines: 60, HeadLines: 40, TailLines: 20},
-	"ls":   {MaxLines: 60, HeadLines: 40, TailLines: 20},
+	"bash": {MaxLines: 30, HeadLines: 20, TailLines: 10},
+	"read": {MaxLines: 80, HeadLines: 50, TailLines: 30},
+	"grep": {MaxLines: 50, HeadLines: 30, TailLines: 20},
+	"find": {MaxLines: 30, HeadLines: 20, TailLines: 10},
+	"ls":   {MaxLines: 30, HeadLines: 20, TailLines: 10},
 }
 
 // FallbackBudget is used when the tool type is unknown.
-var FallbackBudget = ToolBudget{MaxLines: 150, HeadLines: 100, TailLines: 50}
+var FallbackBudget = ToolBudget{MaxLines: 40, HeadLines: 25, TailLines: 15}
 
 // GetToolBudget returns the budget for a tool, falling back to FallbackBudget.
 func GetToolBudget(toolName string) ToolBudget {
@@ -156,7 +156,7 @@ const (
 // Only triggers on outputs > 50 lines.
 func DetectFormat(text string) outputFormat {
 	lines := strings.Split(text, "\n")
-	if len(lines) <= 50 {
+	if len(lines) <= 10 {
 		return formatText
 	}
 

@@ -237,38 +237,24 @@ CAVEMAN VOICE: Drop articles (a/an/the), filler (just/really/basically/actually/
 			}
 		}
 	}
-	// ── RTK Tool Output Compression ──────────────────────────
-	// Headroom v0.33.0+ runs RTK internally, so skip standalone RTK to avoid double compression
-	rtkEnabled := getSettingStrCached("rtk_enabled", "true") == "true" && getSettingStrCached("headroom_enabled", "false") != "true"
-	if rtkEnabled && IsRTKAvailable() {
+
+	// ── Unified Smart Compression ──────────────────────────
+	compressLevel := resolveCompressionLevel()
+	log.Printf("[compression] resolved level=%s (off=%v)", compressLevel.String(), compressLevel == compression.LevelOff)
+	if compressLevel != compression.LevelOff {
 		if msgs, ok := rawBody["messages"].([]interface{}); ok {
 			var msgMaps []map[string]interface{}
 			for _, m := range msgs {
 				if mm, ok := m.(map[string]interface{}); ok {
 					msgMaps = append(msgMaps, mm)
-					// Log tool calls to detect if client uses RTK
-					if role, _ := mm["role"].(string); role == "assistant" {
-						if toolCalls, ok := mm["tool_calls"].([]interface{}); ok {
-							for _, tc := range toolCalls {
-								if tcMap, ok := tc.(map[string]interface{}); ok {
-									if fn, ok := tcMap["function"].(map[string]interface{}); ok {
-										if _, ok := fn["arguments"].(string); ok {
-											// Check for RTK usage in args
-										}
-									}
-								}
-							}
-						}
-					}
 				}
 			}
-
-			// Check if client already uses RTK
-			if ClientUsesRTK(msgMaps) {
-				log.Printf("[PAAP] Client already uses RTK — skipping PAAP RTK compression")
-			} else {
-				rtkLevel := getSettingStrCached("rtk_level", "full")
-				msgMaps = CompressToolOutputs(msgMaps, rtkLevel)
+			results := compression.CompressRawMessages(msgMaps, compressLevel, modelName)
+			// Log compression events to DB
+			for _, r := range results {
+				if r.Savings > 0 {
+					logCompressionEvent("tool", compressLevel.String(), r.OriginalSize, r.CompressedSize)
+				}
 			}
 			rawBody["messages"] = func() []interface{} {
 				out := make([]interface{}, len(msgMaps))
@@ -279,90 +265,7 @@ CAVEMAN VOICE: Drop articles (a/an/the), filler (just/really/basically/actually/
 			}()
 		}
 	}
-	// ── Headroom Compression (after RTK — benchmark: RTK-first 50.5% vs HR-first 47.0%) ──
-	if msgs, ok := rawBody["messages"].([]interface{}); ok {
-		var msgMaps []map[string]interface{}
-		for _, m := range msgs {
-			if mm, ok := m.(map[string]interface{}); ok {
-				msgMaps = append(msgMaps, mm)
-			}
-		}
-		msgMaps = CompressWithHeadroom(msgMaps, modelName)
-		rawBody["messages"] = func() []interface{} {
-			out := make([]interface{}, len(msgMaps))
-			for i, m := range msgMaps {
-				out[i] = m
-			}
-			return out
-		}()
-	}
-	// ── Caveman Content Compression ─────────────────────────
-	cavemanCompressEnabled := strings.Contains(getSettingStrCached("compression_mode", ""), "caveman")
-	if cavemanCompressEnabled {
-		if msgs, ok := rawBody["messages"].([]interface{}); ok {
-			cavemanLevel := getSettingStrCached("compression_level", "full")
-			for _, m := range msgs {
-				if mm, ok := m.(map[string]interface{}); ok {
-					if role, _ := mm["role"].(string); role == "tool" {
-							if content, ok := mm["content"].(string); ok && len(content) > 100 {
-								compressed := defaultCompressor.Compress(content, cavemanLevel)
-								savings := EstimateSavings(content, compressed)
-								if savings > 10 {
-									mm["content"] = compressed
-									log.Printf("[PAAP] Caveman compressed tool output: %d → %d bytes (%.1f%% savings)",
-										len(content), len(compressed), savings)
-								}
-							}
-						}
-				}
-			}
-		}
-	}
-	// ── Caveman Pipeline (post-RTK/headroom tool output compression) ──
-	cavemanPipelineEnabled := strings.Contains(getSettingStrCached("compression_mode", ""), "caveman")
-	if cavemanPipelineEnabled {
-		if msgs, ok := rawBody["messages"].([]interface{}); ok {
-			var msgMaps []map[string]interface{}
-			for _, m := range msgs {
-				if mm, ok := m.(map[string]interface{}); ok {
-					msgMaps = append(msgMaps, mm)
-				}
-			}
-			pipelineCfg := compression.DefaultPipelineConfig
-			// Per-pipeline toggles (all default true)
-			if getSettingStrCached("caveman_pipeline_flint_chipper", "true") != "true" {
-				pipelineCfg.FlintChipper = false
-			}
-			if getSettingStrCached("caveman_pipeline_ansi_strip", "true") != "true" {
-				pipelineCfg.AnsiStrip = false
-			}
-			if getSettingStrCached("caveman_pipeline_stone_tablet", "true") != "true" {
-				pipelineCfg.StoneTablet = false
-			}
-			if getSettingStrCached("caveman_pipeline_blank_collapse", "true") != "true" {
-				pipelineCfg.BlankCollapse = false
-			}
-			if getSettingStrCached("caveman_pipeline_general_truncate", "true") != "true" {
-				pipelineCfg.GeneralTruncate = false
-			}
 
-			msgMaps = compression.ApplyPipelineToMessages(msgMaps, pipelineCfg)
-
-			// Read deduplication
-			if getSettingStrCached("caveman_pipeline_read_dedup", "true") == "true" {
-				readCache := compression.GetGlobalReadCache()
-				msgMaps, _ = readCache.CheckReadToolMessages(msgMaps)
-			}
-
-			rawBody["messages"] = func() []interface{} {
-				out := make([]interface{}, len(msgMaps))
-				for i, m := range msgMaps {
-					out[i] = m
-				}
-				return out
-			}()
-		}
-	}
 	// ── Tool System: auto-route based on content detection ───
 	var toolUsed string
 	var originalModel string
@@ -1479,4 +1382,37 @@ func resolveUpstreamURL(baseURL, accountID string) string {
 		return base + "/arcane/api/v2/thread/unified"
 	}
 	return base + "/chat/completions"
+}
+
+// resolveCompressionLevel determines the compression level from settings.
+// New "compress.level" takes precedence. Falls back to old settings.
+func resolveCompressionLevel() compression.Level {
+	// New setting
+	if lvl := getSettingStrCached("compress_level", ""); lvl != "" {
+		return compression.ParseLevel(lvl)
+	}
+
+	// Old settings mapping
+	mode := getSettingStrCached("compression_mode", "")
+	headroomOn := getSettingStrCached("headroom_enabled", "false") == "true"
+	rtkOn := getSettingStrCached("rtk_enabled", "true") == "true"
+
+	if headroomOn || rtkOn {
+		return compression.LevelMedium
+	}
+
+	if strings.Contains(mode, "caveman") {
+		level := getSettingStrCached("compression_level", "full")
+		switch level {
+		case "lite":
+			return compression.LevelLite
+		case "full":
+			return compression.LevelMedium
+		case "ultra":
+			return compression.LevelHigh
+		}
+		return compression.LevelMedium
+	}
+
+	return compression.LevelMedium
 }

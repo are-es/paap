@@ -90,11 +90,8 @@ func LogRequest(method, path, clientKey string, body map[string]interface{}) {
 				entry := map[string]interface{}{"role": role}
 				switch content := mm["content"].(type) {
 				case string:
-					if len(content) > 200 {
-						entry["content"] = content[:200] + "..."
-					} else {
-						entry["content"] = content
-					}
+					entry["content"] = content
+					entry["content_len"] = len(content)
 				case []interface{}:
 					entry["content_parts"] = len(content)
 				}

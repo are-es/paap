@@ -410,7 +410,7 @@ function KeysSection({ providerId }: { providerId: string }) {
             </div>
           }
         >
-      <div className="space-y-2 mt-3">
+      <div className="space-y-2 mt-3 max-h-72 overflow-y-auto pr-1">
         {keys.map((key) => {
           const isVisible = visibleKeyId === key.id;
           const displayKey = isVisible ? (key.key || "") : doMaskKey(key.key || key.key_masked || "");

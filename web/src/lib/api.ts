@@ -61,6 +61,8 @@ export interface SettingsData {
   prompt_injection_position?: "prepend" | "append";
   compression_mode?: string;
   compression_level?: string;
+  compress_level?: string;
+  compress_custom_strategies?: string;
   headroom_enabled?: string;
   headroom_url?: string;
   headroom_timeout_ms?: string;

@@ -9,9 +9,8 @@ OpenAI-compatible API gateway yang me-routing request ke 30+ provider (Xiaomi, S
 - **Model Discovery** — Auto-detect model dari provider API
 - **Vision Auto-Route** — Auto-route request berisi gambar ke model vision
 - **MCP Server** — JSON-RPC 2.0 server dengan tools (Image Gen, TTS, Vision Analysis)
-- **Token Compression** — Caveman pipeline (tool output compression), RTK (Rust Token Killer)
+- **Smart Compressor** — Unified token compression (lite/medium/high)
 - **System Prompt Injection** — Custom instructions di setiap request
-- **Headroom Proxy** — External Python compression service
 - **Groups & Race Routing** — Kirim ke beberapa provider, gunakan response tercepat
 - **Dashboard** — Stats real-time, provider topology, gateway key management
 - **Multi-Language UI** — 6 bahasa (EN, ID, ZH, JA, KO, AR)
@@ -40,14 +39,12 @@ cd web && npm install && npm run build && cd ..
 # Run
 export PAAP_DATA=~/.paap
 export PAAP_PORT=9090
-export GATEWAY_KEYS=your-secret-key
 ./bin/paap-server
 ```
 
 ### Systemd (Production)
 
 ```bash
-# Install service
 sudo cp paap.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable paap
@@ -65,44 +62,10 @@ sudo journalctl -u paap -f
 ```bash
 curl -X POST http://localhost:9090/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_GATEWAY_KEY" \
+  -H "Authorization: Bearer ***" \
   -d '{
     "model": "mimo-v2.5-pro",
     "messages": [{"role": "user", "content": "Hello!"}]
-  }'
-```
-
-### Text-to-Speech (MCP)
-
-```bash
-curl -X POST http://localhost:9090/mcp/message \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_GATEWAY_KEY" \
-  -d '{
-    "jsonrpc": "2.0",
-    "id": 1,
-    "method": "tools/call",
-    "params": {
-      "name": "text_to_speech",
-      "arguments": {"text": "Hello world", "voice": "Mia"}
-    }
-  }'
-```
-
-### Image Generation (MCP)
-
-```bash
-curl -X POST http://localhost:9090/mcp/message \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_GATEWAY_KEY" \
-  -d '{
-    "jsonrpc": "2.0",
-    "id": 1,
-    "method": "tools/call",
-    "params": {
-      "name": "generate_image",
-      "arguments": {"prompt": "a cat in space"}
-    }
   }'
 ```
 
@@ -110,17 +73,41 @@ curl -X POST http://localhost:9090/mcp/message \
 
 Akses dashboard di `http://localhost:9090` setelah server berjalan.
 
-Fitur dashboard:
 - **Stats** — Request, token, biaya per 24 jam
-- **Provider Topology** — Visual map semua provider
-- **Gateway Keys** — Generate, copy, revoke API keys
-- **Provider Setup** — Tambah provider, API key, detect model
+- **Providers** — API key management, model discovery
 - **Tools** — Vision auto-route, MCP tools config
-- **Compression** — Caveman, RTK, Headroom settings
+- **Compression** — Smart Compressor level selector + live logs
 - **Logs** — Request log dengan filter dan export
 - **Groups** — Race routing, round-robin
 - **Proxy** — Proxy pool management
 - **Settings** — Bahasa, backup/restore, server control
+
+## Smart Compressor
+
+Unified token compression. Menggantikan sistem lama (RTK, Caveman, Headroom) dengan satu sistem terpadu.
+
+### Cara Kerja
+
+1. Request masuk dengan messages array
+2. Compressor detect message roles (tool/user/system/assistant)
+3. Compress messages tertua (bukan yang terbaru) berdasarkan level
+4. Assistant messages TIDAK pernah di-compress
+5. Recent messages (6 terakhir) di-skip untuk jaga context
+
+### Levels
+
+| Level | Batch | Target | Strategies |
+|---|---|---|---|
+| **Off** | — | — | No compression |
+| **Lite** | 10 msg | tool outputs | ANSI strip, blank collapse |
+| **Medium** | 20 msg | tool + user | +line budget, +prose filter, +log dedup |
+| **High** | 30 msg | all except assistant | +JSON/XML compress, +aggressive trunc |
+
+### Monitoring
+
+- Dashboard `/compression` page: live compression logs dengan before/after tokens
+- Logs tampil: timestamp, content type, level, original tokens, compressed tokens, saved %
+- Clear logs via UI button
 
 ## MCP Client Setup
 
@@ -134,94 +121,28 @@ mcp_servers:
     enabled: true
 ```
 
-### Claude Code
-
-```json
-// ~/.claude/settings.json
-{
-  "mcpServers": {
-    "paap": {
-      "url": "http://127.0.0.1:9090/mcp/message",
-      "headers": { "Authorization": "Bearer YOUR_GATEWAY_KEY" }
-    }
-  }
-}
-```
-
-### OpenCode
-
-```json
-// ~/.config/opencode/config.json
-{
-  "mcp": {
-    "servers": {
-      "paap": {
-        "url": "http://127.0.0.1:9090/mcp/message",
-        "auth": "Bearer YOUR_GATEWAY_KEY"
-      }
-    }
-  }
-}
-```
-
-## Compression
-
-### Caveman Mode
-
-Kompresi tool output — hapus filler words, whitespace, HTML noise. Levels:
-- **lite** — whitespace only
-- **full** — filler + whitespace
-- **ultra** — maximum compression
-
-### RTK (Rust Token Killer)
-
-Kompresi tool output (bash, grep, git). 60-90% pengurangan.
-
-### Headroom
-
-Proxy Python eksternal untuk kompresi tambahan. Berjalan di port 8787.
-
 ## Troubleshooting
 
 ### Provider offline
 ```bash
-# Cek API key
 sqlite3 ~/.paap/paap.db "SELECT * FROM api_keys WHERE provider_id='xxx' AND is_active=1"
-
-# Restart
 sudo systemctl restart paap
-```
-
-### Model tidak terdeteksi
-```bash
-# Manual detect
-curl -X POST http://localhost:9090/api/providers/xxx/detect \
-  -H "Authorization: Bearer YOUR_KEY"
 ```
 
 ### Compression tidak jalan
 ```bash
-# Cek setting
-sqlite3 ~/.paap/paap.db "SELECT key, value FROM system_settings WHERE key='compression_mode'"
+# Cek level setting
+sqlite3 ~/.paap/paap.db "SELECT key, value FROM system_settings WHERE key='compress_level'"
 
 # Cek logs
-sudo journalctl -u paap | grep -i caveman
-```
-
-### MCP error
-```bash
-# Cek status
-curl http://localhost:9090/mcp/status
-
-# Cek logs
-sudo journalctl -u paap | grep -i mcp
+sudo journalctl -u paap | grep compression
 ```
 
 ## Tech Stack
 
 - **Backend**: Go 1.24, SQLite (modernc.org/sqlite)
 - **Frontend**: Next.js 15, React 19, TypeScript, Tailwind CSS, shadcn/ui
-- **Database**: SQLite (~/.paap/paap.db)
+- **Database**: SQLite
 - **Auth**: Gateway keys (Bearer token)
 - **MCP**: JSON-RPC 2.0
 

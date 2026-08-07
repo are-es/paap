@@ -193,7 +193,7 @@ func clearAll(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 405, "method not allowed")
 		return
 	}
-	tables := []string{"logs", "usage_stats", "cost_summary", "race_logs"}
+	tables := []string{"logs", "usage_stats", "cost_summary", "race_logs", "compression_logs"}
 	for _, t := range tables {
 		if _, err := db.DB.Exec("DELETE FROM " + t); err != nil {
 			writeError(w, 500, fmt.Sprintf("failed to clear %s: %v", t, err))
