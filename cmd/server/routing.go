@@ -239,6 +239,7 @@ CAVEMAN VOICE: Drop articles (a/an/the), filler (just/really/basically/actually/
 	}
 
 	// ── Unified Smart Compression ──────────────────────────
+	var compressionTokensBefore, compressionTokensSaved int
 	compressLevel := resolveCompressionLevel()
 	log.Printf("[compression] resolved level=%s (off=%v)", compressLevel.String(), compressLevel == compression.LevelOff)
 	if compressLevel != compression.LevelOff {
@@ -250,12 +251,18 @@ CAVEMAN VOICE: Drop articles (a/an/the), filler (just/really/basically/actually/
 				}
 			}
 			results := compression.CompressRawMessages(msgMaps, compressLevel, modelName)
-			// Log compression events to DB
+			// Log compression events to DB + track totals
+			var totalOrigBytes, totalSavedBytes int
 			for _, r := range results {
+				totalOrigBytes += r.OriginalSize
 				if r.Savings > 0 {
+					totalSavedBytes += r.Savings
 					logCompressionEvent("tool", compressLevel.String(), r.OriginalSize, r.CompressedSize)
 				}
 			}
+			// Store for logging later
+			compressionTokensBefore = totalOrigBytes / 4
+			compressionTokensSaved = totalSavedBytes / 4
 			rawBody["messages"] = func() []interface{} {
 				out := make([]interface{}, len(msgMaps))
 				for i, m := range msgMaps {
@@ -568,20 +575,20 @@ CAVEMAN VOICE: Drop articles (a/an/the), filler (just/really/basically/actually/
 	if isStream {
 		if isMerlin {
 			handleMerlinStreaming(w, resp, modelID)
-			logProxyRequestWithTool(providerID, providerName, modelID, keyID, keyName, groupName, proxyUsed, resp.StatusCode, 0, 0, latencyMs, "", nil, toolUsed, originalModel)
+			logProxyRequestWithTool(providerID, providerName, modelID, keyID, keyName, groupName, proxyUsed, resp.StatusCode, 0, 0, latencyMs, "", nil, toolUsed, originalModel, compressionTokensBefore, compressionTokensSaved)
 		} else {
 			tIn, tOut, streamBody := handleStreaming(w, resp)
-			logProxyRequestWithTool(providerID, providerName, modelID, keyID, keyName, groupName, proxyUsed, resp.StatusCode, tIn, tOut, latencyMs, "", streamBody, toolUsed, originalModel)
+			logProxyRequestWithTool(providerID, providerName, modelID, keyID, keyName, groupName, proxyUsed, resp.StatusCode, tIn, tOut, latencyMs, "", streamBody, toolUsed, originalModel, compressionTokensBefore, compressionTokensSaved)
 		}
 	} else {
 		if isMerlin {
-			logProxyRequestWithTool(providerID, providerName, modelID, keyID, keyName, groupName, proxyUsed, resp.StatusCode, 0, 0, latencyMs, "", nil, toolUsed, originalModel)
+			logProxyRequestWithTool(providerID, providerName, modelID, keyID, keyName, groupName, proxyUsed, resp.StatusCode, 0, 0, latencyMs, "", nil, toolUsed, originalModel, compressionTokensBefore, compressionTokensSaved)
 			handleMerlinNonStreaming(w, resp, modelID)
 		} else {
 			bodyBytes2, _ := io.ReadAll(resp.Body)
 			// Parse usage from response
 			parseUsageJSON(bodyBytes2, &tokensIn, &tokensOut)
-			logProxyRequestWithTool(providerID, providerName, modelID, keyID, keyName, groupName, proxyUsed, resp.StatusCode, tokensIn, tokensOut, latencyMs, "", bodyBytes2, toolUsed, originalModel)
+			logProxyRequestWithTool(providerID, providerName, modelID, keyID, keyName, groupName, proxyUsed, resp.StatusCode, tokensIn, tokensOut, latencyMs, "", bodyBytes2, toolUsed, originalModel, compressionTokensBefore, compressionTokensSaved)
 			// Add tool header in response if tool was used
 			if toolUsed != "" {
 				w.Header().Set("X-PAAP-Tool", toolUsed)

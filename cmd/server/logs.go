@@ -547,20 +547,22 @@ func calculateCost(modelID string, tokensIn, tokensOut int) float64 {
 // ── Log writer — inserts log + updates usage_stats + cost_summary
 
 func logProxyRequest(providerID, providerName, modelID, keyID, keyName, groupName, proxyUsed string, statusCode, tokensIn, tokensOut int, latencyMs int64, errMsg string, responseBody []byte) {
-	logProxyRequestWithTool(providerID, providerName, modelID, keyID, keyName, groupName, proxyUsed, statusCode, tokensIn, tokensOut, latencyMs, errMsg, responseBody, "", "")
+	logProxyRequestWithTool(providerID, providerName, modelID, keyID, keyName, groupName, proxyUsed, statusCode, tokensIn, tokensOut, latencyMs, errMsg, responseBody, "", "", 0, 0)
 }
 
-func logProxyRequestWithTool(providerID, providerName, modelID, keyID, keyName, groupName, proxyUsed string, statusCode, tokensIn, tokensOut int, latencyMs int64, errMsg string, responseBody []byte, toolUsed, originalModel string) {
+func logProxyRequestWithTool(providerID, providerName, modelID, keyID, keyName, groupName, proxyUsed string, statusCode, tokensIn, tokensOut int, latencyMs int64, errMsg string, responseBody []byte, toolUsed, originalModel string, tokensBefore, tokensSaved int) {
 	cost := calculateCost(modelID, tokensIn, tokensOut)
 
 	// Log to file for debugging
 	LogResponse(statusCode, latencyMs, tokensIn, tokensOut, providerName, keyName, "", errMsg, 0, responseBody)
 
 	// Insert into logs
+	// tokens_before = total original tokens (what provider got + what we saved)
+	tokensBefore = tokensIn + tokensSaved
 	_, err := db.DB.Exec(`INSERT INTO logs
-		(provider_id, provider_name, model_id, key_id, key_name, group_name, framework, status_code, tokens_in, tokens_out, latency_ms, cost_usd, error, proxy_used, tool_used, original_model)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		providerID, providerName, modelID, keyID, keyName, groupName, "openai", statusCode, tokensIn, tokensOut, latencyMs, cost, errMsg, proxyUsed, toolUsed, originalModel)
+		(provider_id, provider_name, model_id, key_id, key_name, group_name, framework, status_code, tokens_in, tokens_out, latency_ms, cost_usd, error, proxy_used, tool_used, original_model, tokens_before, tokens_saved)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		providerID, providerName, modelID, keyID, keyName, groupName, "openai", statusCode, tokensIn, tokensOut, latencyMs, cost, errMsg, proxyUsed, toolUsed, originalModel, tokensBefore, tokensSaved)
 	if err != nil {
 		log.Printf("Failed to log request: %v", err)
 	}

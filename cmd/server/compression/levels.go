@@ -6,11 +6,11 @@ type Level int
 const (
 	// LevelOff disables compression entirely.
 	LevelOff Level = iota
-	// LevelLite: 5 oldest tool outputs. ANSI strip + blank collapse.
+	// LevelLite: Caveman only. ANSI strip, blank collapse, FlintChipper, prose filter.
 	LevelLite
-	// LevelMedium: 10 oldest tool + user messages. +line budget +prose +dedup.
+	// LevelMedium: Headroom only. Content detection, 2-phase pipeline (reformat + bloat offload).
 	LevelMedium
-	// LevelHigh: 15 oldest tool + user + system. +JSON/XML +aggressive trunc.
+	// LevelHigh: Both. Chunk-based, Caveman + Headroom + BM25 extractive.
 	LevelHigh
 )
 
@@ -22,7 +22,6 @@ var levelNames = map[string]Level{
 }
 
 // ParseLevel converts a config string to a Level.
-// Unknown values fall back to LevelMedium.
 func ParseLevel(s string) Level {
 	if l, ok := levelNames[s]; ok {
 		return l
@@ -67,6 +66,10 @@ type levelConfig struct {
 	RunLogDedup bool
 	// RunStringTruncate caps long strings inside structured output.
 	RunStringTruncate bool
+	// RunBM25 enables BM25 extractive scoring for text compression.
+	RunBM25 bool
+	// BM25TargetRatio is the target ratio for BM25 (0.5 = keep 50% of segments).
+	BM25TargetRatio float64
 	// MinCompressSize is the minimum byte threshold to trigger compression.
 	MinCompressSize int
 }
@@ -76,22 +79,24 @@ var levelConfigs = map[Level]levelConfig{
 		MinCompressSize: 0,
 	},
 	LevelLite: {
-		RunANSI:          true,
-		RunBlankCollapse: true,
-		MinCompressSize:  200,
-	},
-	LevelMedium: {
-		HeadLines:        120,
-		TailLines:        60,
-		MaxLines:         500,
+		// Caveman only: safe transforms + FlintChipper + prose filter
+		HeadLines:        30,
+		TailLines:        15,
+		MaxLines:         100,
 		RunANSI:          true,
 		RunBlankCollapse: true,
 		RunFlintChipper:  true,
 		RunProseFilter:   true,
-		RunLogDedup:      true,
+		MinCompressSize:  200,
+	},
+	LevelMedium: {
+		// Headroom only: content detection + 2-phase pipeline
+		RunANSI:          true,
+		RunBlankCollapse: true,
 		MinCompressSize:  200,
 	},
 	LevelHigh: {
+		// Both: chunk-based, Caveman + Headroom + BM25
 		HeadLines:         60,
 		TailLines:         30,
 		MaxLines:          250,
@@ -102,6 +107,8 @@ var levelConfigs = map[Level]levelConfig{
 		RunProseFilter:    true,
 		RunLogDedup:       true,
 		RunStringTruncate: true,
+		RunBM25:           true,
+		BM25TargetRatio:   0.5,
 		MinCompressSize:   200,
 	},
 }

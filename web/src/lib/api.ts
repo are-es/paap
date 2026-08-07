@@ -118,6 +118,8 @@ export interface LogEntry {
   latency_ms?: number;
   cost_usd?: number;
   compression_ratio?: number;
+  tokens_before?: number;
+  tokens_saved?: number;
   error?: string;
   tool_used?: string;
   original_model?: string;

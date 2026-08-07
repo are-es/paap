@@ -253,7 +253,7 @@ func anthropicMessagesHandler(w http.ResponseWriter, r *http.Request) {
 	} else {
 		tokensIn, tokensOut = handleAnthropicNonStreaming(w, resp)
 	}
-	logProxyRequestWithTool(providerID, providerName, modelID, keyID, keyName, "", proxyUsed, 200, tokensIn, tokensOut, latencyMs, "", nil, toolUsed, originalModel)
+	logProxyRequestWithTool(providerID, providerName, modelID, keyID, keyName, "", proxyUsed, 200, tokensIn, tokensOut, latencyMs, "", nil, toolUsed, originalModel, 0, 0)
 	// Add tool header in response if tool was used
 	if toolUsed != "" {
 		w.Header().Set("X-PAAP-Tool", toolUsed)
@@ -672,10 +672,10 @@ func handleAnthropicTranslated(w http.ResponseWriter, r *http.Request,
 				// Success — translate response
 				if isStream {
 					tIn, tOut, _ := handleTranslatedStreaming(w, resp2, modelID)
-					logProxyRequestWithTool(providerID, providerName, modelID, nextKeyID, nextKeyName, "", proxyUsed, 200, tIn, tOut, latencyMs, "", nil, toolUsed, originalModel)
+					logProxyRequestWithTool(providerID, providerName, modelID, nextKeyID, nextKeyName, "", proxyUsed, 200, tIn, tOut, latencyMs, "", nil, toolUsed, originalModel, 0, 0)
 				} else {
 					tIn, tOut := handleTranslatedNonStreaming(w, resp2)
-					logProxyRequestWithTool(providerID, providerName, modelID, nextKeyID, nextKeyName, "", proxyUsed, 200, tIn, tOut, latencyMs, "", nil, toolUsed, originalModel)
+					logProxyRequestWithTool(providerID, providerName, modelID, nextKeyID, nextKeyName, "", proxyUsed, 200, tIn, tOut, latencyMs, "", nil, toolUsed, originalModel, 0, 0)
 				}
 				return
 			}
@@ -693,10 +693,10 @@ func handleAnthropicTranslated(w http.ResponseWriter, r *http.Request,
 	// Success — translate response
 	if isStream {
 		tIn, tOut, _ := handleTranslatedStreaming(w, resp, modelID)
-		logProxyRequestWithTool(providerID, providerName, modelID, keyID, keyName, "", proxyUsed, 200, tIn, tOut, latencyMs, "", nil, toolUsed, originalModel)
+		logProxyRequestWithTool(providerID, providerName, modelID, keyID, keyName, "", proxyUsed, 200, tIn, tOut, latencyMs, "", nil, toolUsed, originalModel, 0, 0)
 	} else {
 		tIn, tOut := handleTranslatedNonStreaming(w, resp)
-		logProxyRequestWithTool(providerID, providerName, modelID, keyID, keyName, "", proxyUsed, 200, tIn, tOut, latencyMs, "", nil, toolUsed, originalModel)
+		logProxyRequestWithTool(providerID, providerName, modelID, keyID, keyName, "", proxyUsed, 200, tIn, tOut, latencyMs, "", nil, toolUsed, originalModel, 0, 0)
 	}
 }
 

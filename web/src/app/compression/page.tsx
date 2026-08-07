@@ -20,9 +20,9 @@ type Level = (typeof LEVELS)[number];
 
 const LEVEL_META: Record<Level, { label: string; desc: string; color: string }> = {
   off:    { label: "Off",    desc: "No compression",                        color: "text-muted-foreground" },
-  lite:   { label: "Lite",   desc: "10 tool outputs | ANSI strip + blank collapse",  color: "text-blue-500" },
-  medium: { label: "Medium", desc: "20 tool + user | +line budget +prose +dedup",    color: "text-yellow-500" },
-  high:   { label: "High",   desc: "30 all except assistant | +JSON/XML +trunc",     color: "text-green-500" },
+  lite:   { label: "Lite",   desc: "25 tool outputs | ANSI strip + blank collapse",  color: "text-blue-500" },
+  medium: { label: "Medium", desc: "50 tool + user | +line budget +prose +dedup",    color: "text-yellow-500" },
+  high:   { label: "High",   desc: "100 all except assistant | +JSON/XML +BM25",     color: "text-green-500" },
 };
 
 export default function CompressionPage() {
@@ -198,59 +198,32 @@ export default function CompressionPage() {
           </div>
         </div>
 
-        {/* COMPRESSION LOGS */}
-        <div className="bg-primary/[0.04] border border-primary/15 rounded-lg p-4">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <ScrollText className="w-4 h-4 text-muted-foreground" />
-              <span className="text-sm font-medium">Compression Logs</span>
+        {/* BEFORE / AFTER SUMMARY */}
+        {logs.length > 0 && (() => {
+          const totalOrig = logs.reduce((sum: number, l: any) => sum + (l.original_tokens || Math.round((l.original_size || 0) / 4)), 0);
+          const totalSaved = logs.reduce((sum: number, l: any) => sum + (l.saved_tokens || Math.round(((l.original_size || 0) - (l.compressed_size || 0)) / 4)), 0);
+          const totalAfter = totalOrig - totalSaved;
+          const pct = totalOrig > 0 ? Math.round((totalSaved / totalOrig) * 100) : 0;
+          return (
+            <div className="grid grid-cols-3 gap-3">
+              <div className="bg-primary/[0.04] border border-primary/15 rounded-lg p-4 text-center">
+                <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Before</p>
+                <p className="font-mono text-xl font-bold text-foreground">{fmtTokens(totalOrig)}</p>
+                <p className="text-[10px] text-muted-foreground">tokens</p>
+              </div>
+              <div className="bg-primary/[0.04] border border-primary/15 rounded-lg p-4 text-center">
+                <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">After</p>
+                <p className="font-mono text-xl font-bold text-foreground">{fmtTokens(totalAfter)}</p>
+                <p className="text-[10px] text-muted-foreground">tokens</p>
+              </div>
+              <div className="bg-green-500/[0.04] border border-green-500/15 rounded-lg p-4 text-center">
+                <p className="text-[10px] font-semibold text-green-600 uppercase tracking-wider mb-1">Saved</p>
+                <p className="font-mono text-xl font-bold text-green-600">{fmtTokens(totalSaved)}</p>
+                <p className="text-[10px] text-green-600">{pct}%</p>
+              </div>
             </div>
-            <button
-              onClick={async () => {
-                await fetch("/api/compression/logs", { method: "DELETE" });
-                queryClient.invalidateQueries({ queryKey: ["compression-logs"] });
-              }}
-              className="px-2 py-1 text-[10px] rounded border border-border text-muted-foreground hover:text-foreground hover:border-primary/30 transition-colors"
-            >
-              Clear
-            </button>
-          </div>
-
-          {logs.length === 0 ? (
-            <p className="text-[11px] text-muted-foreground">No compression events yet.</p>
-          ) : (
-            <div className="max-h-64 overflow-y-auto overflow-x-auto rounded border border-border/50">
-              <table className="w-full text-[11px] font-mono">
-                <thead className="sticky top-0 bg-background z-10">
-                  <tr className="border-b border-border text-muted-foreground">
-                    <th className="text-left py-1.5 px-2">Time</th>
-                    <th className="text-left py-1.5 px-2">Type</th>
-                    <th className="text-left py-1.5 px-2">Level</th>
-                    <th className="text-right py-1.5 px-2">Before</th>
-                    <th className="text-right py-1.5 px-2">After</th>
-                    <th className="text-right py-1.5 px-2">Saved</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {logs.map((log: any, i: number) => (
-                    <tr key={i} className="border-b border-border/50 hover:bg-primary/[0.02]">
-                      <td className="py-1 px-2 text-muted-foreground whitespace-nowrap">{new Date(log.timestamp).toLocaleString()}</td>
-                      <td className="py-1 px-2">{log.content_type}</td>
-                      <td className="py-1 px-2 capitalize">{log.level}</td>
-                      <td className="py-1 px-2 text-right">{fmtTokens(log.original_tokens || Math.round(log.original_size / 4))}</td>
-                      <td className="py-1 px-2 text-right">{fmtTokens(log.compressed_tokens || Math.round(log.compressed_size / 4))}</td>
-                      <td className={`py-1 px-2 text-right ${log.original_size > 0 && (1 - log.compressed_size / log.original_size) * 100 > 10 ? "text-green-600" : "text-muted-foreground"}`}>
-                        {log.original_size > 0
-                          ? `${Math.round((1 - log.compressed_size / log.original_size) * 100)}%`
-                          : "—"}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
+          );
+        })()}
       </div>
 
       <DocsModal
