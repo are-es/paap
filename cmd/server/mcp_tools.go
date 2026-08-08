@@ -43,9 +43,8 @@ func mcpToolsList() []mcpToolDef {
 			InputSchema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"prompt": map[string]interface{}{"type": "string", "description": "Text description of the image. Be specific about subject, style, composition, colors, lighting, and mood. Vague prompts produce generic results."},
-					"size":   map[string]interface{}{"type": "string", "description": "Image dimensions: '1024x1024' (square), '1792x1024' (landscape), '1024x1792' (portrait)", "default": "1024x1024"},
-					"style":  map[string]interface{}{"type": "string", "description": "Art direction: 'realistic' (photography), 'artistic' (painting/illustration), 'anime' (manga/comic). Or leave empty for auto-detection.", "default": ""},
+					"prompt": map[string]interface{}{"type": "string", "description": "Text description of the image. Be specific about subject, style, composition, colors, lighting, and mood. Vague prompts produce generic results. Include art direction in the prompt itself (e.g. 'ink wash painting style', 'analog film grain', 'Risograph print')."},
+					"size":   map[string]interface{}{"type": "string", "description": "Image dimensions: '1024x1024' (square), '1360x768' (landscape), '768x1360' (portrait), '896x1184' (tall), '1184x896' (wide)", "default": "1024x1024"},
 				},
 				"required": []string{"prompt"},
 			},
@@ -97,7 +96,6 @@ func mcpHandleGenerateImage(args json.RawMessage) interface{} {
 	var params struct {
 		Prompt string `json:"prompt"`
 		Size   string `json:"size"`
-		Style  string `json:"style"`
 	}
 	if err := json.Unmarshal(args, &params); err != nil {
 		return mcpToolError("invalid arguments: " + err.Error())
@@ -106,7 +104,7 @@ func mcpHandleGenerateImage(args json.RawMessage) interface{} {
 		return mcpToolError("prompt is required")
 	}
 
- imageURL, err := handleGenerateImage(params.Prompt, params.Size, params.Style)
+ imageURL, err := handleGenerateImage(params.Prompt, params.Size, "")
 	if err != nil {
 		return mcpToolError(err.Error())
 	}

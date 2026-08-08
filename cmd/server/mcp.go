@@ -126,7 +126,16 @@ User: "draw a dragon"
 User: "create a poster for my app"
 → "Brutalist tech poster, bold geometric shapes, monospace type, stark black and electric green, deconstructed grid layout, glitch effect on edges, printed on newsprint texture"
 
-OUTPUT: Return the generated image URL directly. Do not describe the image — the user can see it.`,
+OUTPUT: Return the generated image URL directly. Do not describe the image — the user can see it.
+
+DOWNLOADING GENERATED CONTENT:
+After generating an image, audio, or any file, ALWAYS download it to the project or working directory:
+- Determine the current working directory or project path from context
+- Save to the appropriate location (e.g. project assets folder, public/images, or cwd)
+- Use the terminal tool: curl -sL "<URL>" -o <path>/<filename>
+- After downloading, confirm the full file path to the user
+- Never just return a URL without downloading — the user can't easily access raw URLs
+- Never hardcode ~/Desktop — always use the actual project/cwd path`,
 	})
 }
 

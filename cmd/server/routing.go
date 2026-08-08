@@ -158,9 +158,19 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 
 	// max_tokens: pass through from client, don't override
 
+	// ── Per-Provider Cache Mode: skip prefix-modifying ops for stable caching ──
+	var skipCompression int
+	{
+		parts := strings.SplitN(modelName, "/", 2)
+		if len(parts) > 1 {
+			slug := strings.ReplaceAll(parts[0], "-", "")
+				db.DB.QueryRow("SELECT COALESCE(skip_compression,0) FROM providers WHERE builtin_id=?", slug).Scan(&skipCompression)
+		}
+	}
+
 	// ── Global Prompt Injection (before compression) ───────────
 	piEnabled := getSettingStrCached("prompt_injection_enabled", "false") == "true"
-	if piEnabled {
+	if piEnabled && skipCompression == 0 {
 		piText := getSettingStrCached("prompt_injection_text", "")
 		piPosition := getSettingStrCached("prompt_injection_position", "prepend")
 		if piText != "" {
@@ -186,7 +196,7 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 
 	// ── Compression Mode Injection ───────────────────────────────
 	compressionMode := getSettingStrCached("compression_mode", "")
-	if compressionMode != "" {
+	if compressionMode != "" && skipCompression == 0 {
 		// Support per-mode levels: "caveman:ultra,ponytail:full"
 		modes := strings.Split(compressionMode, ",")
 		var combinedText string
@@ -240,7 +250,7 @@ CAVEMAN VOICE: Drop articles (a/an/the), filler (just/really/basically/actually/
 	var compressionTokensBefore, compressionTokensSaved int
 	compressLevel := resolveCompressionLevel()
 	log.Printf("[compression] resolved level=%s (off=%v)", compressLevel.String(), compressLevel == compression.LevelOff)
-	if compressLevel != compression.LevelOff {
+	if compressLevel != compression.LevelOff && skipCompression == 0 {
 		if msgs, ok := rawBody["messages"].([]interface{}); ok {
 			var msgMaps []map[string]interface{}
 			for _, m := range msgs {
@@ -1482,10 +1492,15 @@ func handleAnthropicNativeFromOpenAI(w http.ResponseWriter, r *http.Request,
 			}
 			continue
 		}
-		anthropicMessages = append(anthropicMessages, map[string]interface{}{
+		anthMsg := map[string]interface{}{
 			"role":    role,
 			"content": content,
-		})
+		}
+		// Preserve cache_control markers from Hermes (for prompt caching)
+		if cc, ok := msg["cache_control"]; ok {
+			anthMsg["cache_control"] = cc
+		}
+		anthropicMessages = append(anthropicMessages, anthMsg)
 	}
 
 	// Build Anthropic request body
@@ -1495,7 +1510,20 @@ func handleAnthropicNativeFromOpenAI(w http.ResponseWriter, r *http.Request,
 		"max_tokens": 4096,
 	}
 	if systemMsg != "" {
-		anthBody["system"] = systemMsg
+		// Check if system message has cache_control marker
+		sysContent := systemMsg
+		for _, m := range messages {
+			if msg, ok := m.(map[string]interface{}); ok {
+				if role, _ := msg["role"].(string); role == "system" {
+					if cc, ok := msg["cache_control"]; ok {
+						// Anthropic format: system as content block with cache_control
+						sysContent = systemMsg // keep as string for now
+						_ = cc // TODO: convert to Anthropic content block format
+					}
+				}
+			}
+		}
+		anthBody["system"] = sysContent
 	}
 	if maxTok, ok := rawBody["max_tokens"].(float64); ok && maxTok > 0 {
 		anthBody["max_tokens"] = int(maxTok)
