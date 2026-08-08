@@ -7,6 +7,9 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
+	"strings"
+	"time"
 
 	"github.com/dolvin/paap/internal/db"
 )
@@ -63,6 +66,18 @@ func mcpToolsList() []mcpToolDef {
 			},
 		},
 		{
+			Name:        "web_search",
+			Description: "Search the web using Firecrawl. Returns titles, URLs, and snippets. USE WHEN: user asks to search, look up, find information, research a topic, check current events, verify facts, or needs any information not in your training data.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"query":  map[string]interface{}{"type": "string", "description": "Search query. Be specific for better results. E.g. 'Go 1.24 release notes' not 'Go'"},
+					"limit":  map[string]interface{}{"type": "integer", "description": "Number of results (1-10, default 5)", "default": 5},
+				},
+				"required": []string{"query"},
+			},
+		},
+		{
 			Name:        "analyze_image",
 			Description: "Analyze and describe an image using a vision model. Returns detailed textual description. USE WHEN: user shares an image URL and asks 'what is this?', 'describe this', needs OCR, wants to understand content, or asks questions about a visual.",
 			InputSchema: map[string]interface{}{
@@ -83,6 +98,8 @@ func mcpToolCall(name string, args json.RawMessage) interface{} {
 		return mcpHandleGenerateImage(args)
 	case "text_to_speech":
 		return mcpHandleTextToSpeech(args)
+	case "web_search":
+		return mcpHandleWebSearch(args)
 	case "analyze_image":
 		return mcpHandleAnalyzeImage(args)
 	default:
@@ -110,6 +127,94 @@ func mcpHandleGenerateImage(args json.RawMessage) interface{} {
 	}
 
 	return mcpToolResult(imageURL)
+}
+
+// ── web_search ────────────────────────────────────────────────
+
+func mcpHandleWebSearch(args json.RawMessage) interface{} {
+	var params struct {
+		Query string `json:"query"`
+		Limit int    `json:"limit"`
+	}
+	if err := json.Unmarshal(args, &params); err != nil {
+		return mcpToolError("invalid arguments: " + err.Error())
+	}
+	if params.Query == "" {
+		return mcpToolError("query is required")
+	}
+	if params.Limit <= 0 || params.Limit > 10 {
+		params.Limit = 5
+	}
+
+	// Get Firecrawl API key from providers or env
+	apiKey := os.Getenv("FIRECRAWL_API_KEY")
+	if apiKey == "" {
+		// Try from DB
+		db.DB.QueryRow("SELECT key_value FROM api_keys WHERE provider_id='builtin-firecrawl' AND is_active=1 LIMIT 1").Scan(&apiKey)
+	}
+	if apiKey == "" {
+		return mcpToolError("Firecrawl API key not configured. Set FIRECRAWL_API_KEY env var or add API key for 'builtin-firecrawl' provider.")
+	}
+
+	// Call Firecrawl search API
+	searchBody := map[string]interface{}{
+		"query": params.Query,
+		"limit": params.Limit,
+	}
+	bodyBytes, _ := json.Marshal(searchBody)
+
+	req, err := http.NewRequest("POST", "https://api.firecrawl.dev/v1/search", bytes.NewReader(bodyBytes))
+	if err != nil {
+		return mcpToolError("failed to create request: " + err.Error())
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	if err != nil {
+		return mcpToolError("search failed: " + err.Error())
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		return mcpToolError(fmt.Sprintf("Firecrawl returned %d: %s", resp.StatusCode, truncateStr(string(respBody), 200)))
+	}
+
+	// Parse response
+	var result struct {
+		Success bool `json:"success"`
+		Data    []struct {
+			URL         string `json:"url"`
+			Title       string `json:"title"`
+			Description string `json:"description"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return mcpToolError("failed to parse response: " + err.Error())
+	}
+
+	if !result.Success || len(result.Data) == 0 {
+		return mcpToolResult("No results found for: " + params.Query)
+	}
+
+	// Format results
+	var sb strings.Builder
+	for i, r := range result.Data {
+		sb.WriteString(fmt.Sprintf("%d. %s\n   %s\n", i+1, r.Title, r.URL))
+		if r.Description != "" {
+			// Clean up markdown/images from description
+			desc := r.Description
+			desc = strings.ReplaceAll(desc, "\n", " ")
+			if len(desc) > 300 {
+				desc = desc[:300] + "..."
+			}
+			sb.WriteString(fmt.Sprintf("   %s\n", desc))
+		}
+		sb.WriteString("\n")
+	}
+
+	return mcpToolResult(sb.String())
 }
 
 // ── text_to_speech ────────────────────────────────────────────
