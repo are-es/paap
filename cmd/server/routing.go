@@ -263,6 +263,7 @@ CAVEMAN VOICE: Drop articles (a/an/the), filler (just/really/basically/actually/
 			// Store for logging later
 			compressionTokensBefore = totalOrigBytes / 4
 			compressionTokensSaved = totalSavedBytes / 4
+			addCompressionStats(int64(compressionTokensBefore), int64(compressionTokensSaved))
 			rawBody["messages"] = func() []interface{} {
 				out := make([]interface{}, len(msgMaps))
 				for i, m := range msgMaps {

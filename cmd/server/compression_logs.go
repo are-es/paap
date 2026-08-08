@@ -169,7 +169,16 @@ func clearCompressionLogsHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// compressionSummaryHandler returns aggregated before/after tokens from logs table.
+// Session-level compression stats (in-memory, resets on restart)
+var sessionBefore, sessionSaved int64
+
+// addCompressionStats accumulates compression savings for the current session.
+func addCompressionStats(beforeTokens, savedTokens int64) {
+	sessionBefore += beforeTokens
+	sessionSaved += savedTokens
+}
+
+// compressionSummaryHandler returns session-level compression stats (resets on restart).
 func compressionSummaryHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -182,19 +191,13 @@ func compressionSummaryHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Aggregate all requests with compression savings
-	var totalBefore, totalSaved, totalAfter int64
-	var count int64
-	err := database.QueryRow(`
-		SELECT COUNT(*), COALESCE(SUM(tokens_before), 0), COALESCE(SUM(tokens_saved), 0)
-		FROM logs WHERE tokens_saved > 0
-	`).Scan(&count, &totalBefore, &totalSaved)
-	if err != nil {
-		http.Error(w, "Query error", http.StatusInternalServerError)
-		return
-	}
+	totalBefore := sessionBefore
+	totalSaved := sessionSaved
+	totalAfter := totalBefore - totalSaved
 
-	totalAfter = totalBefore - totalSaved
+	// Count requests with savings from DB (non-critical, just for display)
+	var count int64
+	_ = database.QueryRow(`SELECT COUNT(*) FROM logs WHERE tokens_saved > 0`).Scan(&count)
 
 	resp := map[string]interface{}{
 		"request_count":  count,

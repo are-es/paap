@@ -200,6 +200,8 @@ func clearAll(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	sessionBefore = 0
+	sessionSaved = 0
 	writeJSON(w, map[string]string{"status": "cleared", "message": "All logs and usage data deleted"})
 }
 

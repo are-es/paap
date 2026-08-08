@@ -116,6 +116,8 @@ func clearAllData(w http.ResponseWriter, r *http.Request) {
 	db.DB.Exec("DELETE FROM usage_stats")
 	db.DB.Exec("DELETE FROM race_logs")
 	db.DB.Exec("DELETE FROM compression_logs")
+	sessionBefore = 0
+	sessionSaved = 0
 
 	// Keep providers, keys, models, groups, system_settings, gateway_keys
 
