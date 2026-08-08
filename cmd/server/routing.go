@@ -1625,6 +1625,12 @@ func handleAnthropicNativeFromOpenAI(w http.ResponseWriter, r *http.Request,
 
 		chatID := fmt.Sprintf("chatcmpl-%d", time.Now().UnixNano())
 		roleSent := false
+		isThinking := false
+		currentToolID := ""
+		currentToolName := ""
+		currentToolArgs := ""
+		hasToolCalls := false
+		toolCallIndex := 0
 
 
 		for scanner.Scan() {
@@ -1666,12 +1672,60 @@ func handleAnthropicNativeFromOpenAI(w http.ResponseWriter, r *http.Request,
 						tokensOut = int64(out)
 					}
 				}
-			case "content_block_delta":
-				if delta, ok := ev["delta"].(map[string]interface{}); ok {
-					if t, ok := delta["type"].(string); ok && t == "text_delta" {
-						content, _ = delta["text"].(string)
+			case "content_block_start":
+				if cb, ok := ev["content_block"].(map[string]interface{}); ok {
+					cbType, _ := cb["type"].(string)
+					if cbType == "thinking" {
+						isThinking = true
+					} else if cbType == "tool_use" {
+						currentToolID, _ = cb["id"].(string)
+						currentToolName, _ = cb["name"].(string)
+						currentToolArgs = ""
+						hasToolCalls = true
 					}
 				}
+			case "content_block_delta":
+				if delta, ok := ev["delta"].(map[string]interface{}); ok {
+					t, _ := delta["type"].(string)
+					if t == "text_delta" && !isThinking {
+						content, _ = delta["text"].(string)
+					} else if t == "input_json_delta" {
+						if partial, ok := delta["partial_json"].(string); ok {
+							currentToolArgs += partial
+						}
+					}
+				}
+			case "content_block_stop":
+				if currentToolID != "" {
+					openaiChunk := map[string]interface{}{
+						"id":      chatID,
+						"object":  "chat.completion.chunk",
+						"created": time.Now().Unix(),
+						"model":   modelID,
+						"choices": []map[string]interface{}{{
+							"index": 0,
+							"delta": map[string]interface{}{
+								"tool_calls": []map[string]interface{}{{
+									"index": toolCallIndex,
+									"id":   currentToolID,
+									"type": "function",
+									"function": map[string]interface{}{
+										"name":      currentToolName,
+										"arguments": currentToolArgs,
+									},
+								}},
+							},
+						}},
+					}
+					b, _ := json.Marshal(openaiChunk)
+					fmt.Fprintf(w, "data: %s\n\n", b)
+					if canFlush { flusher.Flush() }
+					toolCallIndex++
+					currentToolID = ""
+					currentToolName = ""
+					currentToolArgs = ""
+				}
+				isThinking = false
 			case "message_stop":
 				openaiChunk := map[string]interface{}{
 					"id":      chatID,
@@ -1681,7 +1735,7 @@ func handleAnthropicNativeFromOpenAI(w http.ResponseWriter, r *http.Request,
 					"choices": []map[string]interface{}{{
 						"index":         0,
 						"delta":         map[string]interface{}{},
-						"finish_reason": "stop",
+						"finish_reason": func() string { if hasToolCalls { return "tool_calls" }; return "stop" }(),
 					}},
 				}
 				b, _ := json.Marshal(openaiChunk)
@@ -1739,11 +1793,32 @@ func handleAnthropicNativeFromOpenAI(w http.ResponseWriter, r *http.Request,
 	}
 
 	var textContent string
+	var toolCalls []map[string]interface{}
+	toolCallIndex := 0
 	if content, ok := anthResp["content"].([]interface{}); ok {
 		for _, block := range content {
-			if b, ok := block.(map[string]interface{}); ok && b["type"] == "text" {
+			b, ok := block.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			switch b["type"] {
+			case "text":
 				textContent, _ = b["text"].(string)
-				break
+			case "tool_use":
+				toolID, _ := b["id"].(string)
+				toolName, _ := b["name"].(string)
+				inputMap, _ := b["input"].(map[string]interface{})
+				inputJSON, _ := json.Marshal(inputMap)
+				toolCalls = append(toolCalls, map[string]interface{}{
+					"id":   toolID,
+					"type": "function",
+					"function": map[string]interface{}{
+						"name":      toolName,
+						"arguments": string(inputJSON),
+					},
+				})
+				_ = toolCallIndex
+				toolCallIndex++
 			}
 		}
 	}
@@ -1773,7 +1848,13 @@ func handleAnthropicNativeFromOpenAI(w http.ResponseWriter, r *http.Request,
 				"role":    "assistant",
 				"content": textContent,
 			},
-			"finish_reason": "stop",
+			"finish_reason": func() string {
+				sr, _ := anthResp["stop_reason"].(string)
+				if sr == "tool_use" {
+					return "tool_calls"
+				}
+				return "stop"
+			}(),
 		}},
 	}
 	if usage != nil {
