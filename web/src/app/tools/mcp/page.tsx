@@ -268,23 +268,25 @@ export default function MCPToolsPage() {
           </div>
         </div>
         {/* Web Search Card */}
-        <div className="border border-border rounded-xl bg-card p-4">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center">
-                <Search className="w-4 h-4 text-blue-500" />
+        <Link href="/tools/mcp/web-search" className="block">
+          <div className="border border-border rounded-xl bg-card p-4 hover:border-primary/50 transition-colors cursor-pointer">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center">
+                  <Search className="w-4 h-4 text-blue-500" />
+                </div>
+                <span className="text-sm font-medium">Web Search</span>
               </div>
-              <span className="text-sm font-medium">Web Search</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-neon-green/10 text-neon-green">
+                Configure →
+              </span>
             </div>
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-neon-green/10 text-neon-green">
-              Firecrawl
-            </span>
+            <p className="text-xs text-muted-foreground">
+              Search the web via DuckDuckGo, Firecrawl, Brave, or SearXNG.
+              Auto-fallback: tries providers in order. Click to configure.
+            </p>
           </div>
-          <p className="text-xs text-muted-foreground">
-            Search the web via Firecrawl API. Returns titles, URLs, and snippets.
-            Agents can research topics, verify facts, and find current information.
-          </p>
-        </div>
+        </Link>
 
         {/* Vision Analysis Card */}
         <div className="border border-border rounded-xl bg-card p-4">

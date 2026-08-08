@@ -7,7 +7,9 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -131,6 +133,184 @@ func mcpHandleGenerateImage(args json.RawMessage) interface{} {
 
 // ── web_search ────────────────────────────────────────────────
 
+// SearchResult represents a single search result
+type SearchResult struct {
+	Title   string
+	URL     string
+	Snippet string
+}
+
+// searchFirecrawl searches via Firecrawl API
+func searchFirecrawl(query string, limit int, apiKey string) ([]SearchResult, error) {
+	body, _ := json.Marshal(map[string]interface{}{"query": query, "limit": limit})
+	req, err := http.NewRequest("POST", "https://api.firecrawl.dev/v1/search", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("firecrawl %d: %s", resp.StatusCode, truncateStr(string(respBody), 100))
+	}
+
+	var result struct {
+		Success bool `json:"success"`
+		Data    []struct {
+			URL         string `json:"url"`
+			Title       string `json:"title"`
+			Description string `json:"description"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, err
+	}
+	if !result.Success || len(result.Data) == 0 {
+		return nil, fmt.Errorf("no results")
+	}
+
+	var results []SearchResult
+	for _, r := range result.Data {
+		desc := strings.ReplaceAll(r.Description, "\n", " ")
+		if len(desc) > 300 {
+			desc = desc[:300] + "..."
+		}
+		results = append(results, SearchResult{r.Title, r.URL, desc})
+	}
+	return results, nil
+}
+
+// searchBrave searches via Brave Search API
+func searchBrave(query string, limit int, apiKey string) ([]SearchResult, error) {
+	reqURL := fmt.Sprintf("https://api.search.brave.com/res/v1/web/search?q=%s&count=%d", url.QueryEscape(query), limit)
+	req, err := http.NewRequest("GET", reqURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-Subscription-Token", apiKey)
+
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("brave %d: %s", resp.StatusCode, truncateStr(string(respBody), 100))
+	}
+
+	var result struct {
+		Web struct {
+			Results []struct {
+				URL         string `json:"url"`
+				Title       string `json:"title"`
+				Description string `json:"description"`
+			} `json:"results"`
+		} `json:"web"`
+	}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, err
+	}
+	if len(result.Web.Results) == 0 {
+		return nil, fmt.Errorf("no results")
+	}
+
+	var results []SearchResult
+	for _, r := range result.Web.Results {
+		results = append(results, SearchResult{r.Title, r.URL, r.Description})
+	}
+	return results, nil
+}
+
+// searchDuckDuckGo searches via DuckDuckGo (free, no API key)
+func searchDuckDuckGo(query string, limit int) ([]SearchResult, error) {
+	// Use ddgs Python library via subprocess
+	cmd := fmt.Sprintf("from ddgs import DDGS\nimport json\nresults = DDGS().text('%%s', max_results=%%d)\nprint(json.dumps(results))", query, limit)
+
+	out, err := exec.Command("python3", "-c", cmd).Output()
+	if err != nil {
+		return nil, fmt.Errorf("ddgs failed: %v", err)
+	}
+
+	var ddgResults []struct {
+		Title string `json:"title"`
+		Href  string `json:"href"`
+		Body  string `json:"body"`
+	}
+	if err := json.Unmarshal(out, &ddgResults); err != nil {
+		return nil, fmt.Errorf("ddgs parse error: %v", err)
+	}
+	if len(ddgResults) == 0 {
+		return nil, fmt.Errorf("no results")
+	}
+
+	var results []SearchResult
+	for _, r := range ddgResults {
+		results = append(results, SearchResult{r.Title, r.Href, r.Body})
+	}
+	return results, nil
+}
+
+// searchSearXNG searches via self-hosted SearXNG instance
+func searchSearXNG(query string, limit int, baseURL string) ([]SearchResult, error) {
+	reqURL := fmt.Sprintf("%s/search?q=%s&format=json&pageno=1", strings.TrimRight(baseURL, "/"), url.QueryEscape(query))
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Get(reqURL)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("searxng %d: %s", resp.StatusCode, truncateStr(string(respBody), 100))
+	}
+
+	var result struct {
+		Results []struct {
+			URL     string `json:"url"`
+			Title   string `json:"title"`
+			Content string `json:"content"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, err
+	}
+	if len(result.Results) == 0 {
+		return nil, fmt.Errorf("no results")
+	}
+
+	var results []SearchResult
+	for i, r := range result.Results {
+		if i >= limit {
+			break
+		}
+		results = append(results, SearchResult{r.Title, r.URL, r.Content})
+	}
+	return results, nil
+}
+
+// formatSearchResults formats search results for display
+func formatSearchResults(results []SearchResult) string {
+	var sb strings.Builder
+	for i, r := range results {
+		sb.WriteString(fmt.Sprintf("%d. %s\n   %s\n", i+1, r.Title, r.URL))
+		if r.Snippet != "" {
+			sb.WriteString(fmt.Sprintf("   %s\n", r.Snippet))
+		}
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
 func mcpHandleWebSearch(args json.RawMessage) interface{} {
 	var params struct {
 		Query string `json:"query"`
@@ -146,75 +326,67 @@ func mcpHandleWebSearch(args json.RawMessage) interface{} {
 		params.Limit = 5
 	}
 
-	// Get Firecrawl API key from providers or env
-	apiKey := os.Getenv("FIRECRAWL_API_KEY")
-	if apiKey == "" {
-		// Try from DB
-		db.DB.QueryRow("SELECT key_value FROM api_keys WHERE provider_id='builtin-firecrawl' AND is_active=1 LIMIT 1").Scan(&apiKey)
-	}
-	if apiKey == "" {
-		return mcpToolError("Firecrawl API key not configured. Set FIRECRAWL_API_KEY env var or add API key for 'builtin-firecrawl' provider.")
+	// Get search config from DB
+	mode := getSettingStrCached("search_provider_mode", "auto")
+	override := getSettingStrCached("search_provider", "")
+
+	// Build provider chain
+	var providers []string
+	if mode == "manual" && override != "" {
+		providers = []string{override}
+	} else {
+		// Auto-fallback chain: try configured providers first, DDG as fallback
+		providers = []string{"firecrawl", "brave", "searxng", "duckduckgo"}
 	}
 
-	// Call Firecrawl search API
-	searchBody := map[string]interface{}{
-		"query": params.Query,
-		"limit": params.Limit,
-	}
-	bodyBytes, _ := json.Marshal(searchBody)
+	var lastErr error
+	for _, provider := range providers {
+		var results []SearchResult
+		var err error
 
-	req, err := http.NewRequest("POST", "https://api.firecrawl.dev/v1/search", bytes.NewReader(bodyBytes))
-	if err != nil {
-		return mcpToolError("failed to create request: " + err.Error())
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-
-	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
-	if err != nil {
-		return mcpToolError("search failed: " + err.Error())
-	}
-	defer resp.Body.Close()
-
-	respBody, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 200 {
-		return mcpToolError(fmt.Sprintf("Firecrawl returned %d: %s", resp.StatusCode, truncateStr(string(respBody), 200)))
-	}
-
-	// Parse response
-	var result struct {
-		Success bool `json:"success"`
-		Data    []struct {
-			URL         string `json:"url"`
-			Title       string `json:"title"`
-			Description string `json:"description"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(respBody, &result); err != nil {
-		return mcpToolError("failed to parse response: " + err.Error())
-	}
-
-	if !result.Success || len(result.Data) == 0 {
-		return mcpToolResult("No results found for: " + params.Query)
-	}
-
-	// Format results
-	var sb strings.Builder
-	for i, r := range result.Data {
-		sb.WriteString(fmt.Sprintf("%d. %s\n   %s\n", i+1, r.Title, r.URL))
-		if r.Description != "" {
-			// Clean up markdown/images from description
-			desc := r.Description
-			desc = strings.ReplaceAll(desc, "\n", " ")
-			if len(desc) > 300 {
-				desc = desc[:300] + "..."
+		switch provider {
+		case "firecrawl":
+			key := getSettingStrCached("search_firecrawl_key", "")
+			if key == "" {
+				key = os.Getenv("FIRECRAWL_API_KEY")
 			}
-			sb.WriteString(fmt.Sprintf("   %s\n", desc))
+			if key == "" {
+				continue // skip, no key
+			}
+			results, err = searchFirecrawl(params.Query, params.Limit, key)
+		case "brave":
+			key := getSettingStrCached("search_brave_key", "")
+			if key == "" {
+				continue
+			}
+			results, err = searchBrave(params.Query, params.Limit, key)
+		case "searxng":
+			searxURL := getSettingStrCached("search_searxng_url", "")
+			if searxURL == "" {
+				continue
+			}
+			results, err = searchSearXNG(params.Query, params.Limit, searxURL)
+		case "duckduckgo":
+			results, err = searchDuckDuckGo(params.Query, params.Limit)
+		default:
+			err = fmt.Errorf("unknown provider: %s", provider)
 		}
-		sb.WriteString("\n")
+
+		if err == nil && len(results) > 0 {
+			log.Printf("[PAAP] [MCP] web_search provider=%s query=%q results=%d", provider, params.Query, len(results))
+			return mcpToolResult(formatSearchResults(results))
+		}
+
+		if err != nil {
+			log.Printf("[PAAP] [MCP] web_search provider=%s failed: %v", provider, err)
+			lastErr = err
+		}
 	}
 
-	return mcpToolResult(sb.String())
+	if lastErr != nil {
+		return mcpToolError("all search providers failed: " + lastErr.Error())
+	}
+	return mcpToolResult("No results found for: " + params.Query)
 }
 
 // ── text_to_speech ────────────────────────────────────────────
