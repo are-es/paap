@@ -49,3 +49,5 @@ data/*.db*
 # Graphify output
 graphify-out/
 docs/
+newapi-instances.md
+ARES.md
