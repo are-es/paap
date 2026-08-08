@@ -69,8 +69,8 @@ export function Sidebar() {
   return (
     <aside
       className={cn(
-        "flex flex-col shrink-0 transition-[width] duration-200 ease-in-out",
-        "border-r border-border backdrop-blur-xl bg-sidebar",
+        "flex flex-col shrink-0 h-screen transition-[width] duration-200 ease-in-out",
+        "border-r border-border backdrop-blur-xl bg-sidebar overflow-hidden",
         collapsed ? "w-16" : "w-56"
       )}
       aria-label="Primary sidebar"
@@ -86,7 +86,7 @@ export function Sidebar() {
         />
       </div>
 
-      <nav className="flex-1 px-2 py-3 space-y-0.5">
+      <nav className="flex-1 overflow-y-auto px-2 py-3 space-y-0.5">
         {navItems.map(({ href, label, icon: Icon }) => {
           const active = pathname === href || (href !== "/" && pathname.startsWith(href));
           return (

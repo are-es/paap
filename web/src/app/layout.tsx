@@ -49,7 +49,7 @@ export default function RootLayout({
       suppressHydrationWarning
       className={`${bricolage.variable} ${spaceGrotesk.variable} ${jetbrainsMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex font-sans">
+      <body className="h-screen overflow-hidden flex font-sans">
         <ThemeProvider>
           <LanguageProvider>
             <Providers>
