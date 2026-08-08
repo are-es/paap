@@ -283,6 +283,10 @@ func migrate() error {
 	DB.Exec("ALTER TABLE providers ADD COLUMN supports_anthropic INTEGER DEFAULT 0")
 	DB.Exec("ALTER TABLE logs ADD COLUMN compression_ratio REAL DEFAULT 0.0")
 	DB.Exec("ALTER TABLE logs ADD COLUMN skills_used TEXT DEFAULT '[]'")
+	DB.Exec("ALTER TABLE logs ADD COLUMN tool_used TEXT DEFAULT ''")
+	DB.Exec("ALTER TABLE logs ADD COLUMN original_model TEXT DEFAULT ''")
+	DB.Exec("ALTER TABLE logs ADD COLUMN tokens_before INTEGER DEFAULT 0")
+	DB.Exec("ALTER TABLE logs ADD COLUMN tokens_saved INTEGER DEFAULT 0")
 
 	// === System settings defaults ===
 	DB.Exec(`INSERT OR IGNORE INTO system_settings (key, value) VALUES ('race_apikeys', '10')`)
@@ -292,9 +296,7 @@ func migrate() error {
 	DB.Exec(`INSERT OR IGNORE INTO system_settings (key, value) VALUES ('prompt_injection_enabled', 'false')`)
 	DB.Exec(`INSERT OR IGNORE INTO system_settings (key, value) VALUES ('prompt_injection_text', '')`)
 	DB.Exec(`INSERT OR IGNORE INTO system_settings (key, value) VALUES ('prompt_injection_position', 'prepend')`)
-	DB.Exec(`INSERT OR IGNORE INTO system_settings (key, value) VALUES ('headroom_enabled', 'false')`)
-	DB.Exec(`INSERT OR IGNORE INTO system_settings (key, value) VALUES ('headroom_url', 'http://127.0.0.1:8787')`)
-	DB.Exec(`INSERT OR IGNORE INTO system_settings (key, value) VALUES ('headroom_timeout_ms', '15000')`)
+	DB.Exec(`INSERT OR IGNORE INTO system_settings (key, value) VALUES ('rtk_enabled', 'true')`)
 	// === Vision Tool settings ===
 	DB.Exec(`INSERT OR IGNORE INTO system_settings (key, value) VALUES ('vision_enabled', 'false')`)
 	DB.Exec(`INSERT OR IGNORE INTO system_settings (key, value) VALUES ('vision_model', '')`)

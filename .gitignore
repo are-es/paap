@@ -51,4 +51,7 @@ graphify-out/
 docs/
 newapi-instances.md
 ARES.md
-server
+# Compiled server binary at repo root.
+# Leading slash is required — a bare "server" also matches cmd/server/,
+# silently ignoring every new file in the main package.
+/server
