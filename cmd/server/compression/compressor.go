@@ -42,7 +42,7 @@ func levelRoles(level Level) map[string]bool {
 	case LevelLite:
 		return map[string]bool{"tool": true}
 	case LevelMedium:
-		return map[string]bool{"tool": true, "user": true}
+		return map[string]bool{"tool": true, "user": true, "system": true}
 	case LevelHigh:
 		return map[string]bool{"tool": true, "user": true, "system": true}
 	default:
@@ -93,14 +93,14 @@ func CompressRawMessages(messages []map[string]interface{}, level Level, modelNa
 
 		// Role eligibility
 		if role == "assistant" {
-			// Assistant: eligible only outside cutoff, size ≥ 300, max Medium pass
+			// Assistant: eligible only outside cutoff, size ≥ 300
 			if i >= cutoff {
 				continue
 			}
 			if size < 300 {
 				continue
 			}
-			// Mark as assistant for Medium-only pass
+			// Eligible for Medium pass (both Medium and High levels)
 			candidates = append(candidates, candidate{idx: i, msg: msg, size: size})
 			continue
 		}
@@ -139,8 +139,19 @@ func CompressRawMessages(messages []map[string]interface{}, level Level, modelNa
 			compressedContent = compressLite(content, cfg)
 
 		case LevelMedium:
-			// Medium: structural (JSON minify, tabular, dedup)
-			compressedContent = compressMedium(content, cfg)
+			// Medium: tiered thresholds
+			if size < 200 {
+				// 50-200 bytes: Lite pass only (reuse Lite logic)
+				compressedContent = compressLite(content, cfg)
+			} else {
+				// ≥200 bytes: full Medium pipeline
+				if role == "assistant" {
+					// Assistant: max Bloat Offload (no FlintChipper/BM25)
+					compressedContent = compressMediumAssistant(content, cfg)
+				} else {
+					compressedContent = compressMedium(content, cfg)
+				}
+			}
 
 		case LevelHigh:
 			// High: full pipeline
@@ -149,7 +160,7 @@ func CompressRawMessages(messages []map[string]interface{}, level Level, modelNa
 				compressedContent = compressMedium(content, cfg)
 			} else {
 				// Tool/User/System: full pipeline
-				compressedContent = compressHigh(content, cfg)
+				compressedContent = compressHigh(content, cfg, role)
 			}
 		}
 
@@ -220,8 +231,34 @@ func compressMedium(content string, cfg levelConfig) string {
 	return strings.TrimSpace(compressed)
 }
 
+// compressMediumAssistant: Medium pass for assistant messages (stop at Bloat Offload)
+// No FlintChipper, BM25, Pattern Collapse, Code Dedup, List Compaction, Cross-msg Dedup
+func compressMediumAssistant(content string, cfg levelConfig) string {
+	// Phase 1: safe transforms
+	if cfg.RunANSI {
+		content = StripAnsi(content)
+	}
+	if cfg.RunBlankCollapse {
+		content = CollapseBlanks(content)
+	}
+
+	// Phase 2: Headroom reformat (lossless)
+	contentType := DetectContentType(content)
+	reformatted := phase1Reformat(content, contentType)
+
+	// Phase 3: Headroom bloat offload (lossy)
+	offloaded := phase2Offload(reformatted, contentType, 0.7) // Keep 70%
+
+	// Phase 4: cleanup
+	if cfg.RunBlankCollapse {
+		offloaded = CollapseBlanks(offloaded)
+	}
+
+	return strings.TrimSpace(offloaded)
+}
+
 // compressHigh: full pipeline (Headroom + Caveman + BM25 + new strategies)
-func compressHigh(content string, cfg levelConfig) string {
+func compressHigh(content string, cfg levelConfig, role ...string) string {
 	// Step 1: Threshold gate (size-based)
 	size := len(content)
 	if size < 50 {
@@ -261,7 +298,13 @@ func compressHigh(content string, cfg levelConfig) string {
 	}
 
 	// Step 9: Reasoning trim (for assistant messages)
-	// Note: this is handled in the caller, not here
+	// Keep conclusion only, discard reasoning process
+	if len(role) > 0 && role[0] == "assistant" {
+		trimmed := trimReasoning(compacted)
+		if len(trimmed) < len(compacted) {
+			compacted = trimmed
+		}
+	}
 
 	// Step 10: BM25 extractive
 	if cfg.RunBM25 {
