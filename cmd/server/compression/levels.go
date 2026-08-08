@@ -6,11 +6,11 @@ type Level int
 const (
 	// LevelOff disables compression entirely.
 	LevelOff Level = iota
-	// LevelLite: Caveman only. ANSI strip, blank collapse, FlintChipper, prose filter.
+	// LevelLite: ANSI strip, whitespace collapse, dedup identical lines.
 	LevelLite
-	// LevelMedium: Headroom only. Content detection, 2-phase pipeline (reformat + bloat offload).
+	// LevelMedium: structural (JSON minify, tabular, dedup) + Headroom.
 	LevelMedium
-	// LevelHigh: Both. Chunk-based, Caveman + Headroom + BM25 extractive.
+	// LevelHigh: full pipeline (Headroom + Caveman + BM25 + new strategies).
 	LevelHigh
 )
 
@@ -79,24 +79,19 @@ var levelConfigs = map[Level]levelConfig{
 		MinCompressSize: 0,
 	},
 	LevelLite: {
-		// Caveman only: safe transforms + FlintChipper + prose filter
-		HeadLines:        30,
-		TailLines:        15,
-		MaxLines:         100,
+		// ANSI strip, whitespace collapse, dedup
 		RunANSI:          true,
 		RunBlankCollapse: true,
-		RunFlintChipper:  true,
-		RunProseFilter:   true,
-		MinCompressSize:  200,
+		MinCompressSize:  50,
 	},
 	LevelMedium: {
-		// Headroom only: content detection + 2-phase pipeline
+		// Structural: JSON minify, tabular, dedup + Headroom
 		RunANSI:          true,
 		RunBlankCollapse: true,
 		MinCompressSize:  200,
 	},
 	LevelHigh: {
-		// Both: chunk-based, Caveman + Headroom + BM25
+		// Full pipeline: Headroom + Caveman + BM25 + new strategies
 		HeadLines:         60,
 		TailLines:         30,
 		MaxLines:          250,
@@ -109,7 +104,7 @@ var levelConfigs = map[Level]levelConfig{
 		RunStringTruncate: true,
 		RunBM25:           true,
 		BM25TargetRatio:   0.5,
-		MinCompressSize:   200,
+		MinCompressSize:   50,
 	},
 }
 
