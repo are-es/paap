@@ -1621,6 +1621,7 @@ func handleAnthropicNativeFromOpenAI(w http.ResponseWriter, r *http.Request,
 	defer resp.Body.Close()
 
 	var tokensIn, tokensOut int64
+	var cacheReadTokens int64
 
 	log.Printf("[PAAP] [ANTH-RESP] status=%d", resp.StatusCode)
 
@@ -1816,6 +1817,9 @@ func handleAnthropicNativeFromOpenAI(w http.ResponseWriter, r *http.Request,
 					"prompt_tokens":     tokensIn,
 					"completion_tokens": tokensOut,
 					"total_tokens":      tokensIn + tokensOut,
+					"prompt_tokens_details": map[string]interface{}{
+						"cached_tokens": cacheReadTokens,
+					},
 				},
 			}
 			b, _ := json.Marshal(usageChunk)
