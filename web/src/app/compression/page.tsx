@@ -4,7 +4,7 @@ import { useState } from "react";
 import * as React from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type SettingsData } from "@/lib/api";
-import { Zap, Save, ScrollText } from "lucide-react";
+import { Zap, Save } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DocsModal, DocsButton } from "@/components/ui/docs-modal";
 import { useLanguage } from "@/lib/language-context";
@@ -18,11 +18,11 @@ function fmtTokens(tokens: number): string {
 const LEVELS = ["off", "lite", "medium", "high"] as const;
 type Level = (typeof LEVELS)[number];
 
-const LEVEL_META: Record<Level, { label: string; desc: string; color: string }> = {
-  off:    { label: "Off",    desc: "No compression",                        color: "text-muted-foreground" },
-  lite:   { label: "Lite",   desc: "25 tool outputs | ANSI strip + blank collapse",  color: "text-blue-500" },
-  medium: { label: "Medium", desc: "50 tool + user | +line budget +prose +dedup",    color: "text-yellow-500" },
-  high:   { label: "High",   desc: "100 all except assistant | +JSON/XML +BM25",     color: "text-green-500" },
+const LEVEL_META: Record<Level, { label: string; color: string }> = {
+  off:    { label: "Off",    color: "text-muted-foreground" },
+  lite:   { label: "Lite",   color: "text-blue-500" },
+  medium: { label: "Medium", color: "text-yellow-500" },
+  high:   { label: "High",   color: "text-green-500" },
 };
 
 export default function CompressionPage() {
@@ -101,7 +101,6 @@ export default function CompressionPage() {
     queryClient.invalidateQueries({ queryKey: ["settings"] });
   };
 
-
   return (
     <div className="p-6 md:p-8 min-h-full">
       <div className="flex items-center justify-between mb-6">
@@ -141,7 +140,7 @@ export default function CompressionPage() {
           </div>
 
           <p className="text-[11px] text-muted-foreground mb-3">
-            Teks yang di-inject ke setiap request sebelum dikirim ke provider
+            {t("compression_system_prompt_desc")}
           </p>
 
           <textarea
@@ -149,7 +148,7 @@ export default function CompressionPage() {
             onChange={(e) => setInjectionText(e.target.value)}
             rows={6}
             className="w-full px-3 py-2 text-xs rounded border border-input bg-background font-mono focus:outline-none focus:border-primary/50 resize-none mb-3"
-            placeholder="Masukkan teks system prompt..."
+            placeholder={t("compression_system_prompt_placeholder")}
           />
 
           <div className="flex justify-end">
@@ -167,7 +166,7 @@ export default function CompressionPage() {
         <div className="bg-primary/[0.04] border border-primary/15 rounded-lg p-4">
           <div className="flex items-center gap-2 mb-4">
             <Zap className="w-4 h-4 text-muted-foreground" />
-            <span className="text-sm font-medium">Compression Level</span>
+            <span className="text-sm font-medium">{t("compression_level_label")}</span>
           </div>
 
           <div className="grid grid-cols-4 gap-2">
@@ -187,9 +186,6 @@ export default function CompressionPage() {
                 >
                   <span className={cn("text-sm font-bold", active ? meta.color : "text-foreground")}>
                     {meta.label}
-                  </span>
-                  <span className="text-[10px] text-muted-foreground leading-tight">
-                    {meta.desc}
                   </span>
                 </button>
               );
@@ -229,12 +225,12 @@ export default function CompressionPage() {
       <DocsModal
         open={showDocs}
         onClose={() => setShowDocs(false)}
-        title="Compression"
+        title={t("compression_docs_title")}
         sections={[
-          { title: "Overview", content: "Smart Compressor mengkompres message lama sebelum dikirim ke provider. Menghemat token dan biaya. Messages terbaru (6 terakhir) tetap utuh untuk jaga context." },
-          { title: "Levels", content: "Off: tidak ada kompresi. Lite: 10 tool outputs terlama (ANSI strip + blank collapse). Medium: 20 tool + user messages (+line budget +prose filter +log dedup). High: 30 semua kecuali assistant (+JSON/XML compress +aggressive truncation)." },
-          { title: "Yang Dilindungi", content: "Assistant messages TIDAK PERNAH di-compress — jawaban AI tetap murni. Recent messages (6 terakhir) di-skip untuk jaga context percakapan aktif." },
-          { title: "Cara Kerja", content: "Setiap request, compressor ambil N message tertua yang eligible, compress paralel (goroutines), dan log hasilnya. Compression bersifat idempotent — aman dijalankan berulang." },
+          { title: t("compression_docs_overview_title"), content: t("compression_docs_overview_content") },
+          { title: t("compression_docs_levels_title"), content: t("compression_docs_levels_content") },
+          { title: t("compression_docs_features_title"), content: t("compression_docs_features_content") },
+          { title: t("compression_docs_troubleshoot_title"), content: t("compression_docs_troubleshoot_content") },
         ]}
       />
     </div>
