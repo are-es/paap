@@ -2,6 +2,7 @@ package compression
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 )
 
@@ -212,7 +213,7 @@ func offloadLogTruncate(text string) string {
 	tail := lines[len(lines)-10:]
 	omitted := len(lines) - 30
 	result := append(head, "")
-	result = append(result, "[... "+itoa(omitted)+" lines omitted ...]")
+	result = append(result, "[... "+strconv.Itoa(omitted)+" lines omitted ...]")
 	result = append(result, tail...)
 	return strings.Join(result, "\n")
 }
@@ -263,15 +264,4 @@ func offloadDiffStrip(text string) string {
 	return strings.Join(result, "\n")
 }
 
-// Helper: simple int to string (avoid strconv import)
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	result := ""
-	for n > 0 {
-		result = string(rune('0'+n%10)) + result
-		n /= 10
-	}
-	return result
-}
+

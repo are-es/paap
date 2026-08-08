@@ -58,8 +58,6 @@ type levelConfig struct {
 	RunBlankCollapse bool
 	// RunFlintChipper enables line-budget truncation.
 	RunFlintChipper bool
-	// RunStoneTablet enables JSON/XML semantic compression.
-	RunStoneTablet bool
 	// RunProseFilter enables filler-word removal (caveman rules).
 	RunProseFilter bool
 	// RunLogDedup deduplicates repeated log lines.
@@ -98,7 +96,6 @@ var levelConfigs = map[Level]levelConfig{
 		RunANSI:           true,
 		RunBlankCollapse:  true,
 		RunFlintChipper:   true,
-		RunStoneTablet:    true,
 		RunProseFilter:    true,
 		RunLogDedup:       true,
 		RunStringTruncate: true,

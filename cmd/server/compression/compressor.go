@@ -360,24 +360,4 @@ func CompressInterfaceMessages(messages []ChatMessage, level Level, modelName st
 	return results
 }
 
-// isStructuredOutputCompat checks if content looks like structured output (JSON/XML/code).
-func isStructuredOutputCompat(content string) bool {
-	trimmed := strings.TrimSpace(content)
-	if len(trimmed) < 2 {
-		return false
-	}
-	// JSON
-	if (trimmed[0] == '{' && trimmed[len(trimmed)-1] == '}') ||
-		(trimmed[0] == '[' && trimmed[len(trimmed)-1] == ']') {
-		return true
-	}
-	// XML
-	if strings.HasPrefix(trimmed, "<") && strings.HasSuffix(trimmed, ">") {
-		return true
-	}
-	// Code block
-	if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
-		return true
-	}
-	return false
-}
+

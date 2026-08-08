@@ -1,6 +1,7 @@
 package compression
 
 import (
+	"strconv"
 	"strings"
 )
 
@@ -45,7 +46,7 @@ func collapseRepeatedPatterns(content string) string {
 		if len(fileList) > 5 {
 			fileList = fileList[:5]
 		}
-		collapsed := "[explored " + itoa(len(fileRefs)) + " files: " + strings.Join(fileList, ", ") + " — contents omitted]"
+		collapsed := "[explored " + strconv.Itoa(len(fileRefs)) + " files: " + strings.Join(fileList, ", ") + " — contents omitted]"
 		return collapsed
 	}
 
@@ -91,7 +92,7 @@ func dedupCodeBlocks(content string) string {
 		if lastIdx, ok := seen[key]; ok && lastIdx != i {
 			// This is an older version, replace with summary
 			lines := strings.Split(body, "\n")
-			result = append(result, "[code block, "+itoa(len(lines))+" lines, superseded by later revision]")
+			result = append(result, "[code block, "+strconv.Itoa(len(lines))+" lines, superseded by later revision]")
 		} else {
 			result = append(result, b)
 		}
@@ -149,9 +150,9 @@ func parseCodeBlock(block string) (lang, body string) {
 func hashContent(content string) string {
 	// Simple hash: first 100 chars + length
 	if len(content) > 100 {
-		return content[:100] + ":" + itoa(len(content))
+		return content[:100] + ":" + strconv.Itoa(len(content))
 	}
-	return content + ":" + itoa(len(content))
+	return content + ":" + strconv.Itoa(len(content))
 }
 
 // ── List Compaction ──────────────────────────────────────────
@@ -181,7 +182,7 @@ func compactLists(content string) string {
 				// Compact: keep first 5 + ...N more
 				compacted := lines[listStart : listStart+5]
 				remaining := listCount - 5
-				compacted = append(compacted, "..."+itoa(remaining)+" more items")
+				compacted = append(compacted, "..."+strconv.Itoa(remaining)+" more items")
 				result = append(result, compacted...)
 			} else if listStart >= 0 {
 				// Short list, keep as-is
@@ -197,7 +198,7 @@ func compactLists(content string) string {
 	if listStart >= 0 && listCount > 10 {
 		compacted := lines[listStart : listStart+5]
 		remaining := listCount - 5
-		compacted = append(compacted, "..."+itoa(remaining)+" more items")
+		compacted = append(compacted, "..."+strconv.Itoa(remaining)+" more items")
 		result = append(result, compacted...)
 	} else if listStart >= 0 {
 		result = append(result, lines[listStart:]...)
@@ -278,7 +279,7 @@ func dedupCrossMessageFields(content string) string {
 			if statusCount == 1 {
 				result = append(result, line)
 			} else if statusCount == 2 {
-				result = append(result, "...[status:ok repeated "+itoa(statusCount)+"x]")
+				result = append(result, "...[status:ok repeated "+strconv.Itoa(statusCount)+"x]")
 			}
 			// Skip subsequent status:ok lines
 		} else {
