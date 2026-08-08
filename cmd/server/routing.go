@@ -1653,11 +1653,19 @@ func handleAnthropicNativeFromOpenAI(w http.ResponseWriter, r *http.Request,
 
 			switch evType {
 			case "message_start":
+				log.Printf("[PAAP] [ANTH-MSG-START] raw=%s", truncateStr(string(line), 200))
 				if msg, ok := ev["message"].(map[string]interface{}); ok {
 					if u, ok := msg["usage"].(map[string]interface{}); ok {
+						log.Printf("[PAAP] [ANTH-USAGE] usage=%v", u)
+						// Include cached tokens in total for accurate context tracking
+						var inputTok, cachedTok float64
 						if inp, ok := u["input_tokens"].(float64); ok {
-							tokensIn = int64(inp)
+							inputTok = inp
 						}
+						if cached, ok := u["cache_read_input_tokens"].(float64); ok {
+							cachedTok = cached
+						}
+						tokensIn = int64(inputTok + cachedTok)
 					}
 				}
 			case "message_delta":
