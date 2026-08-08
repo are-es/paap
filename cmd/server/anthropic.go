@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dolvin/paap/cmd/server/compression"
 	"github.com/dolvin/paap/internal/db"
 	"github.com/dolvin/paap/internal/translator"
 )
@@ -67,7 +68,7 @@ func anthropicMessagesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Apply headroom compression to tool results in Anthropic format
+	// Compress tool results in Anthropic format
 	messages = compressAnthropicToolResults(messages, modelName)
 	rawBody["messages"] = messages
 
@@ -421,26 +422,29 @@ func handleAnthropicStreaming(w http.ResponseWriter, upstreamResp *http.Response
 	return tokensIn, tokensOut
 }
 
+// anthropicMinCompressSize is the smallest tool_result worth compressing —
+// below this the savings don't cover the CPU cost of the pipeline.
+const anthropicMinCompressSize = 1024
+
 // compressAnthropicToolResults compresses tool results in Anthropic messages
-// using headroom. Anthropic tool results are in role:"user" messages with
-// content containing tool_result blocks. We extract those, convert to OpenAI
-// tool format, run headroom compression, and write back.
+// through the same pipeline the OpenAI path uses (compression.CompressRawMessages),
+// so one `compression_level` setting governs both routes.
 //
-// Deferred: full Anthropic↔OpenAI message translation. Headroom's /v1/compress
-// only speaks OpenAI messages[] shape, so we only compress the tool results
-// (the largest part of most requests) and leave the rest untouched.
+// Anthropic tool results live in role:"user" messages as tool_result blocks. We
+// extract those into OpenAI-shaped role:"tool" messages, compress, and write the
+// result back in place. Only tool results are touched — system prompts, user
+// prose, and assistant turns are left byte-for-byte intact.
 func compressAnthropicToolResults(messages []interface{}, model string) []interface{} {
-	// Early return if headroom is disabled — skip the full scan
-	if getSettingStrCached("headroom_enabled", "false") != "true" {
+	// Early return if compression is off — skip the full scan
+	compressLevel := resolveCompressionLevel()
+	if compressLevel == compression.LevelOff {
 		return messages
 	}
 
 	type toolResult struct {
-		msgIdx    int
-		blockIdx  int
-		content   string
-		isError   bool
-		hasStatus bool
+		msgIdx   int
+		blockIdx int
+		content  string
 	}
 
 	var toolResults []toolResult
@@ -497,8 +501,8 @@ func compressAnthropicToolResults(messages []interface{}, model string) []interf
 			}
 
 			toolContent := builder.String()
-			if len(toolContent) >= headroomMinCompressSize {
-				toolResults = append(toolResults, toolResult{i, j, toolContent, isError, status != ""})
+			if len(toolContent) >= anthropicMinCompressSize {
+				toolResults = append(toolResults, toolResult{i, j, toolContent})
 			}
 		}
 	}
@@ -507,31 +511,43 @@ func compressAnthropicToolResults(messages []interface{}, model string) []interf
 		return messages
 	}
 
-	// Build OpenAI-style tool messages for headroom
+	// Build OpenAI-shaped tool messages for the shared compression pipeline.
+	// Error tool results were already filtered out during extraction above.
 	openAIMessages := make([]map[string]interface{}, len(toolResults))
 	for i, tr := range toolResults {
-		msg := map[string]interface{}{
+		openAIMessages[i] = map[string]interface{}{
 			"role":    "tool",
 			"content": tr.content,
 		}
-		// Propagate is_error/status so headroom skips error traces
-		if tr.isError {
-			msg["is_error"] = true
-		}
-		if tr.hasStatus {
-			msg["status"] = "error"
-		}
-		openAIMessages[i] = msg
 	}
 
-	compressedMessages := CompressWithHeadroom(openAIMessages, model)
+	// CompressRawMessages rewrites msg["content"] in place and returns per-message stats.
+	// ponytail: it also keeps its last recentKeepN(6) entries untouched. On this
+	// synthetic slice that means "the 6 newest tool results stay verbatim", so a
+	// request carrying ≤6 of them compresses nothing — acceptable because those are
+	// the small contexts compression barely helps. Give it a positional slice if
+	// conversation-position recency ever matters more.
+	results := compression.CompressRawMessages(openAIMessages, compressLevel, model)
 
-	// Write compressed content back into Anthropic messages
+	var totalOrigBytes, totalSavedBytes int
+	for _, r := range results {
+		totalOrigBytes += r.OriginalSize
+		if r.Savings > 0 {
+			totalSavedBytes += r.Savings
+			logCompressionEvent("tool", compressLevel.String(), r.OriginalSize, r.CompressedSize)
+		}
+	}
+	if totalSavedBytes == 0 {
+		log.Printf("[compression] anthropic: %d tool result(s), nothing compressed", len(toolResults))
+	}
+	addCompressionStats(int64(totalOrigBytes/4), int64(totalSavedBytes/4))
+
+	// Write compressed content back into the Anthropic messages
 	for i, tr := range toolResults {
-		if i >= len(compressedMessages) {
+		if i >= len(openAIMessages) {
 			continue
 		}
-		compressedContent, _ := compressedMessages[i]["content"].(string)
+		compressedContent, _ := openAIMessages[i]["content"].(string)
 		if compressedContent == "" || len(compressedContent) >= len(tr.content) {
 			continue // phantom or no savings
 		}

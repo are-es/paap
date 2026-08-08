@@ -154,18 +154,8 @@ func settingsHandler(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 400, "invalid json")
 			return
 		}
-		// Detect headroom_enabled toggle before writing
-		var headroomToggleVal *bool
-		if v, ok := body["headroom_enabled"]; ok {
-			b := fmt.Sprintf("%v", v) == "true"
-			headroomToggleVal = &b
-		}
 		for k, v := range body {
 			setSetting(k, fmt.Sprintf("%v", v))
-		}
-		// Apply headroom toggle after settings are persisted
-		if headroomToggleVal != nil {
-			headroomToggle(*headroomToggleVal)
 		}
 		settingsGet(w) // return updated settings
 	default:

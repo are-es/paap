@@ -64,21 +64,7 @@ export interface SettingsData {
   compression_level?: string;
   compress_level?: string;
   compress_custom_strategies?: string;
-  headroom_enabled?: string;
-  headroom_url?: string;
-  headroom_timeout_ms?: string;
   [key: string]: unknown;
-}
-
-export interface HeadroomStatus {
-  enabled: boolean;
-  url: string;
-  reachable: boolean;
-  installed: boolean;
-  /** Present only when the stage cannot run — what is wrong. */
-  hint?: string;
-  /** Present only when the stage cannot run — the command to fix it. */
-  command?: string;
 }
 
 export interface CompressionSkill {
@@ -199,7 +185,6 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     }),
-  headroomStatus: () => fetchApi<HeadroomStatus>("/api/headroom/status"),
 
   // --- Tools ---
   getTools: () => fetchApi<Tool[]>("/api/tools"),
