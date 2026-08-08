@@ -1638,6 +1638,8 @@ func handleAnthropicNativeFromOpenAI(w http.ResponseWriter, r *http.Request,
 				if canFlush {
 					flusher.Flush()
 				}
+				logProxyRequest(providerID, providerName, modelID, keyID, keyName, "", "", 200, int(tokensIn), int(tokensOut), latencyMs, "", nil)
+				log.Printf("[PAAP] [ANTH-STREAM-DONE] provider=%s model=%s tokens_in=%d tokens_out=%d latency=%dms", providerName, modelID, tokensIn, tokensOut, latencyMs)
 				continue
 			}
 
@@ -1650,6 +1652,20 @@ func handleAnthropicNativeFromOpenAI(w http.ResponseWriter, r *http.Request,
 			var content string
 
 			switch evType {
+			case "message_start":
+				if msg, ok := ev["message"].(map[string]interface{}); ok {
+					if u, ok := msg["usage"].(map[string]interface{}); ok {
+						if inp, ok := u["input_tokens"].(float64); ok {
+							tokensIn = int64(inp)
+						}
+					}
+				}
+			case "message_delta":
+				if delta, ok := ev["usage"].(map[string]interface{}); ok {
+					if out, ok := delta["output_tokens"].(float64); ok {
+						tokensOut = int64(out)
+					}
+				}
 			case "content_block_delta":
 				if delta, ok := ev["delta"].(map[string]interface{}); ok {
 					if t, ok := delta["type"].(string); ok && t == "text_delta" {
@@ -1702,6 +1718,13 @@ func handleAnthropicNativeFromOpenAI(w http.ResponseWriter, r *http.Request,
 				flusher.Flush()
 			}
 		}
+		// Send [DONE] sentinel for OpenAI streaming clients
+		fmt.Fprintf(w, "data: [DONE]\n\n")
+		if canFlush {
+			flusher.Flush()
+		}
+		logProxyRequest(providerID, providerName, modelID, keyID, keyName, "", "", 200, int(tokensIn), int(tokensOut), latencyMs, "", nil)
+		log.Printf("[PAAP] [ANTH-STREAM-DONE] provider=%s model=%s tokens_in=%d tokens_out=%d latency=%dms", providerName, modelID, tokensIn, tokensOut, latencyMs)
 		return
 	}
 
