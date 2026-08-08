@@ -13,6 +13,7 @@ export interface Provider {
   model_count?: number;
   round_robin?: boolean;
   round_robin_enabled?: boolean;
+  custom_headers?: string;
   icon?: string;
 }
 
@@ -228,6 +229,7 @@ export const api = {
     name: string;
     base_url: string;
     auth_type: "apikey" | "connection";
+    custom_headers?: string;
   }) =>
     fetchApi<Provider>("/api/providers", {
       method: "POST",
@@ -245,6 +247,13 @@ export const api = {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ enabled }),
+    }),
+
+  updateProvider: (id: number | string, data: Record<string, any>) =>
+    fetchApi<Provider>(`/api/providers/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
     }),
 
   // --- Keys ---

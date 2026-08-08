@@ -225,9 +225,10 @@ func providerList(w http.ResponseWriter, r *http.Request) {
 
 func providerCreate(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name    string `json:"name"`
-		BaseURL string `json:"base_url"`
-		Icon    string `json:"icon"`
+		Name           string `json:"name"`
+		BaseURL        string `json:"base_url"`
+		Icon           string `json:"icon"`
+		CustomHeaders  string `json:"custom_headers"`
 	}
 	if err := parseBody(r, &body); err != nil {
 		writeError(w, 400, "invalid json")
@@ -241,9 +242,13 @@ func providerCreate(w http.ResponseWriter, r *http.Request) {
 	// New providers always go through translator (supports_anthropic=0)
 	// Existing builtin providers with native Anthropic support keep their flag
 	id := genID()
+	customHeaders := body.CustomHeaders
+	if customHeaders == "" {
+		customHeaders = "{}"
+	}
 	_, err := db.DB.Exec(
-		"INSERT INTO providers (id, name, base_url, icon, supports_anthropic) VALUES (?, ?, ?, ?, 0)",
-		id, body.Name, body.BaseURL, body.Icon,
+		"INSERT INTO providers (id, name, base_url, icon, supports_anthropic, custom_headers) VALUES (?, ?, ?, ?, 0, ?)",
+		id, body.Name, body.BaseURL, body.Icon, customHeaders,
 	)
 	if err != nil {
 		writeError(w, 500, err.Error())
@@ -529,14 +534,15 @@ func providerRoutes(w http.ResponseWriter, r *http.Request) {
 }
 
 func providerGet(w http.ResponseWriter, r *http.Request, id string) {
-	var name, baseURL, icon, proxyID, createdAt, providerType, authType, builtinID string
+	var name, baseURL, icon, proxyID, createdAt, providerType, authType, builtinID, customHeaders string
 	var isActive, roundRobin, proxyEnabled, roundRobinEnabled int
 	err := db.DB.QueryRow(
 		`SELECT name, base_url, icon, is_active, round_robin, COALESCE(proxy_id,''), COALESCE(proxy_enabled,0), created_at,
-		COALESCE(provider_type,'custom'), COALESCE(auth_type,'apikey'), COALESCE(builtin_id,''), COALESCE(round_robin_enabled,0)
+		COALESCE(provider_type,'custom'), COALESCE(auth_type,'apikey'), COALESCE(builtin_id,''), COALESCE(round_robin_enabled,0),
+		COALESCE(custom_headers,'{}')
 		FROM providers WHERE id=?`, id,
 	).Scan(&name, &baseURL, &icon, &isActive, &roundRobin, &proxyID, &proxyEnabled, &createdAt,
-		&providerType, &authType, &builtinID, &roundRobinEnabled)
+		&providerType, &authType, &builtinID, &roundRobinEnabled, &customHeaders)
 	if err != nil {
 		writeError(w, 404, "provider not found")
 		return
@@ -564,6 +570,7 @@ func providerGet(w http.ResponseWriter, r *http.Request, id string) {
 		"provider_type": providerType, "auth_type": authType,
 		"builtin_id":          builtinID,
 		"round_robin_enabled": roundRobinEnabled == 1,
+		"custom_headers":      customHeaders,
 		"key_count":           totalKeys,
 		"active_key_count":    activeKeys,
 		"status": func() string {
@@ -577,11 +584,12 @@ func providerGet(w http.ResponseWriter, r *http.Request, id string) {
 
 func providerUpdate(w http.ResponseWriter, r *http.Request, id string) {
 	var body struct {
-		Name       *string `json:"name"`
-		BaseURL    *string `json:"base_url"`
-		Icon       *string `json:"icon"`
-		IsActive   *bool   `json:"is_active"`
-		RoundRobin *bool   `json:"round_robin"`
+		Name           *string `json:"name"`
+		BaseURL        *string `json:"base_url"`
+		Icon           *string `json:"icon"`
+		IsActive       *bool   `json:"is_active"`
+		RoundRobin     *bool   `json:"round_robin"`
+		CustomHeaders  *string `json:"custom_headers"`
 	}
 	if err := parseBody(r, &body); err != nil {
 		writeError(w, 400, "invalid json")
@@ -617,6 +625,10 @@ func providerUpdate(w http.ResponseWriter, r *http.Request, id string) {
 		}
 		sets = append(sets, "round_robin=?")
 		args = append(args, v)
+	}
+	if body.CustomHeaders != nil {
+		sets = append(sets, "custom_headers=?")
+		args = append(args, *body.CustomHeaders)
 	}
 	if len(sets) == 0 {
 		writeError(w, 400, "nothing to update")

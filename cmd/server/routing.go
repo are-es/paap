@@ -429,6 +429,13 @@ CAVEMAN VOICE: Drop articles (a/an/the), filler (just/really/basically/actually/
 	// Set auth headers based on provider
 	setProviderAuth(req, baseURL, keyValue)
 
+	// Apply custom headers from provider config
+	if ch := getCustomHeaders(providerID); ch != nil {
+		for k, v := range ch {
+			req.Header.Set(k, v)
+		}
+	}
+
 	// Use proxy if configured
 	client := sharedHTTPClient
 	var proxyUsed string
@@ -1336,6 +1343,20 @@ func injectSystemPrompt(messages *[]map[string]interface{}, injectPrompt, inject
 			}
 		}
 	}
+}
+
+// getCustomHeaders returns custom headers for a provider from DB.
+func getCustomHeaders(providerID string) map[string]string {
+	var raw string
+	err := db.DB.QueryRow("SELECT COALESCE(custom_headers,'{}') FROM providers WHERE id=?", providerID).Scan(&raw)
+	if err != nil || raw == "" || raw == "{}" {
+		return nil
+	}
+	var headers map[string]string
+	if json.Unmarshal([]byte(raw), &headers) != nil {
+		return nil
+	}
+	return headers
 }
 
 // setProviderAuth sets the appropriate auth headers based on provider

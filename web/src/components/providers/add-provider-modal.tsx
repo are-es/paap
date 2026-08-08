@@ -47,6 +47,7 @@ function inferNameFromUrl(url: string): string {
 export function AddProviderModal({ open, onClose }: AddProviderModalProps) {
   const [name, setName] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
+  const [customHeaderValue, setCustomHeaderValue] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [nameTouched, setNameTouched] = useState(false);
 
@@ -58,6 +59,7 @@ export function AddProviderModal({ open, onClose }: AddProviderModalProps) {
         name: name || inferNameFromUrl(baseUrl) || "Custom Provider",
         base_url: baseUrl || "https://api.example.com",
         auth_type: "apikey",
+        custom_headers: customHeaderValue ? JSON.stringify({"X-Custom-Header": customHeaderValue}) : undefined,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["providers"] });
@@ -72,6 +74,7 @@ export function AddProviderModal({ open, onClose }: AddProviderModalProps) {
   function reset() {
     setName("");
     setBaseUrl("");
+    setCustomHeaderValue("");
     setError(null);
     setNameTouched(false);
   }
@@ -150,6 +153,21 @@ export function AddProviderModal({ open, onClose }: AddProviderModalProps) {
               placeholder="My Custom Provider"
               className="w-full px-3 py-2 text-sm rounded-lg border border-input bg-background focus:outline-none focus:border-neon-cyan/50"
             />
+          </div>
+
+          <div>
+            <label htmlFor="provider-header" className="block text-xs font-medium mb-1.5 text-muted-foreground">
+              Custom Header <span className="text-[10px] opacity-60">(optional)</span>
+            </label>
+            <input
+              id="provider-header"
+              type="text"
+              value={customHeaderValue}
+              onChange={(e) => setCustomHeaderValue(e.target.value)}
+              placeholder="X-Custom-Header value"
+              className="w-full px-3 py-2 text-sm rounded-lg border border-input bg-background font-mono focus:outline-none focus:border-neon-cyan/50"
+            />
+            <p className="text-[10px] text-muted-foreground mt-1">Sent as X-Custom-Header with every request to this provider</p>
           </div>
 
           {error && <p className="text-xs text-neon-magenta">{error}</p>}

@@ -350,8 +350,6 @@ func migrate() error {
 	DB.Exec(`INSERT OR IGNORE INTO providers (id, name, base_url, icon, is_active, round_robin, provider_type, auth_type, builtin_id, round_robin_enabled, supports_anthropic, created_at, updated_at)
 		VALUES ('builtin-ollamacloud', 'OllamaCloud', 'https://api.ollamacloud.ai/v1', 'ollama.svg', 1, 1, 'builtin', 'apikey', 'ollamacloud', 1, 0, `+now+`, `+now+`)`)
 	DB.Exec(`INSERT OR IGNORE INTO providers (id, name, base_url, icon, is_active, round_robin, provider_type, auth_type, builtin_id, round_robin_enabled, supports_anthropic, created_at, updated_at)
-		VALUES ('builtin-runapi', 'RunAPI', 'https://runapi.co/v1', 'runapi.svg', 1, 1, 'builtin', 'apikey', 'runapi', 1, 0, `+now+`, `+now+`)`)
-	DB.Exec(`INSERT OR IGNORE INTO providers (id, name, base_url, icon, is_active, round_robin, provider_type, auth_type, builtin_id, round_robin_enabled, supports_anthropic, created_at, updated_at)
 		VALUES ('builtin-stepfun', 'Stepfun', 'https://api.stepfun.ai/step_plan/v1', 'stepfun.svg', 1, 1, 'builtin', 'apikey', 'stepfun', 1, 0, `+now+`, `+now+`)`)
 	DB.Exec(`INSERT OR IGNORE INTO providers (id, name, base_url, icon, is_active, round_robin, provider_type, auth_type, builtin_id, round_robin_enabled, supports_anthropic, created_at, updated_at)
 		VALUES ('builtin-hcnsec', 'Hcnsec', 'https://api.hcnsec.cn/v1', 'hcnsec.png', 1, 1, 'builtin', 'apikey', 'hcnsec', 1, 0, `+now+`, `+now+`)`)
