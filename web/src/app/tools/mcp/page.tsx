@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useLanguage } from "@/lib/language-context";
-import { ChevronRight, Wand2, Volume2, X, Loader2, Plus } from "lucide-react";
+import { ChevronRight, Wand2, Volume2, Search, Eye, X, Loader2, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DocsModal, DocsButton } from "@/components/ui/docs-modal";
 
@@ -266,6 +266,43 @@ export default function MCPToolsPage() {
               {ttsModel ? t("btn_change") : t("btn_add")}
             </button>
           </div>
+        </div>
+        {/* Web Search Card */}
+        <div className="border border-border rounded-xl bg-card p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center">
+                <Search className="w-4 h-4 text-blue-500" />
+              </div>
+              <span className="text-sm font-medium">Web Search</span>
+            </div>
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-neon-green/10 text-neon-green">
+              Firecrawl
+            </span>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Search the web via Firecrawl API. Returns titles, URLs, and snippets.
+            Agents can research topics, verify facts, and find current information.
+          </p>
+        </div>
+
+        {/* Vision Analysis Card */}
+        <div className="border border-border rounded-xl bg-card p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-purple-500/10 flex items-center justify-center">
+                <Eye className="w-4 h-4 text-purple-500" />
+              </div>
+              <span className="text-sm font-medium">Vision Analysis</span>
+            </div>
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-neon-green/10 text-neon-green">
+              Active
+            </span>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Analyze images using vision models. Returns detailed descriptions.
+            Agents can understand visual content, read text from images, and describe scenes.
+          </p>
         </div>
       </div>
 
