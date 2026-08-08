@@ -15,19 +15,30 @@ import (
 
 // ── Backup & Restore ─────────────────────────────────────────
 
+// backupDatabase streams a consistent snapshot of the database.
+//
+// It must NOT copy paap.db directly: the connection runs in WAL mode, so recent
+// writes live in paap.db-wal and the main file can be a bare 4 KiB header. A raw
+// copy therefore produces a valid-looking SQLite file with no tables in it.
+// VACUUM INTO folds the WAL in and writes one consistent file.
 func backupDatabase(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		writeError(w, 405, "method not allowed")
 		return
 	}
 
-	home, _ := os.UserHomeDir()
-	dbPath := filepath.Join(home, ".paap", "paap.db")
+	// VACUUM INTO requires a path that does not exist yet.
+	snapshot := filepath.Join(os.TempDir(), fmt.Sprintf("paap-snapshot-%d.db", time.Now().UnixNano()))
+	defer os.Remove(snapshot)
 
-	// Read database file
-	dbData, err := os.ReadFile(dbPath)
+	if _, err := db.DB.Exec("VACUUM INTO ?", snapshot); err != nil {
+		writeError(w, 500, "failed to snapshot database: "+err.Error())
+		return
+	}
+
+	dbData, err := os.ReadFile(snapshot)
 	if err != nil {
-		writeError(w, 500, "failed to read database: "+err.Error())
+		writeError(w, 500, "failed to read snapshot: "+err.Error())
 		return
 	}
 
@@ -79,8 +90,7 @@ func restoreDatabase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	home, _ := os.UserHomeDir()
-	dbPath := filepath.Join(home, ".paap", "paap.db")
+	dbPath := filepath.Join(dataDirPath(), "paap.db")
 	backupPath := dbPath + ".bak." + time.Now().Format("20060102-150405")
 
 	// Backup current database
@@ -96,6 +106,12 @@ func restoreDatabase(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "failed to restore database: "+err.Error())
 		return
 	}
+
+	// Drop the stale WAL and shared-memory files. They belong to the database we
+	// just replaced; leaving them behind lets the old committed pages replay over
+	// the restored file on the next open.
+	os.Remove(dbPath + "-wal")
+	os.Remove(dbPath + "-shm")
 
 	writeJSON(w, map[string]interface{}{
 		"status":      "ok",

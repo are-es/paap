@@ -21,9 +21,8 @@ const maxReqLogSize = 1 * 1024 * 1024 // 1MB
 
 func initReqLog() {
 	reqLogOnce.Do(func() {
-		// Log file di ~/.paap/logs/requests.log (biar satu tempat sama paap CLI)
-		home, _ := os.UserHomeDir()
-		dir := filepath.Join(home, ".paap", "logs")
+		// Log file di <data dir>/logs/requests.log (biar satu tempat sama paap CLI)
+		dir := filepath.Join(dataDirPath(), "logs")
 		os.MkdirAll(dir, 0755)
 
 		reqLogPath = filepath.Join(dir, "requests.log")
