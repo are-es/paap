@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -46,15 +47,17 @@ var streamingHTTPClient = &http.Client{
 }
 
 func main() {
-	home, _ := os.UserHomeDir()
-	dataDir := filepath.Join(home, ".paap")
+	dataDir := dataDirPath()
 	port := "9090"
+	// Bind loopback by default — PAAP holds provider credentials and a control
+	// plane. Set PAAP_HOST=0.0.0.0 to expose it deliberately.
+	host := defaultHost
 
 	if p := os.Getenv("PAAP_PORT"); p != "" {
 		port = p
 	}
-	if d := os.Getenv("PAAP_DATA"); d != "" {
-		dataDir = d
+	if h := os.Getenv("PAAP_HOST"); h != "" {
+		host = h
 	}
 
 	log.Printf("PAAP initializing — data: %s", dataDir)
@@ -133,7 +136,6 @@ func main() {
 
 	// ── System ──────────────────────────────────────────────
 	mux.HandleFunc("/api/settings", settingsHandler)
-	mux.HandleFunc("/api/headroom/status", headroomStatus)
 	mux.HandleFunc("/api/compression/logs", compressionLogsHandler)
 	mux.HandleFunc("/api/compression/summary", compressionSummaryHandler)
 	mux.HandleFunc("/api/compression/logs/clear", clearCompressionLogsHandler)
@@ -191,16 +193,114 @@ func main() {
 	// Start background proxy tester
 	go backgroundProxyTest()
 
-	// Auto-start headroom if enabled
-	initHeadroomOnStartup()
+	handler := apiGuard(mux)
 
-	addr := ":" + port
-	log.Printf("PAAP listening on http://localhost%s", addr)
-	log.Printf("  Dashboard : http://localhost%s", addr)
-	log.Printf("  API       : http://localhost%s/v1/chat/completions", addr)
-	if err := http.ListenAndServe(addr, mux); err != nil {
-		log.Fatal(err)
+	// Default: both loopback families. "localhost" resolves to 127.0.0.1 for some
+	// clients and ::1 for others (browsers usually pick ::1), so binding only one
+	// silently breaks the other half.
+	addrs := []string{net.JoinHostPort(host, port)}
+	if host == defaultHost {
+		addrs = append(addrs, net.JoinHostPort("::1", port))
+	} else {
+		log.Printf("WARNING: bound to %s — /api requires a gateway key from non-local addresses", host)
 	}
+
+	var listeners []net.Listener
+	for _, a := range addrs {
+		ln, err := net.Listen("tcp", a)
+		if err != nil {
+			// A host without IPv6 loopback is fine as long as something bound.
+			log.Printf("listen %s: %v", a, err)
+			continue
+		}
+		listeners = append(listeners, ln)
+	}
+	if len(listeners) == 0 {
+		log.Fatalf("could not bind any address on port %s", port)
+	}
+
+	log.Printf("PAAP listening on %s", strings.Join(addrs, ", "))
+	log.Printf("  Dashboard : http://localhost:%s", port)
+	log.Printf("  API       : http://localhost:%s/v1/chat/completions", port)
+
+	errc := make(chan error, len(listeners))
+	for _, ln := range listeners {
+		go func(l net.Listener) { errc <- http.Serve(l, handler) }(ln)
+	}
+	log.Fatal(<-errc)
+}
+
+// dataDirPath resolves the PAAP data directory: $PAAP_DATA, else ~/.paap.
+// Single source of truth — backup, request logs and the database must all land
+// in the same place or a restore silently writes to a database nobody is using.
+func dataDirPath() string {
+	if d := os.Getenv("PAAP_DATA"); d != "" {
+		return d
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".paap")
+}
+
+// defaultHost is the IPv4 loopback; ::1 is added alongside it at listen time.
+const defaultHost = "127.0.0.1"
+
+// isLoopback reports whether the request came from the local machine.
+func isLoopback(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// apiGuard protects the /api/* control plane. Those endpoints read gateway keys,
+// dump and overwrite the database, and stop the process — none of it should be
+// reachable by an unauthenticated caller.
+//
+// Loopback callers pass without a key so the bundled dashboard keeps working;
+// everyone else must present a gateway key. A cross-origin Origin header is
+// rejected outright: without that check, any website the user visits could drive
+// their browser into this server and inherit the loopback exemption.
+func apiGuard(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/api/health" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// CSRF: a browser sends Origin on cross-site requests. Same-origin and
+		// non-browser clients (curl, scripts) either match Host or send nothing.
+		if origin := r.Header.Get("Origin"); origin != "" {
+			u, err := url.Parse(origin)
+			if err != nil || u.Host != r.Host {
+				writeError(w, 403, "cross-origin request rejected")
+				return
+			}
+		}
+
+		if isLoopback(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		if !validGatewayKey(r.Header.Get("Authorization")) {
+			writeError(w, 401, "unauthorized: /api requires a gateway key from a non-local address")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// validGatewayKey reports whether an Authorization header carries an active gateway key.
+func validGatewayKey(authHeader string) bool {
+	parts := strings.SplitN(authHeader, " ", 2)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+		return false
+	}
+	var keyID string
+	err := db.DB.QueryRow("SELECT id FROM gateway_keys WHERE key=? AND is_active=1", parts[1]).Scan(&keyID)
+	return err == nil
 }
 
 func methodRouter(routes map[string]http.HandlerFunc) http.HandlerFunc {
@@ -304,6 +404,10 @@ func systemShutdown(w http.ResponseWriter, r *http.Request) {
 }
 
 func systemRestart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		writeError(w, 405, "method not allowed")
+		return
+	}
 	writeJSON(w, map[string]string{"status": "restarting", "message": "Server is restarting..."})
 	log.Println("[PAAP] Restart requested via API")
 	go func() {

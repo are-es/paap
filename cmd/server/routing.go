@@ -80,12 +80,9 @@ func autoDisableKey(keyID, keyName string, statusCode int, errBody string) bool 
 func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Skip auth for local connections if configured
-		if getSettingStrCached("skip_auth_local", "false") == "true" {
-			remoteAddr := r.RemoteAddr
-			if strings.HasPrefix(remoteAddr, "127.0.0.1:") || strings.HasPrefix(remoteAddr, "[::1]:") || remoteAddr == "::1" {
-				next(w, r)
-				return
-			}
+		if getSettingStrCached("skip_auth_local", "false") == "true" && isLoopback(r) {
+			next(w, r)
+			return
 		}
 
 		// Check if any gateway keys exist
@@ -1433,10 +1430,7 @@ func resolveCompressionLevel() compression.Level {
 
 	// Old settings mapping
 	mode := getSettingStrCached("compression_mode", "")
-	headroomOn := getSettingStrCached("headroom_enabled", "false") == "true"
-	rtkOn := getSettingStrCached("rtk_enabled", "true") == "true"
-
-	if headroomOn || rtkOn {
+	if getSettingStrCached("rtk_enabled", "true") == "true" {
 		return compression.LevelMedium
 	}
 
