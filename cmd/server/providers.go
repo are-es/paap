@@ -807,16 +807,31 @@ func providerTestPrompt(w http.ResponseWriter, r *http.Request, providerID strin
 				}
 			}
 
+			// Check if provider supports Anthropic natively
+			var supAnth int
+			db.DB.QueryRow("SELECT COALESCE(supports_anthropic,0) FROM providers WHERE id=?", providerID).Scan(&supAnth)
+
 			start := time.Now()
-			// Build request — use resolveUpstreamURL for Cloudflare + account_id support
 			upstreamURL := resolveUpstreamURL(baseURL, accountID)
+			if supAnth == 1 {
+				upstreamURL = resolveAnthropicUpstreamURL(baseURL)
+			}
 			isMerlin := strings.Contains(strings.ToLower(baseURL), "getmerlin")
 
 			var reqBody []byte
+			var useAnthropic bool
 			if isMerlin {
 				reqBody, _ = json.Marshal(convertToMerlinBody(map[string]interface{}{
 					"messages": []map[string]string{{"role": "user", "content": body.Prompt}},
 				}, body.ModelID))
+			} else if supAnth == 1 {
+				// Anthropic-native provider — use Anthropic format
+				useAnthropic = true
+				reqBody, _ = json.Marshal(map[string]interface{}{
+					"model":      body.ModelID,
+					"messages":   []map[string]interface{}{{"role": "user", "content": body.Prompt}},
+					"max_tokens": 1000,
+				})
 			} else {
 				reqBody, _ = json.Marshal(map[string]interface{}{
 					"model":      body.ModelID,
@@ -827,9 +842,19 @@ func providerTestPrompt(w http.ResponseWriter, r *http.Request, providerID strin
 
 			req, _ := http.NewRequest("POST", upstreamURL, strings.NewReader(string(reqBody)))
 			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set("Authorization", "Bearer "+keyVal)
-			if strings.Contains(baseURL, "kimchi") {
-				req.Header.Set("User-Agent", "kimchi/0.1.50")
+
+			if useAnthropic {
+				// Anthropic-native: x-api-key + User-Agent for Agent Router
+				req.Header.Set("x-api-key", keyVal)
+				req.Header.Set("anthropic-version", "2023-06-01")
+				if strings.Contains(strings.ToLower(baseURL), "agentrouter") {
+					req.Header.Set("User-Agent", "claude-cli/2.1.223 (external, Claude Code)")
+				}
+			} else {
+				req.Header.Set("Authorization", "Bearer "+keyVal)
+				if strings.Contains(baseURL, "kimchi") {
+					req.Header.Set("User-Agent", "kimchi/0.1.50")
+				}
 			}
 			if isMerlin {
 				req.Header.Set("x-merlin-version", "web-merlin")
@@ -888,6 +913,20 @@ func providerTestPrompt(w http.ResponseWriter, r *http.Request, providerID strin
 						}
 					}
 					result["content"] = strings.Join(textParts, "")
+					result["response"] = raw[:min(len(raw), 500)]
+				} else if useAnthropic {
+					// Parse Anthropic JSON response
+					var parsed map[string]interface{}
+					if json.Unmarshal([]byte(raw), &parsed) == nil {
+						if content, ok := parsed["content"].([]interface{}); ok && len(content) > 0 {
+							if block, ok := content[0].(map[string]interface{}); ok {
+								result["content"] = block["text"]
+							}
+						}
+						if usage, ok := parsed["usage"].(map[string]interface{}); ok {
+							result["usage"] = usage
+						}
+					}
 					result["response"] = raw[:min(len(raw), 500)]
 				} else {
 					// Parse OpenAI JSON response

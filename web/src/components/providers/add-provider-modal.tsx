@@ -30,6 +30,7 @@ function inferNameFromUrl(url: string): string {
       if (host.includes("meta")) return "Meta";
       if (host.includes("deepseek")) return "DeepSeek";
       if (host.includes("runapi")) return "RunAPI";
+      if (host.includes("agentrouter")) return "Agent Router";
       if (host.includes("camel")) return "Camel";
       if (host.includes("apiview")) return "APIView";
       if (host.includes("tokenrouter")) return "TokenRouter";

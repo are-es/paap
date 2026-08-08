@@ -293,6 +293,14 @@ func resolveAnthropicUpstreamURL(baseURL string) string {
 		return base + "/v1/messages"
 	}
 
+	// Agent Router: Anthropic-native, /v1/messages
+	if strings.Contains(lower, "agentrouter") {
+		if strings.HasSuffix(base, "/v1") {
+			return base + "/messages"
+		}
+		return base + "/v1/messages"
+	}
+
 	// OpenRouter: /api/v1/messages
 	if strings.Contains(lower, "openrouter") {
 		return base + "/messages"
@@ -311,6 +319,10 @@ func setAnthropicAuth(req *http.Request, baseURL, keyValue string) {
 	lower := strings.ToLower(baseURL)
 	if strings.Contains(lower, "xiaomi") || strings.Contains(lower, "mimo") {
 		req.Header.Set("api-key", keyValue)
+	} else if strings.Contains(lower, "agentrouter") {
+		// Agent Router: uses x-api-key + Claude Code User-Agent
+		req.Header.Set("x-api-key", keyValue)
+		req.Header.Set("User-Agent", "claude-cli/2.1.223 (external, Claude Code)")
 	} else {
 		// TokenGO, DeepSeek, and others: standard Anthropic x-api-key
 		req.Header.Set("x-api-key", keyValue)
