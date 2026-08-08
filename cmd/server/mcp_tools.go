@@ -39,38 +39,38 @@ func mcpToolsList() []mcpToolDef {
 	return []mcpToolDef{
 		{
 			Name:        "generate_image",
-			Description: "Generate an image from a text prompt using an AI image generation provider.",
+			Description: "Generate an image from a text prompt. Transforms simple descriptions into rich, specific prompts with style direction, composition, and color palette. Returns image URL. USE WHEN: user asks to create/draw/make/design any visual — illustrations, logos, posters, photos, art, diagrams, UI mockups, memes, characters, scenes.",
 			InputSchema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"prompt": map[string]interface{}{"type": "string", "description": "Text description of the image to generate"},
-					"size":   map[string]interface{}{"type": "string", "description": "Image size, e.g. '1024x1024', '512x512'", "default": "1024x1024"},
-					"style":  map[string]interface{}{"type": "string", "description": "Style hint: 'realistic', 'artistic', 'anime'", "default": ""},
+					"prompt": map[string]interface{}{"type": "string", "description": "Text description of the image. Be specific about subject, style, composition, colors, lighting, and mood. Vague prompts produce generic results."},
+					"size":   map[string]interface{}{"type": "string", "description": "Image dimensions: '1024x1024' (square), '1792x1024' (landscape), '1024x1792' (portrait)", "default": "1024x1024"},
+					"style":  map[string]interface{}{"type": "string", "description": "Art direction: 'realistic' (photography), 'artistic' (painting/illustration), 'anime' (manga/comic). Or leave empty for auto-detection.", "default": ""},
 				},
 				"required": []string{"prompt"},
 			},
 		},
 		{
 			Name:        "text_to_speech",
-			Description: "Convert text to speech audio using a TTS provider.",
+			Description: "Convert text to natural-sounding speech audio. Returns audio file URL. USE WHEN: user asks for voice output, audio narration, TTS, 'say this', 'read aloud', or wants to hear pronunciation.",
 			InputSchema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"text":  map[string]interface{}{"type": "string", "description": "Text to convert to speech"},
-					"voice": map[string]interface{}{"type": "string", "description": "Voice name", "default": ""},
-					"model": map[string]interface{}{"type": "string", "description": "TTS model", "default": ""},
+					"text":  map[string]interface{}{"type": "string", "description": "Text to speak. Include punctuation for natural pacing. SSML tags supported for advanced control."},
+					"voice": map[string]interface{}{"type": "string", "description": "Voice name or ID. Varies by provider. Leave empty for default.", "default": ""},
+					"model": map[string]interface{}{"type": "string", "description": "TTS model override. Leave empty for provider default.", "default": ""},
 				},
 				"required": []string{"text"},
 			},
 		},
 		{
 			Name:        "analyze_image",
-			Description: "Analyze an image and describe its contents using a vision model.",
+			Description: "Analyze and describe an image using a vision model. Returns detailed textual description. USE WHEN: user shares an image URL and asks 'what is this?', 'describe this', needs OCR, wants to understand content, or asks questions about a visual.",
 			InputSchema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"image_url": map[string]interface{}{"type": "string", "description": "URL of the image to analyze"},
-					"prompt":    map[string]interface{}{"type": "string", "description": "Optional specific question about the image", "default": "Describe this image in detail."},
+					"image_url": map[string]interface{}{"type": "string", "description": "URL of the image to analyze (http/https). Must be publicly accessible."},
+					"prompt":    map[string]interface{}{"type": "string", "description": "Specific question or instruction about the image. E.g. 'What text is in this image?', 'Describe the mood', 'Count the objects'.", "default": "Describe this image in detail."},
 				},
 				"required": []string{"image_url"},
 			},

@@ -97,6 +97,36 @@ func mcpHandleInitialize(w http.ResponseWriter, req mcpRequest) {
 			"name":    "PAAP",
 			"version": "1.0.0",
 		},
+		"instructions": `You are connected to PAAP — a multimedia proxy gateway.
+
+Available tools:
+- generate_image: Create images from text descriptions. USE THIS when users ask to create, draw, make, or design any visual content (illustrations, logos, posters, photos, art, diagrams, UI mockups).
+- text_to_speech: Convert text to spoken audio. USE THIS when users ask for voice, audio, TTS, or "say this out loud".
+- analyze_image: Describe and analyze images. USE THIS when users share an image URL and ask "what is this?", "describe this", or need image understanding.
+
+RULES FOR IMAGE GENERATION — ANTI-AI-SLOP:
+When calling generate_image, transform the user's request into a prompt that produces DISTINCTIVE, non-generic output. Apply these principles:
+
+1. SPECIFIC > GENERIC: "a cat" → "a battle-scarred ginger tomcat sitting on a rain-soaked Tokyo rooftop at 3am, neon signs reflecting in puddles"
+2. STYLE ANCHORING: Always specify an explicit art direction — editorial illustration, brutalist poster, film noir still, Y2K aesthetic, Japanese woodblock print, Soviet constructivism, analog photography, Risograph print, etc.
+3. COMPOSITION: Mention camera angle, framing, lighting — "shot from below", "bird's eye view", "dramatic side lighting", "flat lay", "Dutch angle"
+4. COLOR PALETTE: Name specific colors or moods — "muted earth tones with one electric cyan accent", "monochrome with selective red", "pastel vaporwave palette"
+5. TEXTURE & MEDIUM: "visible brushstrokes", "grainy film stock", "screen-printed halftone dots", "pencil sketch on kraft paper", "3D rendered with clay material"
+6. NO CLICHES: Avoid "beautiful", "stunning", "detailed", "professional", "high quality", "masterpiece". These add nothing.
+7. CONTEXT: If user says "make it cool" → interpret as specific aesthetic (cyberpunk, brutalist, retro-futurist). Never default to generic "professional" look.
+8. NEGATIVE SPACE: If the image should be minimal, say so. Not everything needs to be "highly detailed".
+
+EXAMPLE TRANSFORMATIONS:
+User: "make me a logo for a coffee shop"
+→ "Minimalist logo mark for specialty coffee roaster, single continuous line drawing of a coffee cherry branch, warm terracotta on cream background, Swiss design influence, clean vector style, no text"
+
+User: "draw a dragon"
+→ "Eastern dragon coiled around a crumbling stone pagoda in a bamboo forest, ink wash painting style with gold leaf accents, misty atmosphere, traditional Chinese shan shui composition, rice paper texture"
+
+User: "create a poster for my app"
+→ "Brutalist tech poster, bold geometric shapes, monospace type, stark black and electric green, deconstructed grid layout, glitch effect on edges, printed on newsprint texture"
+
+OUTPUT: Return the generated image URL directly. Do not describe the image — the user can see it.`,
 	})
 }
 
