@@ -1766,6 +1766,28 @@ func handleAnthropicNativeFromOpenAI(w http.ResponseWriter, r *http.Request,
 				flusher.Flush()
 			}
 		}
+		log.Printf("[PAAP] [ANTH-USAGE-CHECK] tokensIn=%d tokensOut=%d", tokensIn, tokensOut)
+		// Send usage chunk before [DONE] for OpenAI streaming clients
+		// This lets Hermes track context window usage per-session
+		if tokensIn > 0 || tokensOut > 0 {
+			usageChunk := map[string]interface{}{
+				"id":      chatID,
+				"object":  "chat.completion.chunk",
+				"created": time.Now().Unix(),
+				"model":   modelID,
+				"choices": []map[string]interface{}{{}},
+				"usage": map[string]interface{}{
+					"prompt_tokens":     tokensIn,
+					"completion_tokens": tokensOut,
+					"total_tokens":      tokensIn + tokensOut,
+				},
+			}
+			b, _ := json.Marshal(usageChunk)
+			fmt.Fprintf(w, "data: %s\n\n", b)
+			if canFlush {
+				flusher.Flush()
+			}
+		}
 		// Send [DONE] sentinel for OpenAI streaming clients
 		fmt.Fprintf(w, "data: [DONE]\n\n")
 		if canFlush {
