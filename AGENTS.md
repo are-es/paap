@@ -41,22 +41,41 @@ gofmt -w .            # format Go code
 
 ## Smart Compressor
 
-Unified token compression. Compresses old messages in history before sending to provider.
+Unified token compression. Compresses old messages in history before sending to provider. Content-aware routing detects content type and dispatches to optimal compressor.
 
 ### Levels
 
 | Level | Batch | Roles | Strategies |
 |---|---|---|---|
-| **Off** | — | — | No compression |
-| **Lite** | 10 messages | tool outputs | ANSI strip, blank collapse |
-| **Medium** | 20 messages | tool + user | +line budget, +prose filter, +log dedup |
-| **High** | 30 messages | tool + user + system | +JSON/XML compress, +aggressive trunc |
+| **Off** | — | — | No compression. Auto-injects prompt for cache mode |
+| **Lite** | 25 messages | tool outputs | ANSI strip, blank collapse, line dedup |
+| **Medium** | 50 messages | tool + user + system | +content-type detection, +Headroom reformat (JSON minify, log dedup, diff strip), +bloat offload |
+| **High** | 100 messages | all except assistant | +SmartCrusher (statistical JSON), +cache stability, +pattern collapse, +code block dedup, +list compaction, +BM25 extractive, +cross-msg field dedup |
+
+### High Mode Pipeline
+
+1. Threshold gate (skip < 50 bytes)
+2. Cache stability (skip volatile content: timestamps, UUIDs, request IDs)
+3. Safe transforms (ANSI strip, blank collapse)
+4. Content-type detection (JSON, code, logs, diffs, search, HTML, text)
+5. Headroom reformat (lossless)
+6. SmartCrusher (statistical JSON compression)
+7. Bloat offload (score-based lossy)
+8. Pattern collapse (repeated tool-call sequences)
+9. Code block dedup
+10. List compaction
+11. FlintChipper (head+tail truncation)
+12. Reasoning trim (assistant messages)
+13. BM25 extractive
+14. Cross-message field dedup
+15. Final cleanup
 
 ### Rules
 
 - **Assistant messages** are NEVER compressed — agent replies stay pure
 - **Recent messages** (last 6) are skipped — preserve active context
-- Compression runs in parallel (goroutines) for speed
+- **Volatile content** is skipped — preserve provider cache prefix stability
+- **Compression modes**: Off = auto-inject prompt (cache mode), Lite/Med/High = compress, skip injection
 - Token savings logged to DB with before/after tracking
 - Dashboard: `/compression` page with level selector + live compression logs
 

@@ -158,99 +158,87 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 
 	// max_tokens: pass through from client, don't override
 
-	// ── Per-Provider Cache Mode: skip prefix-modifying ops for stable caching ──
-	var skipCompression int
-	{
-		parts := strings.SplitN(modelName, "/", 2)
-		if len(parts) > 1 {
-			slug := strings.ReplaceAll(parts[0], "-", "")
-				db.DB.QueryRow("SELECT COALESCE(skip_compression,0) FROM providers WHERE builtin_id=?", slug).Scan(&skipCompression)
-		}
-	}
-
-	// ── Global Prompt Injection (before compression) ───────────
-	piEnabled := getSettingStrCached("prompt_injection_enabled", "false") == "true"
-	if piEnabled && skipCompression == 0 {
-		piText := getSettingStrCached("prompt_injection_text", "")
-		piPosition := getSettingStrCached("prompt_injection_position", "prepend")
-		if piText != "" {
-			if msgs, ok := rawBody["messages"].([]interface{}); ok {
-				var msgMaps []map[string]interface{}
-				for _, m := range msgs {
-					if mm, ok := m.(map[string]interface{}); ok {
-						msgMaps = append(msgMaps, mm)
-					}
-				}
-				log.Printf("[PAAP] Injecting prompt injection: enabled=%v position=%s text_len=%d", piEnabled, piPosition, len(piText))
-				injectSystemPrompt(&msgMaps, piText, piPosition)
-				rawBody["messages"] = func() []interface{} {
-					out := make([]interface{}, len(msgMaps))
-					for i, m := range msgMaps {
-						out[i] = m
-					}
-					return out
-				}()
-			}
-		}
-	}
-
-	// ── Compression Mode Injection ───────────────────────────────
-	compressionMode := getSettingStrCached("compression_mode", "")
-	if compressionMode != "" && skipCompression == 0 {
-		// Support per-mode levels: "caveman:ultra,ponytail:full"
-		modes := strings.Split(compressionMode, ",")
-		var combinedText string
-		for _, modeEntry := range modes {
-			modeEntry = strings.TrimSpace(modeEntry)
-			if modeEntry == "" {
-				continue
-			}
-			parts := strings.SplitN(modeEntry, ":", 2)
-			mode := strings.TrimSpace(parts[0])
-			level := "full" // default
-			if len(parts) > 1 {
-				level = strings.TrimSpace(parts[1])
-			}
-			text := getCompressionInstruction(mode, level)
-			if text != "" {
-				// Caveman voice injection — terse style
-				if mode == "caveman" && getSettingStrCached("caveman_voice", "true") == "true" {
-					text += `
-
-CAVEMAN VOICE: Drop articles (a/an/the), filler (just/really/basically/actually/simply), pleasantries, hedging. Fragments OK. Short synonyms (big not extensive, fix not implement a solution for). Code blocks, file paths, commands, errors, URLs: keep exact. No decorative emoji. No narrating tool calls. No status phrases. State the thing, the action, the reason. Then next step.`
-				}
-				if combinedText != "" {
-					combinedText += "\n\n"
-				}
-				combinedText += text
-			}
-		}
-		if combinedText != "" {
-			if msgs, ok := rawBody["messages"].([]interface{}); ok {
-				var msgMaps []map[string]interface{}
-				for _, m := range msgs {
-					if mm, ok := m.(map[string]interface{}); ok {
-						msgMaps = append(msgMaps, mm)
-					}
-				}
-				log.Printf("[PAAP] Compression mode=%s text_len=%d", compressionMode, len(combinedText))
-				injectSystemPrompt(&msgMaps, combinedText, "prepend")
-				rawBody["messages"] = func() []interface{} {
-					out := make([]interface{}, len(msgMaps))
-					for i, m := range msgMaps {
-						out[i] = m
-					}
-					return out
-				}()
-			}
-		}
-	}
-
-	// ── Unified Smart Compression ──────────────────────────
-	var compressionTokensBefore, compressionTokensSaved int
+	// ── Resolve compression level — determines injection vs compression ──
 	compressLevel := resolveCompressionLevel()
+	compressionMode := getSettingStrCached("compression_mode", "")
 	log.Printf("[compression] resolved level=%s (off=%v)", compressLevel.String(), compressLevel == compression.LevelOff)
-	if compressLevel != compression.LevelOff && skipCompression == 0 {
+
+	var compressionTokensBefore, compressionTokensSaved int
+
+	if compressLevel == compression.LevelOff {
+		// ── OFF mode → auto fallback to prompt injection (cache mode) ─────
+		piEnabled := getSettingStrCached("prompt_injection_enabled", "false") == "true"
+		if piEnabled {
+			piText := getSettingStrCached("prompt_injection_text", "")
+			piPosition := getSettingStrCached("prompt_injection_position", "prepend")
+			if piText != "" {
+				if msgs, ok := rawBody["messages"].([]interface{}); ok {
+					var msgMaps []map[string]interface{}
+					for _, m := range msgs {
+						if mm, ok := m.(map[string]interface{}); ok {
+							msgMaps = append(msgMaps, mm)
+						}
+					}
+					log.Printf("[PAAP] OFF→inject PI: position=%s text_len=%d", piPosition, len(piText))
+					injectSystemPrompt(&msgMaps, piText, piPosition)
+					rawBody["messages"] = func() []interface{} {
+						out := make([]interface{}, len(msgMaps))
+						for i, m := range msgMaps {
+							out[i] = m
+						}
+						return out
+					}()
+				}
+			}
+		}
+		if compressionMode != "" {
+			// Support per-mode levels: "caveman:ultra,ponytail:full"
+			modes := strings.Split(compressionMode, ",")
+			var combinedText string
+			for _, modeEntry := range modes {
+				modeEntry = strings.TrimSpace(modeEntry)
+				if modeEntry == "" {
+					continue
+				}
+				parts := strings.SplitN(modeEntry, ":", 2)
+				mode := strings.TrimSpace(parts[0])
+				level := "full"
+				if len(parts) > 1 {
+					level = strings.TrimSpace(parts[1])
+				}
+				text := getCompressionInstruction(mode, level)
+				if text != "" {
+					if mode == "caveman" && getSettingStrCached("caveman_voice", "true") == "true" {
+						text += "\n\nCAVEMAN VOICE: Drop articles (a/an/the), filler (just/really/basically/actually/simply), pleasantries, hedging. Fragments OK. Short synonyms (big not extensive, fix not implement a solution for). Code blocks, file paths, commands, errors, URLs: keep exact. No decorative emoji. No narrating tool calls. No status phrases. State the thing, the action, the reason. Then next step."
+					}
+					if combinedText != "" {
+						combinedText += "\n\n"
+					}
+					combinedText += text
+				}
+			}
+			if combinedText != "" {
+				if msgs, ok := rawBody["messages"].([]interface{}); ok {
+					var msgMaps []map[string]interface{}
+					for _, m := range msgs {
+						if mm, ok := m.(map[string]interface{}); ok {
+							msgMaps = append(msgMaps, mm)
+						}
+					}
+					log.Printf("[PAAP] OFF→inject mode=%s text_len=%d", compressionMode, len(combinedText))
+					injectSystemPrompt(&msgMaps, combinedText, "prepend")
+					rawBody["messages"] = func() []interface{} {
+						out := make([]interface{}, len(msgMaps))
+						for i, m := range msgMaps {
+							out[i] = m
+						}
+						return out
+					}()
+				}
+			}
+		}
+	} else if compressLevel != compression.LevelOff {
+		// ── Lite/Medium/High → compress, NO injection ─────────────────────
 		if msgs, ok := rawBody["messages"].([]interface{}); ok {
 			var msgMaps []map[string]interface{}
 			for _, m := range msgs {
@@ -259,7 +247,6 @@ CAVEMAN VOICE: Drop articles (a/an/the), filler (just/really/basically/actually/
 				}
 			}
 			results := compression.CompressRawMessages(msgMaps, compressLevel, modelName)
-			// Log compression events to DB + track totals
 			var totalOrigBytes, totalSavedBytes int
 			for _, r := range results {
 				totalOrigBytes += r.OriginalSize
@@ -268,10 +255,17 @@ CAVEMAN VOICE: Drop articles (a/an/the), filler (just/really/basically/actually/
 					logCompressionEvent("tool", compressLevel.String(), r.OriginalSize, r.CompressedSize)
 				}
 			}
-			// Store for logging later
 			compressionTokensBefore = totalOrigBytes / 4
 			compressionTokensSaved = totalSavedBytes / 4
 			addCompressionStats(int64(compressionTokensBefore), int64(compressionTokensSaved))
+			log.Printf("[compression] COMPRESSED level=%s msgs=%d orig=%d saved=%d ratio=%.1f%%",
+				compressLevel.String(), len(msgMaps), totalOrigBytes, totalSavedBytes,
+				func() float64 {
+					if totalOrigBytes > 0 {
+						return float64(totalSavedBytes) / float64(totalOrigBytes) * 100
+					}
+					return 0
+				}())
 			rawBody["messages"] = func() []interface{} {
 				out := make([]interface{}, len(msgMaps))
 				for i, m := range msgMaps {

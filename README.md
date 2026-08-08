@@ -84,29 +84,55 @@ Akses dashboard di `http://localhost:9090` setelah server berjalan.
 
 ## Smart Compressor
 
-Unified token compression. Menggantikan sistem lama (RTK, Caveman, Headroom) dengan satu sistem terpadu.
+Unified token compression. Replaces old RTK/Caveman/Headroom systems with one pipeline. Content-aware routing detects content type (JSON, code, logs, diffs, text) and dispatches to the optimal compressor.
 
-### Cara Kerja
+### How It Works
 
-1. Request masuk dengan messages array
-2. Compressor detect message roles (tool/user/system/assistant)
-3. Compress messages tertua (bukan yang terbaru) berdasarkan level
-4. Assistant messages TIDAK pernah di-compress
-5. Recent messages (6 terakhir) di-skip untuk jaga context
+1. Request enters with messages array
+2. Compressor detects message roles (tool/user/system/assistant)
+3. Resolves compression level and eligible messages
+4. Skips assistant messages (never compress agent replies)
+5. Skips recent messages (last 6) to preserve active context
+6. For volatile content (timestamps, UUIDs, request IDs): skips compression to preserve provider cache prefix stability
 
 ### Levels
 
 | Level | Batch | Target | Strategies |
 |---|---|---|---|
-| **Off** | — | — | No compression |
-| **Lite** | 10 msg | tool outputs | ANSI strip, blank collapse |
-| **Medium** | 20 msg | tool + user | +line budget, +prose filter, +log dedup |
-| **High** | 30 msg | all except assistant | +JSON/XML compress, +aggressive trunc |
+| **Off** | — | — | No compression. Auto-injects prompt for cache mode |
+| **Lite** | 25 msg | tool outputs | ANSI strip, blank collapse, line dedup |
+| **Medium** | 50 msg | tool + user + system | +content-type detection, +Headroom reformat (JSON minify, log dedup, diff strip), +bloat offload |
+| **High** | 100 msg | all except assistant | +SmartCrusher (statistical JSON), +cache stability detection, +pattern collapse, +code block dedup, +list compaction, +BM25 extractive, +cross-msg field dedup |
+
+### High Mode Pipeline (15 steps)
+
+1. **Threshold gate** — skip if < 50 bytes
+2. **Cache stability** — skip volatile content (timestamps, UUIDs, request IDs)
+3. **Safe transforms** — ANSI strip, blank collapse
+4. **Content-type detection** — JSON, code, logs, diffs, search, HTML, text
+5. **Headroom reformat** — lossless (JSON minify, log dedup, diff strip)
+6. **SmartCrusher** — statistical JSON compression (field importance, array truncation)
+7. **Bloat offload** — score-based lossy compression
+8. **Pattern collapse** — detect repeated tool-call sequences
+9. **Code block dedup** — keep only latest version of duplicate code blocks
+10. **List compaction** — merge similar list items
+11. **FlintChipper** — head+tail line budget truncation
+12. **Reasoning trim** — keep conclusion only (assistant messages)
+13. **BM25 extractive** — score segments by relevance, keep top ones
+14. **Cross-message field dedup** — deduplicate repeated fields across messages
+15. **Final cleanup** — blank collapse, trim
+
+### Compression Modes
+
+| Mode | Behavior |
+|---|---|
+| **Off** | Auto-injects prompt for cache mode (prompt_injection_enabled + compression_mode) |
+| **Lite/Medium/High** | Compress messages, skip prompt injection (cache-friendly, prefix stays stable) |
 
 ### Monitoring
 
-- Dashboard `/compression` page: live compression logs dengan before/after tokens
-- Logs tampil: timestamp, content type, level, original tokens, compressed tokens, saved %
+- Dashboard `/compression` page: live compression logs with before/after tokens
+- Logs show: timestamp, content type, level, original tokens, compressed tokens, saved %
 - Clear logs via UI button
 
 ## MCP Client Setup

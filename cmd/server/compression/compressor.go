@@ -257,7 +257,7 @@ func compressMediumAssistant(content string, cfg levelConfig) string {
 	return strings.TrimSpace(offloaded)
 }
 
-// compressHigh: full pipeline (Headroom + Caveman + BM25 + new strategies)
+// compressHigh: full pipeline (Headroom + SmartCrusher + Cache Stability + BM25)
 func compressHigh(content string, cfg levelConfig, role ...string) string {
 	// Step 1: Threshold gate (size-based)
 	size := len(content)
@@ -265,7 +265,13 @@ func compressHigh(content string, cfg levelConfig, role ...string) string {
 		return content // SKIP: overhead > saving
 	}
 
-	// Step 2: Safe transforms
+	// Step 2: Cache stability gate — skip compression for volatile content
+	if cfg.RunCacheStability && IsVolatile(content) {
+		log.Printf("[compression] HIGH: skipping volatile content (%d bytes)", size)
+		return content
+	}
+
+	// Step 3: Safe transforms
 	if cfg.RunANSI {
 		content = StripAnsi(content)
 	}
@@ -273,23 +279,33 @@ func compressHigh(content string, cfg levelConfig, role ...string) string {
 		content = CollapseBlanks(content)
 	}
 
-	// Step 3: Headroom reformat (JSON minify, log dedup, diff strip)
+	// Step 4: Content-type detection
 	contentType := DetectContentType(content)
+
+	// Step 5: Headroom reformat (JSON minify, log dedup, diff strip) — lossless
 	reformatted := phase1Reformat(content, contentType)
 
-	// Step 4: Headroom bloat offload (score-based)
+	// Step 6: SmartCrusher (JSON) — statistical compression
+	if cfg.RunSmartCrusher && contentType == ContentJSON {
+		crushed := SmartCrushJSON(reformatted, cfg.SmartCrusherTargetRatio)
+		if len(crushed) < len(reformatted) {
+			reformatted = crushed
+		}
+	}
+
+	// Step 7: Headroom bloat offload (score-based) — lossy
 	offloaded := phase2Offload(reformatted, contentType, 0.5)
 
-	// Step 5: Repeated pattern collapse
+	// Step 8: Repeated pattern collapse
 	collapsed := collapseRepeatedPatterns(offloaded)
 
-	// Step 6: Code block dedup
+	// Step 9: Code block dedup
 	deduped := dedupCodeBlocks(collapsed)
 
-	// Step 7: List compaction
+	// Step 10: List compaction
 	compacted := compactLists(deduped)
 
-	// Step 8: FlintChipper head+tail
+	// Step 11: FlintChipper head+tail
 	if cfg.RunFlintChipper {
 		chipped := FlintChipper(compacted, "")
 		if len(chipped) < len(compacted) {
@@ -297,8 +313,7 @@ func compressHigh(content string, cfg levelConfig, role ...string) string {
 		}
 	}
 
-	// Step 9: Reasoning trim (for assistant messages)
-	// Keep conclusion only, discard reasoning process
+	// Step 12: Reasoning trim (for assistant messages)
 	if len(role) > 0 && role[0] == "assistant" {
 		trimmed := trimReasoning(compacted)
 		if len(trimmed) < len(compacted) {
@@ -306,7 +321,7 @@ func compressHigh(content string, cfg levelConfig, role ...string) string {
 		}
 	}
 
-	// Step 10: BM25 extractive
+	// Step 13: BM25 extractive
 	if cfg.RunBM25 {
 		extracted := BM25Extractive(compacted, cfg.BM25TargetRatio)
 		if len(extracted) < len(compacted) {
@@ -314,10 +329,10 @@ func compressHigh(content string, cfg levelConfig, role ...string) string {
 		}
 	}
 
-	// Step 11: Cross-message field dedup
+	// Step 14: Cross-message field dedup
 	dedupedFields := dedupCrossMessageFields(compacted)
 
-	// Step 12: Final cleanup
+	// Step 15: Final cleanup
 	if cfg.RunBlankCollapse {
 		dedupedFields = CollapseBlanks(dedupedFields)
 	}

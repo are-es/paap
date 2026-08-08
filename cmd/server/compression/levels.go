@@ -70,6 +70,12 @@ type levelConfig struct {
 	BM25TargetRatio float64
 	// MinCompressSize is the minimum byte threshold to trigger compression.
 	MinCompressSize int
+	// RunSmartCrusher enables statistical JSON compression (SmartCrusher-lite).
+	RunSmartCrusher bool
+	// SmartCrusherTargetRatio is the target ratio for SmartCrusher (0.5 = keep 50%).
+	SmartCrusherTargetRatio float64
+	// RunCacheStability enables volatile content detection (skip compression for cache safety).
+	RunCacheStability bool
 }
 
 var levelConfigs = map[Level]levelConfig{
@@ -89,19 +95,22 @@ var levelConfigs = map[Level]levelConfig{
 		MinCompressSize:  200,
 	},
 	LevelHigh: {
-		// Full pipeline: Headroom + Caveman + BM25 + new strategies
-		HeadLines:         60,
-		TailLines:         30,
-		MaxLines:          250,
-		RunANSI:           true,
-		RunBlankCollapse:  true,
-		RunFlintChipper:   true,
-		RunProseFilter:    true,
-		RunLogDedup:       true,
-		RunStringTruncate: true,
-		RunBM25:           true,
-		BM25TargetRatio:   0.5,
-		MinCompressSize:   50,
+		// Full pipeline: Headroom + SmartCrusher + Cache Stability + BM25
+		HeadLines:              60,
+		TailLines:              30,
+		MaxLines:               250,
+		RunANSI:                true,
+		RunBlankCollapse:       true,
+		RunFlintChipper:        true,
+		RunProseFilter:         true,
+		RunLogDedup:            true,
+		RunStringTruncate:      true,
+		RunBM25:                true,
+		BM25TargetRatio:        0.5,
+		MinCompressSize:        50,
+		RunSmartCrusher:        true,
+		SmartCrusherTargetRatio: 0.5,
+		RunCacheStability:      true,
 	},
 }
 
