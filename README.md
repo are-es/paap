@@ -1,19 +1,19 @@
-# PAAP — Pangkalan API
+# PAAP — Pluggable AI API Proxy
 
-OpenAI-compatible API gateway yang me-routing request ke 30+ provider (Xiaomi, StepFun, Google AI Studio, OpenRouter, custom endpoint). Mengelola API key, model discovery, load balancing, failover, dan kompresi token.
+OpenAI-compatible API gateway that routes requests to 30+ providers (Xiaomi, StepFun, Google AI Studio, OpenRouter, custom endpoints). Manages API keys, model discovery, load balancing, failover, and token compression.
 
-## Fitur
+## Features
 
-- **Multi-Provider Routing** — Route ke 30+ provider dengan failover otomatis
+- **Multi-Provider Routing** — Route to 30+ providers with automatic failover
 - **API Key Management** — Multiple keys per provider, round-robin, auto-disable on error
-- **Model Discovery** — Auto-detect model dari provider API
-- **Vision Auto-Route** — Auto-route request berisi gambar ke model vision
-- **MCP Server** — JSON-RPC 2.0 server dengan tools (Image Gen, TTS, Vision Analysis)
+- **Model Discovery** — Auto-detect models from provider API
+- **Vision Auto-Route** — Auto-route image-containing requests to vision models
+- **MCP Server** — JSON-RPC 2.0 server with tools (Image Gen, TTS, Vision Analysis)
 - **Smart Compressor** — Unified token compression (lite/medium/high)
-- **System Prompt Injection** — Custom instructions di setiap request
-- **Groups & Race Routing** — Kirim ke beberapa provider, gunakan response tercepat
-- **Dashboard** — Stats real-time, provider topology, gateway key management
-- **Multi-Language UI** — 6 bahasa (EN, ID, ZH, JA, KO, AR)
+- **System Prompt Injection** — Custom instructions on every request
+- **Groups & Race Routing** — Send to multiple providers, use fastest response
+- **Dashboard** — Real-time stats, provider topology, gateway key management
+- **Multi-Language UI** — 6 languages (EN, ID, ZH, JA, KO, AR)
 
 ## Quick Start
 
@@ -71,16 +71,16 @@ curl -X POST http://localhost:9090/v1/chat/completions \
 
 ## Dashboard
 
-Akses dashboard di `http://localhost:9090` setelah server berjalan.
+Access the dashboard at `http://localhost:9090` after the server is running.
 
-- **Stats** — Request, token, biaya per 24 jam
+- **Stats** — Requests, tokens, cost per 24 hours
 - **Providers** — API key management, model discovery
 - **Tools** — Vision auto-route, MCP tools config
 - **Compression** — Smart Compressor level selector + live logs
-- **Logs** — Request log dengan filter dan export
+- **Logs** — Request log with filter and export
 - **Groups** — Race routing, round-robin
 - **Proxy** — Proxy pool management
-- **Settings** — Bahasa, backup/restore, server control
+- **Settings** — Language, backup/restore, server control
 
 ## Smart Compressor
 
@@ -155,12 +155,12 @@ sqlite3 ~/.paap/paap.db "SELECT * FROM api_keys WHERE provider_id='xxx' AND is_a
 sudo systemctl restart paap
 ```
 
-### Compression tidak jalan
+### Compression not working
 ```bash
-# Cek level setting
+# Check level setting
 sqlite3 ~/.paap/paap.db "SELECT key, value FROM system_settings WHERE key='compress_level'"
 
-# Cek logs
+# Check logs
 sudo journalctl -u paap | grep compression
 ```
 
