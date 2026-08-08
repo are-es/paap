@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -415,6 +416,15 @@ CAVEMAN VOICE: Drop articles (a/an/the), filler (just/really/basically/actually/
 	// ── Anigravity: use Google Gemini format ──
 	if providerID == "builtin-anigravity" {
 		anigravityRequest(w, r, modelID, rawBody, keyValue, isStream)
+		return
+	}
+
+	// ── Anthropic-native providers: translate OpenAI → Anthropic format ──
+	log.Printf("[PAAP] [ANTH-CHECK] model=%s providerID=%s providerName=%s", modelID, providerID, providerName)
+	var supAnthRouting int
+	db.DB.QueryRow("SELECT COALESCE(supports_anthropic,0) FROM providers WHERE id=?", providerID).Scan(&supAnthRouting)
+	if supAnthRouting == 1 {
+		handleAnthropicNativeFromOpenAI(w, r, rawBody, providerID, providerName, baseURL, modelID, keyID, keyName, keyValue, keyAccountID, isStream, startTime)
 		return
 	}
 
@@ -1444,4 +1454,295 @@ func resolveCompressionLevel() compression.Level {
 	}
 
 	return compression.LevelMedium
+}
+
+// handleAnthropicNativeFromOpenAI translates OpenAI /v1/chat/completions request
+// to Anthropic /v1/messages format, forwards to the provider, and translates
+// the Anthropic response back to OpenAI format.
+func handleAnthropicNativeFromOpenAI(w http.ResponseWriter, r *http.Request,
+	rawBody map[string]interface{}, providerID, providerName, baseURL,
+	modelID, keyID, keyName, keyValue, keyAccountID string,
+	isStream bool, startTime time.Time) {
+
+	log.Printf("[PAAP] [ANTH-TRANSLATE] Translating OpenAI→Anthropic for provider=%s model=%s stream=%v", providerID, modelID, isStream)
+	// Convert OpenAI messages to Anthropic format
+	messages, _ := rawBody["messages"].([]interface{})
+	if len(messages) == 0 {
+		writeError(w, 400, "no messages in request")
+		return
+	}
+
+	// Extract system message
+	var systemMsg string
+	var anthropicMessages []map[string]interface{}
+	for _, m := range messages {
+		msg, ok := m.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		role, _ := msg["role"].(string)
+		content, _ := msg["content"]
+		if role == "system" {
+			if s, ok := content.(string); ok {
+				systemMsg = s
+			}
+			continue
+		}
+		anthropicMessages = append(anthropicMessages, map[string]interface{}{
+			"role":    role,
+			"content": content,
+		})
+	}
+
+	// Build Anthropic request body
+	anthBody := map[string]interface{}{
+		"model":      modelID,
+		"messages":   anthropicMessages,
+		"max_tokens": 4096,
+	}
+	if systemMsg != "" {
+		anthBody["system"] = systemMsg
+	}
+	if maxTok, ok := rawBody["max_tokens"].(float64); ok && maxTok > 0 {
+		anthBody["max_tokens"] = int(maxTok)
+	}
+	if temp, ok := rawBody["temperature"].(float64); ok {
+		anthBody["temperature"] = temp
+	}
+	if topP, ok := rawBody["top_p"].(float64); ok {
+		anthBody["top_p"] = topP
+	}
+	if stop, ok := rawBody["stop"]; ok {
+		anthBody["stop_sequences"] = stop
+	}
+	if isStream {
+		anthBody["stream"] = true
+	}
+
+	// Convert tools from OpenAI to Anthropic format
+	if tools, ok := rawBody["tools"].([]interface{}); ok && len(tools) > 0 {
+		var anthTools []map[string]interface{}
+		for _, t := range tools {
+			tool, ok := t.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			fn, ok := tool["function"].(map[string]interface{})
+			if !ok {
+				continue
+			}
+			anthTool := map[string]interface{}{
+				"name":        fn["name"],
+				"description": fn["description"],
+			}
+			if params, ok := fn["parameters"]; ok {
+				anthTool["input_schema"] = params
+			}
+			anthTools = append(anthTools, anthTool)
+		}
+		if len(anthTools) > 0 {
+			anthBody["tools"] = anthTools
+		}
+	}
+
+	bodyBytes, err := json.Marshal(anthBody)
+	if err != nil {
+		writeError(w, 500, "failed to marshal Anthropic request")
+		return
+	}
+
+	upstreamURL := resolveAnthropicUpstreamURL(baseURL)
+	req, err := http.NewRequest("POST", upstreamURL, bytes.NewReader(bodyBytes))
+	if err != nil {
+		writeError(w, 500, "failed to create Anthropic request")
+		return
+	}
+
+	// Set Anthropic auth
+	setAnthropicAuth(req, baseURL, keyValue)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("anthropic-version", "2023-06-01")
+
+	// Apply custom headers
+	if ch := getCustomHeaders(providerID); ch != nil {
+		for k, v := range ch {
+			req.Header.Set(k, v)
+		}
+	}
+
+	client := sharedHTTPClient
+	if proxyURL := getProviderProxy(providerID); proxyURL != "" {
+		if transport, err := makeProxyTransport(proxyURL); err == nil {
+			client.Transport = transport
+		}
+	}
+
+	resp, err := client.Do(req)
+	latencyMs := time.Since(startTime).Milliseconds()
+	if err != nil {
+		logProxyRequest(providerID, providerName, modelID, keyID, keyName, "", "", 0, 0, 0, latencyMs, err.Error(), nil)
+		writeError(w, 502, fmt.Sprintf("upstream error: %v", err))
+		return
+	}
+	defer resp.Body.Close()
+
+	var tokensIn, tokensOut int64
+
+	if resp.StatusCode != 200 {
+		respBodyBytes, _ := io.ReadAll(resp.Body)
+		logProxyRequest(providerID, providerName, modelID, keyID, keyName, "", "", resp.StatusCode, 0, 0, latencyMs, "", nil)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(resp.StatusCode)
+		w.Write(respBodyBytes)
+		return
+	}
+
+	if isStream {
+		// Translate Anthropic SSE → OpenAI SSE
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.WriteHeader(200)
+
+		flusher, canFlush := w.(http.Flusher)
+		scanner := bufio.NewScanner(resp.Body)
+		scanner.Buffer(make([]byte, 256*1024), 256*1024)
+
+		chatID := fmt.Sprintf("chatcmpl-%d", time.Now().UnixNano())
+		roleSent := false
+
+
+		for scanner.Scan() {
+			line := scanner.Text()
+			if !strings.HasPrefix(line, "data:") {
+				continue
+			}
+			dataStr := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+			if dataStr == "[DONE]" {
+				fmt.Fprintf(w, "data: [DONE]\n\n")
+				if canFlush {
+					flusher.Flush()
+				}
+				continue
+			}
+
+			var ev map[string]interface{}
+			if json.Unmarshal([]byte(dataStr), &ev) != nil {
+				continue
+			}
+
+			evType, _ := ev["type"].(string)
+			var content string
+
+			switch evType {
+			case "content_block_delta":
+				if delta, ok := ev["delta"].(map[string]interface{}); ok {
+					if t, ok := delta["type"].(string); ok && t == "text_delta" {
+						content, _ = delta["text"].(string)
+					}
+				}
+			case "message_stop":
+				openaiChunk := map[string]interface{}{
+					"id":      chatID,
+					"object":  "chat.completion.chunk",
+					"created": time.Now().Unix(),
+					"model":   modelID,
+					"choices": []map[string]interface{}{{
+						"index":         0,
+						"delta":         map[string]interface{}{},
+						"finish_reason": "stop",
+					}},
+				}
+				b, _ := json.Marshal(openaiChunk)
+				fmt.Fprintf(w, "data: %s\n\n", b)
+				if canFlush {
+					flusher.Flush()
+				}
+				continue
+			}
+
+			if content == "" {
+				continue
+			}
+
+			delta := map[string]interface{}{"content": content}
+			if !roleSent {
+				delta["role"] = "assistant"
+				roleSent = true
+			}
+
+			openaiChunk := map[string]interface{}{
+				"id":      chatID,
+				"object":  "chat.completion.chunk",
+				"created": time.Now().Unix(),
+				"model":   modelID,
+				"choices": []map[string]interface{}{{
+					"index": 0,
+					"delta": delta,
+				}},
+			}
+			b, _ := json.Marshal(openaiChunk)
+			fmt.Fprintf(w, "data: %s\n\n", b)
+			if canFlush {
+				flusher.Flush()
+			}
+		}
+		return
+	}
+
+	// Non-streaming: translate Anthropic JSON → OpenAI JSON
+	respBodyBytes, _ := io.ReadAll(resp.Body)
+	var anthResp map[string]interface{}
+	if json.Unmarshal(respBodyBytes, &anthResp) != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(500)
+		w.Write([]byte(`{"error":"failed to parse Anthropic response"}`))
+		return
+	}
+
+	var textContent string
+	if content, ok := anthResp["content"].([]interface{}); ok {
+		for _, block := range content {
+			if b, ok := block.(map[string]interface{}); ok && b["type"] == "text" {
+				textContent, _ = b["text"].(string)
+				break
+			}
+		}
+	}
+
+	var usage map[string]interface{}
+	if u, ok := anthResp["usage"].(map[string]interface{}); ok {
+		usage = map[string]interface{}{
+			"prompt_tokens":     u["input_tokens"],
+			"completion_tokens": u["output_tokens"],
+			"total_tokens":      0,
+		}
+		if inp, ok := u["input_tokens"].(float64); ok {
+			if out, ok2 := u["output_tokens"].(float64); ok2 {
+				usage["total_tokens"] = int(inp) + int(out)
+			}
+		}
+	}
+
+	openaiResp := map[string]interface{}{
+		"id":      fmt.Sprintf("chatcmpl-%d", time.Now().UnixNano()),
+		"object":  "chat.completion",
+		"created": time.Now().Unix(),
+		"model":   modelID,
+		"choices": []map[string]interface{}{{
+			"index": 0,
+			"message": map[string]interface{}{
+				"role":    "assistant",
+				"content": textContent,
+			},
+			"finish_reason": "stop",
+		}},
+	}
+	if usage != nil {
+		openaiResp["usage"] = usage
+	}
+
+	logProxyRequest(providerID, providerName, modelID, keyID, keyName, "", "", 200, int(tokensIn), int(tokensOut), latencyMs, "", nil)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(openaiResp)
 }
