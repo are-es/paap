@@ -1551,6 +1551,18 @@ func handleAnthropicNativeFromOpenAI(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
+	// Log request details for debugging
+	log.Printf("[PAAP] [ANTH-REQ] upstream=%s model=%s stream=%v msg_count=%d", resolveAnthropicUpstreamURL(baseURL), modelID, isStream, len(anthropicMessages))
+	if systemMsg != "" {
+		log.Printf("[PAAP] [ANTH-REQ] system_prompt_len=%d preview=%q", len(systemMsg), truncateStr(systemMsg, 200))
+	}
+	for i, m := range anthropicMessages {
+		role, _ := m["role"].(string)
+		contentStr := fmt.Sprintf("%v", m["content"])
+		log.Printf("[PAAP] [ANTH-REQ] msg[%d] role=%s content_len=%d preview=%q", i, role, len(contentStr), truncateStr(contentStr, 200))
+	}
+	log.Printf("[PAAP] [ANTH-REQ] body_len=%d", len(bodyBytes))
+
 	upstreamURL := resolveAnthropicUpstreamURL(baseURL)
 	req, err := http.NewRequest("POST", upstreamURL, bytes.NewReader(bodyBytes))
 	if err != nil {
@@ -1588,8 +1600,11 @@ func handleAnthropicNativeFromOpenAI(w http.ResponseWriter, r *http.Request,
 
 	var tokensIn, tokensOut int64
 
+	log.Printf("[PAAP] [ANTH-RESP] status=%d", resp.StatusCode)
+
 	if resp.StatusCode != 200 {
 		respBodyBytes, _ := io.ReadAll(resp.Body)
+		log.Printf("[PAAP] [ANTH-RESP] error_body=%s", truncateStr(string(respBodyBytes), 500))
 		logProxyRequest(providerID, providerName, modelID, keyID, keyName, "", "", resp.StatusCode, 0, 0, latencyMs, "", nil)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(resp.StatusCode)
@@ -1745,4 +1760,12 @@ func handleAnthropicNativeFromOpenAI(w http.ResponseWriter, r *http.Request,
 	logProxyRequest(providerID, providerName, modelID, keyID, keyName, "", "", 200, int(tokensIn), int(tokensOut), latencyMs, "", nil)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(openaiResp)
+}
+
+// truncateStr truncates a string to maxLen and adds "..." if truncated.
+func truncateStr(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }
