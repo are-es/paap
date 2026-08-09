@@ -125,7 +125,7 @@ function GroupCard({
 }) {
   return (
     <Link
-      href={`/groups/${group.id}`}
+      href={`/groups/detail?id=${group.id}`}
       className={cn(
         "group relative flex flex-col gap-3 p-5 rounded-xl border border-primary/15 bg-primary/[0.04]",
         "cursor-pointer transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40",

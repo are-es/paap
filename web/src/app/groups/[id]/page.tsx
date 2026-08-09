@@ -1,5 +1,8 @@
+import { Suspense } from "react";
 import { GroupSetupClient } from "./client";
 
+// Static params for backward compatibility with output:export
+// New groups use /groups/detail?id=xxx instead
 export function generateStaticParams() {
   return [
     { id: "500e97f856cf32666542641c1d94fa3f" },
@@ -10,10 +13,13 @@ export function generateStaticParams() {
     { id: "claude-78d57b0041814759490bc285c82474e8" },
     { id: "claude-936612f28b2a6c5ab4341495bd4634a7" },
     { id: "claude-c303a34770772270d42af6162ceda0ce" },
-
   ];
 }
 
 export default function GroupPage() {
-  return <GroupSetupClient />;
+  return (
+    <Suspense fallback={null}>
+      <GroupSetupClient />
+    </Suspense>
+  );
 }
