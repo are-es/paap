@@ -600,7 +600,7 @@ func handleGroupRaceKeys(w http.ResponseWriter, r *http.Request, modelName, grou
 	writeError(w, 502, fmt.Sprintf("all race keys failed: %s", strings.Join(failures, "; ")))
 }
 
-// handleGroupRoundRobinModel: rotate model per request
+// handleGroupRoundRobinModel: rotate model per request, fallback on failure
 func handleGroupRoundRobinModel(w http.ResponseWriter, r *http.Request, groupName string, rawBody map[string]interface{}, selectedModelsJSON string) {
 	startTime := time.Now()
 
@@ -639,56 +639,71 @@ func handleGroupRoundRobinModel(w http.ResponseWriter, r *http.Request, groupNam
 		return
 	}
 
-	// Rotate
+	// Rotate — pick starting index, then fallback on failure
 	counter := getGroupModelRRCounter(groupID)
-	idx := int(counter.Add(1)-1) % len(routes)
-	selected := routes[idx]
+	startIdx := int(counter.Add(1)-1) % len(routes)
 
-	log.Printf("[PAAP] Round Robin Model '%s': selected %s/%s (index %d)", groupName, selected.providerName, selected.modelID, idx)
+	var failures []string
+	for attempt := 0; attempt < len(routes); attempt++ {
+		idx := (startIdx + attempt) % len(routes)
+		selected := routes[idx]
 
-	// Get key
-	keyID, keyName, keyValue, keyAccountID, err := getNextActiveKey(selected.providerID)
-	if err != nil {
-		writeError(w, 502, fmt.Sprintf("no active keys for provider '%s'", selected.providerName))
-		return
-	}
-
-	// Build and send request
-	upstreamBody := make(map[string]interface{})
-	for k, v := range rawBody {
-		upstreamBody[k] = v
-	}
-	upstreamBody["model"] = selected.modelID
-	bodyBytes, _ := json.Marshal(upstreamBody)
-
-	upstreamURL := resolveUpstreamURL(selected.baseURL, keyAccountID)
-	req, err := http.NewRequest("POST", upstreamURL, bytes.NewReader(bodyBytes))
-	if err != nil {
-		writeError(w, 500, "failed to create request")
-		return
-	}
-	setProviderAuth(req, selected.baseURL, keyValue)
-
-	client := sharedHTTPClient
-	var proxyUsed string
-	if proxyURL := getProviderProxy(selected.providerID); proxyURL != "" {
-		proxyUsed = proxyURL
-		if transport, perr := makeProxyTransport(proxyURL); perr == nil {
-			client.Transport = transport
+		if attempt > 0 {
+			log.Printf("[PAAP] RR Fallback '%s': attempt %d → %s/%s", groupName, attempt+1, selected.providerName, selected.modelID)
+		} else {
+			log.Printf("[PAAP] Round Robin '%s': selected %s/%s (index %d)", groupName, selected.providerName, selected.modelID, idx)
 		}
-	}
 
-	resp, err := client.Do(req)
-	latencyMs := time.Since(startTime).Milliseconds()
-	if err != nil {
-		logProxyRequest(selected.providerID, selected.providerName, selected.modelID, keyID, keyName, groupName, proxyUsed, 0, 0, 0, latencyMs, err.Error(), nil)
-		writeError(w, 502, fmt.Sprintf("upstream request failed: %v", err))
-		return
-	}
-	defer resp.Body.Close()
+		keyID, keyName, keyValue, keyAccountID, err := getNextActiveKey(selected.providerID)
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s/%s: no keys", selected.providerName, selected.modelID))
+			continue
+		}
 
-	respBody, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 200 {
+		upstreamBody := make(map[string]interface{})
+		for k, v := range rawBody {
+			upstreamBody[k] = v
+		}
+		upstreamBody["model"] = selected.modelID
+		bodyBytes, _ := json.Marshal(upstreamBody)
+
+		upstreamURL := resolveUpstreamURL(selected.baseURL, keyAccountID)
+		req, err := http.NewRequest("POST", upstreamURL, bytes.NewReader(bodyBytes))
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s/%s: request build failed", selected.providerName, selected.modelID))
+			continue
+		}
+		setProviderAuth(req, selected.baseURL, keyValue)
+
+		client := sharedHTTPClient
+		var proxyUsed string
+		if proxyURL := getProviderProxy(selected.providerID); proxyURL != "" {
+			proxyUsed = proxyURL
+			if transport, perr := makeProxyTransport(proxyURL); perr == nil {
+				client.Transport = transport
+			}
+		}
+		resp, err := client.Do(req)
+		latencyMs := time.Since(startTime).Milliseconds()
+		if err != nil {
+			logProxyRequest(selected.providerID, selected.providerName, selected.modelID, keyID, keyName, groupName, proxyUsed, 0, 0, 0, latencyMs, err.Error(), nil)
+			failures = append(failures, fmt.Sprintf("%s/%s: %v", selected.providerName, selected.modelID, err))
+			continue
+		}
+		respBody, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		// Success — return response
+		if resp.StatusCode == 200 {
+			var tokensIn, tokensOut int
+			parseUsageJSON(respBody, &tokensIn, &tokensOut)
+			logProxyRequest(selected.providerID, selected.providerName, selected.modelID, keyID, keyName, groupName, proxyUsed, 200, tokensIn, tokensOut, latencyMs, "", nil)
+			w.Header().Set("Content-Type", "application/json")
+			w.Write(respBody)
+			return
+		}
+
+		// Non-200 — deactivate key if auth error, try next model
 		errStr := string(respBody)
 		if len(errStr) > 500 {
 			errStr = errStr[:500]
@@ -697,18 +712,11 @@ func handleGroupRoundRobinModel(w http.ResponseWriter, r *http.Request, groupNam
 			db.DB.Exec("UPDATE api_keys SET is_active=0 WHERE id=?", keyID)
 		}
 		logProxyRequest(selected.providerID, selected.providerName, selected.modelID, keyID, keyName, groupName, proxyUsed, resp.StatusCode, 0, 0, latencyMs, errStr, nil)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(resp.StatusCode)
-		w.Write(respBody)
-		return
+		failures = append(failures, fmt.Sprintf("%s/%s: HTTP %d", selected.providerName, selected.modelID, resp.StatusCode))
 	}
 
-	var tokensIn, tokensOut int
-	parseUsageJSON(respBody, &tokensIn, &tokensOut)
-	logProxyRequest(selected.providerID, selected.providerName, selected.modelID, keyID, keyName, groupName, proxyUsed, 200, tokensIn, tokensOut, latencyMs, "", nil)
-
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(respBody)
+	// All models failed
+	writeError(w, 502, fmt.Sprintf("all models failed: %s", strings.Join(failures, "; ")))
 }
 
 // handleGroupFailFirst: model A fails → fallback B → C (cascade)

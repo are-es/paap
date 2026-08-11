@@ -377,6 +377,13 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	// Google Gemini reasoning models need large max_tokens budget — thinking eats it all,
+	// leaving empty output when the client sends a small max_tokens (e.g. Hermes default).
+	if strings.Contains(strings.ToLower(baseURL), "generativelanguage") {
+		if mt, ok := rawBody["max_tokens"].(float64); !ok || mt < 20000 {
+			rawBody["max_tokens"] = 20000
+		}
+	}
 	// Build upstream body — forward ALL client params, override only model + max_tokens
 	upstreamBody := make(map[string]interface{})
 	isMerlin := strings.Contains(strings.ToLower(baseURL), "getmerlin")
@@ -666,6 +673,10 @@ func handleGroupRace(w http.ResponseWriter, r *http.Request, modelName, groupNam
 		return
 	case "rr_race_keys":
 		handleGroupRRRaceKeys(w, r, groupName, rawBody, maxKeys)
+		return
+	// Race off (empty mode) → round-robin: rotate model per request, no key race
+	case "":
+		handleGroupRoundRobinModel(w, r, groupName, rawBody, selectedModelsJSON)
 		return
 	}
 
@@ -1380,8 +1391,8 @@ func setProviderAuth(req *http.Request, baseURL, keyValue string) {
 	} else if strings.Contains(lowerURL, "xiaomi") {
 		// Xiaomi MiMo: Bearer token
 		req.Header.Set("Authorization", "Bearer "+keyValue)
-	} else if strings.Contains(lowerURL, "google") || strings.Contains(lowerURL, "aistudio") {
-		// Google AI Studio (OpenAI-compatible endpoint): Bearer token
+	} else if strings.Contains(lowerURL, "google") || strings.Contains(lowerURL, "aistudio") || strings.Contains(lowerURL, "generativelanguage") {
+		// Google AI Studio OpenAI-compat endpoint: requires Bearer token
 		req.Header.Set("Authorization", "Bearer "+keyValue)
 	} else {
 		// Default: Bearer token
@@ -1420,6 +1431,10 @@ func resolveUpstreamURL(baseURL, accountID string) string {
 	}
 	if strings.Contains(base, "getmerlin") {
 		return base + "/arcane/api/v2/thread/unified"
+	}
+	if strings.Contains(base, "generativelanguage") {
+		// Google AI Studio OpenAI-compat endpoint: /v1beta/openai/chat/completions
+		return base + "/openai/chat/completions"
 	}
 	return base + "/chat/completions"
 }

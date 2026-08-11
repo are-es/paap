@@ -1621,6 +1621,10 @@ func providerDetectModels(w http.ResponseWriter, r *http.Request, providerID str
 		extraHeaders["x-xai-token-auth"] = "xai-grok-cli"
 		extraHeaders["x-grok-client-identifier"] = "grok-pager"
 		extraHeaders["x-grok-client-version"] = "0.2.93"
+	case "google":
+		// Google AI Studio uses native /v1beta/models endpoint which requires x-goog-api-key
+		// (NOT Bearer). The key is set via extraHeaders below, overriding setProviderAuth.
+		modelsURL = strings.TrimRight(baseURL, "/") + "/models"
 	}
 
 	req, _ := http.NewRequest("GET", modelsURL, nil)
@@ -1632,7 +1636,17 @@ func providerDetectModels(w http.ResponseWriter, r *http.Request, providerID str
 		var keyValue string
 		err = db.DB.QueryRow("SELECT key_encrypted FROM api_keys WHERE provider_id=? AND is_active=1 LIMIT 1", providerID).Scan(&keyValue)
 		if err == nil && keyValue != "" {
-			req.Header.Set("Authorization", "Bearer "+keyValue)
+			setProviderAuth(req, baseURL, keyValue)
+		}
+	}
+	// Google AI Studio native /models endpoint needs x-goog-api-key, not Bearer.
+	// setProviderAuth sets Bearer for google (used by chat), so override here for detect.
+	if builtinID == "google" {
+		var keyValue string
+		err = db.DB.QueryRow("SELECT key_encrypted FROM api_keys WHERE provider_id=? AND is_active=1 LIMIT 1", providerID).Scan(&keyValue)
+		if err == nil && keyValue != "" {
+			req.Header.Del("Authorization") // Bearer breaks google /models (ACCESS_TOKEN_TYPE_UNSUPPORTED)
+			req.Header.Set("x-goog-api-key", keyValue)
 		}
 	}
 	for k, v := range extraHeaders {
@@ -1721,6 +1735,23 @@ func providerDetectModels(w http.ResponseWriter, r *http.Request, providerID str
 		}
 		for _, m := range anigravityModels {
 			detected = append(detected, modelEntry{ID: m})
+		}
+	case "google":
+		// Google AI Studio / Gemini API: {models:[{name:"models/gemini-2.5-flash",...}]}
+		var googleResp struct {
+			Models []struct {
+				Name string `json:"name"`
+			} `json:"models"`
+		}
+		if err := json.Unmarshal(bodyBytes, &googleResp); err != nil {
+			writeError(w, 502, "invalid google models response")
+			return
+		}
+		for _, m := range googleResp.Models {
+			id := strings.TrimPrefix(m.Name, "models/")
+			if id != "" {
+				detected = append(detected, modelEntry{ID: id})
+			}
 		}
 	default:
 		// Standard OpenAI format: {data: [{id, ...}]}
