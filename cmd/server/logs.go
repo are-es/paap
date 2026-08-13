@@ -573,7 +573,7 @@ func logProxyRequestWithTool(providerID, providerName, modelID, keyID, keyName, 
 	var count int
 	db.DB.QueryRow("SELECT COUNT(*) FROM logs").Scan(&count)
 	if count > 500 {
-		db.DB.Exec(`DELETE FROM logs WHERE id NOT IN (SELECT id FROM logs ORDER BY created_at DESC LIMIT 500)`)
+		db.DB.Exec(`DELETE FROM logs WHERE id NOT IN (SELECT id FROM logs ORDER BY timestamp DESC LIMIT 500)`)
 		log.Printf("[PAAP] Auto-cleared logs: %d → 500", count)
 	}
 
@@ -702,16 +702,27 @@ func modelList(w http.ResponseWriter, r *http.Request) {
 			if !ok || fqID == "" {
 				continue // skip models with nil/empty id
 			}
-			// Add claude- prefix for Claude Code discovery
+			// Add claude- prefix for Claude Code discovery + [1m] suffix for 1M context
 			// Claude Code only shows models with claude- prefix in its model picker
-			// routeByModel() strips the prefix when routing requests
+			// routeByModel() strips the prefix and [1m] suffix when routing requests
 			claudeID := fqID
 			if !strings.HasPrefix(fqID, "claude-") {
 				claudeID = "claude-" + fqID
 			}
+			if !strings.HasSuffix(claudeID, "[1m]") && !strings.HasSuffix(claudeID, "[1M]") {
+				claudeID = claudeID + "[1m]"
+			}
 			entry := map[string]interface{}{
-				"id":           claudeID,
-				"display_name": fqID,
+				"type":           "model",
+				"id":             claudeID,
+				"display_name":   fqID,
+				"created_at":     "2025-01-01T00:00:00Z",
+				"context_window": 200000,
+				"max_tokens":     8192,
+			}
+			// [1m] suffix = 1M context window
+			if strings.HasSuffix(claudeID, "[1m]") || strings.HasSuffix(claudeID, "[1M]") {
+				entry["context_window"] = 1000000
 			}
 			anthropicModels = append(anthropicModels, entry)
 		}

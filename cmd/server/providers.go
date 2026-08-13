@@ -164,7 +164,12 @@ func providerList(w http.ResponseWriter, r *http.Request) {
 	rows, err := db.DB.Query(`SELECT p.id, p.name, p.base_url, p.icon, p.is_active, p.round_robin,
 		COALESCE(p.proxy_id,''), COALESCE(p.proxy_enabled,0), p.created_at,
 		COALESCE(p.provider_type,'custom'), COALESCE(p.auth_type,'apikey'), COALESCE(p.builtin_id,''),
-		COALESCE(p.round_robin_enabled,0), COALESCE(p.supports_anthropic,0)
+		COALESCE(p.round_robin_enabled,0), COALESCE(p.supports_anthropic,0),
+		(SELECT COUNT(*) FROM api_keys WHERE provider_id=p.id) +
+			CASE WHEN COALESCE(p.auth_type,'apikey')='connection' THEN (SELECT COUNT(*) FROM provider_connections WHERE provider_id=p.id) ELSE 0 END as total_keys,
+		(SELECT COUNT(*) FROM api_keys WHERE provider_id=p.id AND is_active=1) +
+			CASE WHEN COALESCE(p.auth_type,'apikey')='connection' THEN (SELECT COUNT(*) FROM provider_connections WHERE provider_id=p.id AND is_active=1) ELSE 0 END as active_keys,
+		(SELECT COUNT(*) FROM models WHERE provider_id=p.id AND is_selected=1) as model_count
 		FROM providers p ORDER BY p.name`)
 	if err != nil {
 		writeError(w, 500, err.Error())
@@ -176,26 +181,10 @@ func providerList(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var id, name, baseURL, icon, proxyID, createdAt, providerType, authType, builtinID string
 		var isActive, roundRobin, proxyEnabled, roundRobinEnabled, supportsAnthropic int
+		var totalKeys, activeKeys, modelCount int
 		rows.Scan(&id, &name, &baseURL, &icon, &isActive, &roundRobin, &proxyID, &proxyEnabled, &createdAt,
-			&providerType, &authType, &builtinID, &roundRobinEnabled, &supportsAnthropic)
-
-		// Get key counts (api_keys + provider_connections for connection-type providers)
-		var totalKeys, activeKeys int
-		db.DB.QueryRow("SELECT COUNT(*) FROM api_keys WHERE provider_id=?", id).Scan(&totalKeys)
-		db.DB.QueryRow("SELECT COUNT(*) FROM api_keys WHERE provider_id=? AND is_active=1", id).Scan(&activeKeys)
-
-		// Also count connections for connection-type providers
-		if authType == "connection" {
-			var connTotal, connActive int
-			db.DB.QueryRow("SELECT COUNT(*) FROM provider_connections WHERE provider_id=?", id).Scan(&connTotal)
-			db.DB.QueryRow("SELECT COUNT(*) FROM provider_connections WHERE provider_id=? AND is_active=1", id).Scan(&connActive)
-			totalKeys += connTotal
-			activeKeys += connActive
-		}
-
-		// Get model count
-		var modelCount int
-		db.DB.QueryRow("SELECT COUNT(*) FROM models WHERE provider_id=? AND is_selected=1", id).Scan(&modelCount)
+			&providerType, &authType, &builtinID, &roundRobinEnabled, &supportsAnthropic,
+			&totalKeys, &activeKeys, &modelCount)
 
 		list = append(list, map[string]interface{}{
 			"id": id, "name": name, "base_url": baseURL, "icon": icon,
@@ -1187,7 +1176,9 @@ func providerTestPromptStream(w http.ResponseWriter, r *http.Request, providerID
 		proxyUsed := ""
 		if proxyURL := getProviderProxy(providerID); proxyURL != "" {
 			if transport, perr := makeProxyTransport(proxyURL); perr == nil {
-				client.Transport = transport
+				proxyClient := *sharedHTTPClient
+				proxyClient.Transport = transport
+				client = &proxyClient
 				proxyUsed = proxyURL
 			}
 		}
@@ -1508,7 +1499,6 @@ func providerKeyTest(w http.ResponseWriter, r *http.Request, providerID, keyID s
 		return
 	}
 	defer resp.Body.Close()
-	resp.Body.Close()
 
 	if resp.StatusCode == 200 {
 		writeJSON(w, map[string]interface{}{"id": keyID, "name": name, "valid": true, "reason": "ok", "api_status": resp.StatusCode})

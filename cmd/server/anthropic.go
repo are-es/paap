@@ -174,7 +174,9 @@ func anthropicMessagesHandler(w http.ResponseWriter, r *http.Request) {
 	if proxyURL := getProviderProxy(providerID); proxyURL != "" {
 		proxyUsed = proxyURL
 		if transport, err := makeProxyTransport(proxyURL); err == nil {
-			client.Transport = transport
+			proxyClient := *sharedHTTPClient
+			proxyClient.Transport = transport
+			client = &proxyClient
 		}
 	}
 
@@ -625,6 +627,11 @@ func handleAnthropicTranslated(w http.ResponseWriter, r *http.Request,
 		openaiBody["stream_options"] = map[string]interface{}{"include_usage": true}
 	}
 
+	// Estimate input tokens from request content so message_start has a
+	// non-zero value. The real prompt_tokens from the provider arrives at
+	// the end of the stream and overwrites this estimate.
+	estimatedInputTokens := translator.EstimateInputTokens(openaiBody)
+
 	bodyBytes, err := json.Marshal(openaiBody)
 	if err != nil {
 		writeError(w, 500, "failed to marshal translated request")
@@ -650,7 +657,9 @@ func handleAnthropicTranslated(w http.ResponseWriter, r *http.Request,
 	if proxyURL := getProviderProxy(providerID); proxyURL != "" {
 		proxyUsed = proxyURL
 		if transport, terr := makeProxyTransport(proxyURL); terr == nil {
-			client.Transport = transport
+			proxyClient := *sharedHTTPClient
+			proxyClient.Transport = transport
+			client = &proxyClient
 		}
 	}
 
@@ -699,7 +708,7 @@ func handleAnthropicTranslated(w http.ResponseWriter, r *http.Request,
 			if resp2.StatusCode == 200 {
 				// Success — translate response
 				if isStream {
-					tIn, tOut, _ := handleTranslatedStreaming(w, resp2, modelID)
+					tIn, tOut, _ := handleTranslatedStreaming(w, resp2, modelID, estimatedInputTokens)
 					logProxyRequestWithTool(providerID, providerName, modelID, nextKeyID, nextKeyName, "", proxyUsed, 200, tIn, tOut, latencyMs, "", nil, toolUsed, originalModel, 0, 0)
 				} else {
 					tIn, tOut := handleTranslatedNonStreaming(w, resp2)
@@ -720,7 +729,7 @@ func handleAnthropicTranslated(w http.ResponseWriter, r *http.Request,
 
 	// Success — translate response
 	if isStream {
-		tIn, tOut, _ := handleTranslatedStreaming(w, resp, modelID)
+		tIn, tOut, _ := handleTranslatedStreaming(w, resp, modelID, estimatedInputTokens)
 		logProxyRequestWithTool(providerID, providerName, modelID, keyID, keyName, "", proxyUsed, 200, tIn, tOut, latencyMs, "", nil, toolUsed, originalModel, 0, 0)
 	} else {
 		tIn, tOut := handleTranslatedNonStreaming(w, resp)
@@ -729,7 +738,7 @@ func handleAnthropicTranslated(w http.ResponseWriter, r *http.Request,
 }
 
 // handleTranslatedStreaming converts OpenAI SSE stream to Anthropic SSE format
-func handleTranslatedStreaming(w http.ResponseWriter, upstreamResp *http.Response, model string) (int, int, []byte) {
+func handleTranslatedStreaming(w http.ResponseWriter, upstreamResp *http.Response, model string, estimatedInputTokens int) (int, int, []byte) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -743,6 +752,12 @@ func handleTranslatedStreaming(w http.ResponseWriter, upstreamResp *http.Respons
 	}
 
 	st := translator.NewStreamTranslator(w, flusher.Flush, model)
+	// Pre-set estimated input tokens so message_start has a non-zero value.
+	// The real prompt_tokens from the OpenAI provider arrives at the end of
+	// the stream and will overwrite this if available.
+	if estimatedInputTokens > 0 {
+		st.SetInputTokens(estimatedInputTokens)
+	}
 	tIn, tOut, fullContent := st.ProcessReader(upstreamResp.Body)
 
 	// Build virtual response body for logging

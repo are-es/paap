@@ -460,7 +460,9 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 	if proxyURL := getProviderProxy(providerID); proxyURL != "" {
 		proxyUsed = proxyURL
 		if transport, err := makeProxyTransport(proxyURL); err == nil {
-			client.Transport = transport
+			proxyClient := *sharedHTTPClient
+			proxyClient.Transport = transport
+			client = &proxyClient
 		}
 	}
 
@@ -689,31 +691,6 @@ func handleGroupRaceAll(w http.ResponseWriter, r *http.Request, modelName, group
 	startTime := time.Now()
 	raceID := genID()
 
-	// Global prompt injection (before group-level)
-	piEnabled := getSettingStrCached("prompt_injection_enabled", "false") == "true"
-	if piEnabled {
-		piText := getSettingStrCached("prompt_injection_text", "")
-		piPos := getSettingStrCached("prompt_injection_position", "prepend")
-		if piText != "" {
-			if msgs, ok := rawBody["messages"].([]interface{}); ok {
-				var msgMaps []map[string]interface{}
-				for _, m := range msgs {
-					if mm, ok := m.(map[string]interface{}); ok {
-						msgMaps = append(msgMaps, mm)
-					}
-				}
-				injectSystemPrompt(&msgMaps, piText, piPos)
-				rawBody["messages"] = func() []interface{} {
-					out := make([]interface{}, len(msgMaps))
-					for i, m := range msgMaps {
-						out[i] = m
-					}
-					return out
-				}()
-			}
-		}
-	}
-
 	// Get inject prompt (group-level)
 	injectPrompt, injectPosition := getGroupInjectPrompt(groupName)
 
@@ -837,7 +814,10 @@ func handleGroupRaceAll(w http.ResponseWriter, r *http.Request, modelName, group
 		upstreamBody[k] = v
 	}
 	upstreamBody["model"] = "" // will be set per task
-	upstreamBody["max_tokens"] = 20000
+	// Only set max_tokens if client didn't specify
+	if _, hasMax := upstreamBody["max_tokens"]; !hasMax {
+		upstreamBody["max_tokens"] = 20000
+	}
 	// Force usage reporting in streaming responses
 	if isStream, _ := rawBody["stream"].(bool); isStream {
 		upstreamBody["stream_options"] = map[string]interface{}{"include_usage": true}
