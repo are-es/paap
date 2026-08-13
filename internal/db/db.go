@@ -241,6 +241,27 @@ func migrate() error {
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
+		`CREATE TABLE IF NOT EXISTS model_pricing (
+			model_id TEXT PRIMARY KEY,
+			input_per_1m REAL NOT NULL,
+			output_per_1m REAL NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS race_logs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			race_id TEXT NOT NULL,
+			timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+			provider_id TEXT,
+			provider_name TEXT,
+			model_id TEXT,
+			key_id TEXT,
+			key_name TEXT,
+			status_code INTEGER,
+			latency_ms INTEGER DEFAULT 0,
+			tokens_in INTEGER DEFAULT 0,
+			tokens_out INTEGER DEFAULT 0,
+			is_winner INTEGER DEFAULT 0,
+			error TEXT
+		)`,
 	}
 	for _, s := range schemas {
 		if _, err := DB.Exec(s); err != nil {

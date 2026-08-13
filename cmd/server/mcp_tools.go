@@ -234,7 +234,7 @@ func searchBrave(query string, limit int, apiKey string) ([]SearchResult, error)
 // searchDuckDuckGo searches via DuckDuckGo (free, no API key)
 func searchDuckDuckGo(query string, limit int) ([]SearchResult, error) {
 	// Use ddgs Python library via subprocess
-	cmd := fmt.Sprintf("from ddgs import DDGS\nimport json\nresults = DDGS().text('%%s', max_results=%%d)\nprint(json.dumps(results))", query, limit)
+	cmd := fmt.Sprintf("from ddgs import DDGS\nimport json\nresults = DDGS().text('%s', max_results=%d)\nprint(json.dumps(results))", query, limit)
 
 	out, err := exec.Command("python3", "-c", cmd).Output()
 	if err != nil {
