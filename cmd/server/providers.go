@@ -659,7 +659,8 @@ func providerDelete(w http.ResponseWriter, r *http.Request, id string) {
 
 func providerPatch(w http.ResponseWriter, r *http.Request, id string) {
 	var body struct {
-		RoundRobin *bool `json:"round_robin"`
+		RoundRobin *bool   `json:"round_robin"`
+		Icon       *string `json:"icon"`
 	}
 	if err := parseBody(r, &body); err != nil {
 		writeError(w, 400, "invalid json")
@@ -671,6 +672,13 @@ func providerPatch(w http.ResponseWriter, r *http.Request, id string) {
 			v = 1
 		}
 		_, err := db.DB.Exec("UPDATE providers SET round_robin=?, updated_at=? WHERE id=?", v, time.Now().UTC().Format(time.RFC3339), id)
+		if err != nil {
+			writeError(w, 500, err.Error())
+			return
+		}
+	}
+	if body.Icon != nil {
+		_, err := db.DB.Exec("UPDATE providers SET icon=?, updated_at=? WHERE id=?", *body.Icon, time.Now().UTC().Format(time.RFC3339), id)
 		if err != nil {
 			writeError(w, 500, err.Error())
 			return
@@ -2092,4 +2100,62 @@ func providerKeysDeleteDisabled(w http.ResponseWriter, r *http.Request, provider
 		"deleted":  affected,
 		"provider": providerID,
 	})
+}
+
+// handleFaviconFetch proxies a provider's favicon to the client.
+// Query param: url (required) — the provider base_url.
+// Tries /favicon.ico, /favicon.png, /apple-touch-icon.png, /apple-touch-icon-precomposed.png.
+// Returns first image hit with Cache-Control; 404 JSON on all failures.
+func handleFaviconFetch(w http.ResponseWriter, r *http.Request) {
+	rawURL := r.URL.Query().Get("url")
+	if rawURL == "" {
+		writeError(w, 400, "url query param required")
+		return
+	}
+
+	// Normalise: add scheme if missing
+	if !strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://") {
+		rawURL = "https://" + rawURL
+	}
+
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Host == "" {
+		writeError(w, 400, "invalid url")
+		return
+	}
+	base := strings.TrimSuffix(parsed.Scheme+"://"+parsed.Host+parsed.Path, "/")
+
+	paths := []string{
+		"/favicon.ico",
+		"/favicon.png",
+		"/apple-touch-icon.png",
+		"/apple-touch-icon-precomposed.png",
+	}
+
+	for _, p := range paths {
+		faviconURL := base + p
+		req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, faviconURL, nil)
+		if err != nil {
+			continue
+		}
+		req.Header.Set("User-Agent", "PAAP/1.0")
+
+		resp, err := sharedHTTPClient.Do(req)
+		if err != nil {
+			continue
+		}
+
+		ct := resp.Header.Get("Content-Type")
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 && strings.HasPrefix(ct, "image/") {
+			w.Header().Set("Content-Type", ct)
+			w.Header().Set("Cache-Control", "public, max-age=86400")
+			w.WriteHeader(http.StatusOK)
+			io.Copy(w, io.LimitReader(resp.Body, 512*1024)) // 512KB max
+			resp.Body.Close()
+			return
+		}
+		resp.Body.Close()
+	}
+
+	writeError(w, 404, "no favicon found")
 }

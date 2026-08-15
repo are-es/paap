@@ -62,8 +62,20 @@ export function AddProviderModal({ open, onClose }: AddProviderModalProps) {
         auth_type: "apikey",
         custom_headers: customHeaderValue ? JSON.stringify({"X-Custom-Header": customHeaderValue}) : undefined,
       }),
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["providers"] });
+      // Auto-fetch favicon for custom providers
+      const providerId = (data as any)?.id;
+      const fetchUrl = `/api/providers/favicon?url=${encodeURIComponent(baseUrl)}`;
+      if (providerId) {
+        fetch(fetchUrl)
+          .then((res) => {
+            if (res.ok) {
+              return api.updateProvider(providerId, { icon: fetchUrl });
+            }
+          })
+          .catch(() => {}); // silent fail — fallback initials still work
+      }
       reset();
       onClose();
     },

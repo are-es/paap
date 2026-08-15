@@ -43,13 +43,16 @@ export function ProviderIcon({
 
   return (
     <div
-      className={`${sizeMap[size]} flex items-center justify-center font-extrabold shrink-0 bg-card border ${className ?? ""}`}
-      style={{ borderColor: `${color}30` }}
+      className={`${sizeMap[size]} flex items-center justify-center font-extrabold shrink-0 border ${className ?? ""}`}
+      style={{
+        backgroundColor: logo ? undefined : color,
+        borderColor: logo ? `${color}30` : "transparent",
+      }}
     >
       {logo ? (
         <Image src={logo} alt="" width={size === "sm" ? 20 : size === "lg" ? 36 : 26} height={size === "sm" ? 20 : size === "lg" ? 36 : 26} className="rounded-sm object-contain" unoptimized />
       ) : (
-        <span className="text-lg" style={{ color }}>{initials}</span>
+        <span className="text-lg font-black text-white drop-shadow-sm">{initials}</span>
       )}
     </div>
   );

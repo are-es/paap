@@ -97,6 +97,7 @@ func main() {
 	mux.HandleFunc("/api/health", handleHealth)
 
 	// ── Providers ───────────────────────────────────────────
+	mux.HandleFunc("/api/providers/favicon", handleFaviconFetch)
 	mux.HandleFunc("/api/providers", methodRouter(map[string]http.HandlerFunc{
 		"GET":  providerList,
 		"POST": providerCreate,

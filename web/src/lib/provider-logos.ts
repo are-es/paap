@@ -38,6 +38,10 @@ export function getProviderLogo(provider: { builtin_id?: string | null; name?: s
     for (const [key, path] of Object.entries(PROVIDER_LOGOS)) {
       if (provider.icon.toLowerCase().includes(key)) return path;
     }
+    // If icon is a URL path (e.g. /api/providers/favicon?url=...), use it directly
+    if (provider.icon.startsWith("/") || provider.icon.startsWith("http")) {
+      return provider.icon;
+    }
   }
   return null;
 }
