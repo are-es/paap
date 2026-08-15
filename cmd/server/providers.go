@@ -2123,7 +2123,7 @@ func handleFaviconFetch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "invalid url")
 		return
 	}
-	base := strings.TrimSuffix(parsed.Scheme+"://"+parsed.Host+parsed.Path, "/")
+	base := parsed.Scheme + "://" + parsed.Host
 
 	paths := []string{
 		"/favicon.ico",
