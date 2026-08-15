@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { getProviderInitials, getProviderLogo } from "@/lib/provider-logos";
 import type { Provider } from "@/lib/api";
 import Image from "next/image";
@@ -34,23 +35,25 @@ export function ProviderIcon({
   const logo = getProviderLogo(provider);
   const initials = getProviderInitials(provider.name);
   const color = providerNeonColor(provider.name);
+  const [imgError, setImgError] = useState(false);
+  const showLogo = logo && !imgError;
 
   const sizeMap = {
     sm: "w-10 h-10 text-sm rounded-lg",
-    md: "w-12 h-12 text-lg rounded-[10px]",       // 48px
-    lg: "w-16 h-16 text-2xl rounded-xl",           // 64px
+    md: "w-12 h-12 text-lg rounded-[10px]",
+    lg: "w-16 h-16 text-2xl rounded-xl",
   };
 
   return (
     <div
       className={`${sizeMap[size]} flex items-center justify-center font-extrabold shrink-0 border ${className ?? ""}`}
       style={{
-        backgroundColor: logo ? undefined : color,
-        borderColor: logo ? `${color}30` : "transparent",
+        backgroundColor: showLogo ? undefined : color,
+        borderColor: showLogo ? `${color}30` : "transparent",
       }}
     >
-      {logo ? (
-        <Image src={logo} alt="" width={size === "sm" ? 20 : size === "lg" ? 36 : 26} height={size === "sm" ? 20 : size === "lg" ? 36 : 26} className="rounded-sm object-contain" unoptimized />
+      {showLogo ? (
+        <Image src={logo} alt="" width={size === "sm" ? 20 : size === "lg" ? 36 : 26} height={size === "sm" ? 20 : size === "lg" ? 36 : 26} className="rounded-sm object-contain" unoptimized onError={() => setImgError(true)} />
       ) : (
         <span className="text-lg font-black text-white drop-shadow-sm">{initials}</span>
       )}
