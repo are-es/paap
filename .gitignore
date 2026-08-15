@@ -55,3 +55,6 @@ ARES.md
 # Leading slash is required — a bare "server" also matches cmd/server/,
 # silently ignoring every new file in the main package.
 /server
+
+# ARES orchestrator workspace
+.ares/
