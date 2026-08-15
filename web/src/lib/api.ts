@@ -478,3 +478,7 @@ export const api = {
   restart: () =>
     fetch("/api/system/restart", { method: "POST" }),
 };
+
+// Named exports for server-side static generation
+export const getGroups = () => api.getGroups();
+export const getProviders = () => api.getProviders();

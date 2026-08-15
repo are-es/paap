@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useSearchParams, useParams, useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, type GroupItem, type GroupModel } from "@/lib/api";
 import {
@@ -32,10 +32,7 @@ const MODE_OPTIONS = [
 ] as const;
 
 export function GroupSetupClient() {
-  const searchParams = useSearchParams();
-  const params = useParams<{ id: string }>();
-  // Support both: /groups/detail?id=xxx (new) and /groups/[id] (legacy)
-  const id = searchParams.get("id") || params.id || "";
+  const { id } = useParams<{ id: string }>();
   const queryClient = useQueryClient();
 
   const groupQuery = useQuery({
@@ -397,7 +394,7 @@ function NewGroupForm() {
     mutationFn: () => api.addGroup({ name: name.trim(), race_mode: mode, max_keys: 1 }),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["groups"] });
-      router.push(`/groups/detail?id=${data.id}`);
+      router.push(`/groups/${data.id}`);
     },
   });
 

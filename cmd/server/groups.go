@@ -516,7 +516,7 @@ func handleGroupRaceKeys(w http.ResponseWriter, r *http.Request, modelName, grou
 			}
 			setProviderAuth(req, t.baseURL, t.keyVal)
 
-			client := &http.Client{Timeout: sharedHTTPClient.Timeout, Transport: sharedHTTPClient.Transport}
+			client := newGroupClient()
 			var proxyUsed string
 			if proxyURL := getProviderProxy(t.providerID); proxyURL != "" {
 				proxyUsed = proxyURL
@@ -675,7 +675,7 @@ func handleGroupRoundRobinModel(w http.ResponseWriter, r *http.Request, groupNam
 		}
 		setProviderAuth(req, selected.baseURL, keyValue)
 
-		client := sharedHTTPClient
+		client := newGroupClient()
 		var proxyUsed string
 		if proxyURL := getProviderProxy(selected.providerID); proxyURL != "" {
 			proxyUsed = proxyURL
@@ -782,7 +782,7 @@ func handleGroupFailFirst(w http.ResponseWriter, r *http.Request, groupName stri
 		}
 		setProviderAuth(req, rt.baseURL, keyValue)
 
-		client := sharedHTTPClient
+		client := newGroupClient()
 		var proxyUsed string
 		if proxyURL := getProviderProxy(rt.providerID); proxyURL != "" {
 			proxyUsed = proxyURL
@@ -926,7 +926,7 @@ func handleGroupRRRaceKeys(w http.ResponseWriter, r *http.Request, groupName str
 			}
 			setProviderAuth(req, selected.baseURL, t.keyValue)
 
-			client := &http.Client{Timeout: sharedHTTPClient.Timeout, Transport: sharedHTTPClient.Transport}
+			client := newGroupClient()
 			var proxyUsed string
 			if proxyURL := getProviderProxy(selected.providerID); proxyURL != "" {
 				proxyUsed = proxyURL

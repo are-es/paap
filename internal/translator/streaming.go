@@ -17,6 +17,7 @@ type StreamTranslator struct {
 	inputTokens int
 
 	started        bool
+	messageStartSent bool
 	blockStarted   bool
 	blockIndex     int
 	hasToolCalls   bool
@@ -38,6 +39,48 @@ func NewStreamTranslator(w io.Writer, flush func(), model string) *StreamTransla
 // SetInputTokens sets the input token count (from the first chunk or separate info)
 func (st *StreamTranslator) SetInputTokens(n int) {
 	st.inputTokens = n
+}
+
+// EstimateInputTokens estimates input tokens from an OpenAI request body.
+// Uses ~4 chars per token as a rough heuristic (works for English + code).
+// Better than showing 0 to the client.
+func EstimateInputTokens(body map[string]interface{}) int {
+	var totalChars int
+
+	if system, ok := body["system"].(string); ok {
+		totalChars += len(system)
+	}
+
+	if messages, ok := body["messages"].([]interface{}); ok {
+		for _, msg := range messages {
+			msgMap, ok := msg.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			switch content := msgMap["content"].(type) {
+			case string:
+				totalChars += len(content)
+			case []interface{}:
+				for _, block := range content {
+					if blockMap, ok := block.(map[string]interface{}); ok {
+						if text, ok := blockMap["text"].(string); ok {
+							totalChars += len(text)
+						}
+						if tc, ok := blockMap["content"].(string); ok {
+							totalChars += len(tc)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// ~4 chars per token is a reasonable estimate
+	tokens := totalChars / 4
+	if tokens < 100 {
+		tokens = 100 // minimum floor
+	}
+	return tokens
 }
 
 // ProcessChunk processes a single OpenAI SSE chunk and emits Anthropic events.

@@ -32,6 +32,25 @@ var sharedHTTPClient = &http.Client{
 	},
 }
 
+// newGroupClient creates an isolated HTTP client for group routing attempts.
+// Each call gets its own Transport (connection pool) to prevent HTTP/2
+// connection reuse across different providers (421 Misdirected Request).
+func newGroupClient() *http.Client {
+	return &http.Client{
+		Timeout: 180 * time.Second,
+		Transport: &http.Transport{
+			MaxIdleConns:        100,
+			MaxIdleConnsPerHost: 20,
+			IdleConnTimeout:     90 * time.Second,
+			DialContext: (&net.Dialer{
+				Timeout:   10 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			TLSHandshakeTimeout: 10 * time.Second,
+		},
+	}
+}
+
 // Streaming HTTP client — no timeout for long-running streams
 var streamingHTTPClient = &http.Client{
 	Transport: &http.Transport{
