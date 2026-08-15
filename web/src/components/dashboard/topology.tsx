@@ -13,6 +13,29 @@ interface ProviderTopologyProps {
 
 const NEON_CYAN = "#22d3ee";
 
+function TopologyIcon({ logo, color, name, isActive }: { logo: string | null; color: string; name: string; isActive: boolean }) {
+  const [imgError, setImgError] = useState(false);
+  const showLogo = logo && !imgError;
+  return (
+    <div
+      className="w-[48px] h-[48px] rounded-xl flex items-center justify-center transition-all"
+      style={{
+        background: showLogo ? "var(--background, #0f0f1a)" : color,
+        border: `2px solid ${isActive ? color + "80" : color + "30"}`,
+        boxShadow: isActive
+          ? `0 0 20px ${color}50, 0 2px 8px rgba(0,0,0,0.4)`
+          : "0 2px 8px rgba(0,0,0,0.2)",
+      }}
+    >
+      {showLogo ? (
+        <Image src={logo} alt="" width={32} height={32} className="rounded-lg object-contain" unoptimized onError={() => setImgError(true)} />
+      ) : (
+        <span className="text-lg font-black text-white drop-shadow-sm">{name.slice(0, 2).toUpperCase()}</span>
+      )}
+    </div>
+  );
+}
+
 function providerColor(provider: Provider): string {
   const name = provider.name.toLowerCase();
   if (name.includes("google")) return "#4285f4";
@@ -403,22 +426,7 @@ export function ProviderTopology({ providers }: ProviderTopologyProps) {
               })}
               onMouseLeave={() => setTooltip(null)}
             >
-              <div
-                className="w-[48px] h-[48px] rounded-xl flex items-center justify-center transition-all"
-                style={{
-                  background: "var(--background, #0f0f1a)",
-                  border: `2px solid ${isActive ? color + "80" : color + "30"}`,
-                  boxShadow: isActive
-                    ? `0 0 20px ${color}50, 0 2px 8px rgba(0,0,0,0.4)`
-                    : "0 2px 8px rgba(0,0,0,0.2)",
-                }}
-              >
-                {logo ? (
-                  <Image src={logo} alt="" width={32} height={32} className="rounded-lg object-contain" unoptimized />
-                ) : (
-                  <span className="text-lg font-bold" style={{ color }}>{prov.name.slice(0, 1)}</span>
-                )}
-              </div>
+              <TopologyIcon logo={logo} color={color} name={prov.name} isActive={isActive} />
             </div>
           );
         })}
