@@ -1,6 +1,8 @@
 # PAAP — Pluggable AI API Proxy
 
-OpenAI-compatible API gateway that routes requests to 30+ providers (Xiaomi, StepFun, Google AI Studio, OpenRouter, custom endpoints). Manages API keys, model discovery, load balancing, failover, and token compression.
+OpenAI-compatible API gateway for configured providers and custom endpoints. Manages API keys, model discovery, load balancing, failover, and token compression.
+
+> Repository is publicly visible, but PAAP is proprietary source-available software. See [LICENSE](LICENSE); public visibility does not grant a right to use, copy, modify, redistribute, host, or deploy it.
 
 ## Features
 
@@ -19,8 +21,8 @@ OpenAI-compatible API gateway that routes requests to 30+ providers (Xiaomi, Ste
 
 ### Prerequisites
 
-- Go 1.24+
-- Node.js 24+ (via nvm)
+- Go 1.25+
+- Node.js 22+
 - SQLite (included in Go binary)
 
 ### Install
@@ -39,6 +41,8 @@ cd web && npm install && npm run build && cd ..
 # Run
 export PAAP_DATA=~/.paap
 export PAAP_PORT=9090
+# Optional: use another internal endpoint for MCP/Vision self-calls.
+export PAAP_INTERNAL_URL=http://127.0.0.1:9090
 ./bin/paap-server
 ```
 
@@ -166,12 +170,12 @@ sudo journalctl -u paap | grep compression
 
 ## Tech Stack
 
-- **Backend**: Go 1.24, SQLite (modernc.org/sqlite)
-- **Frontend**: Next.js 15, React 19, TypeScript, Tailwind CSS, shadcn/ui
+- **Backend**: Go 1.25, SQLite
+- **Frontend**: Next.js 16, React 19, TypeScript, Tailwind CSS, shadcn/ui
 - **Database**: SQLite
 - **Auth**: Gateway keys (Bearer token)
 - **MCP**: JSON-RPC 2.0
 
 ## License
 
-Private — internal use only.
+PAAP is proprietary source-available software. The repository is public for evaluation and reference only. No permission is granted to use, copy, modify, redistribute, host, or deploy it without prior written permission. See [LICENSE](LICENSE).

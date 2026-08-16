@@ -73,8 +73,8 @@ func mcpToolsList() []mcpToolDef {
 			InputSchema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"query":  map[string]interface{}{"type": "string", "description": "Search query. Be specific for better results. E.g. 'Go 1.24 release notes' not 'Go'"},
-					"limit":  map[string]interface{}{"type": "integer", "description": "Number of results (1-10, default 5)", "default": 5},
+					"query": map[string]interface{}{"type": "string", "description": "Search query. Be specific for better results. E.g. 'Go 1.24 release notes' not 'Go'"},
+					"limit": map[string]interface{}{"type": "integer", "description": "Number of results (1-10, default 5)", "default": 5},
 				},
 				"required": []string{"query"},
 			},
@@ -123,7 +123,7 @@ func mcpHandleGenerateImage(args json.RawMessage) interface{} {
 		return mcpToolError("prompt is required")
 	}
 
- imageURL, err := handleGenerateImage(params.Prompt, params.Size, "")
+	imageURL, err := handleGenerateImage(params.Prompt, params.Size, "")
 	if err != nil {
 		return mcpToolError(err.Error())
 	}
@@ -459,13 +459,13 @@ func mcpHandleAnalyzeImage(args json.RawMessage) interface{} {
 	}
 
 	body := map[string]interface{}{
-		"model":    visionModel,
-		"messages": messages,
+		"model":      visionModel,
+		"messages":   messages,
 		"max_tokens": 1024,
 	}
 	bodyJSON, _ := json.Marshal(body)
 
-	req, err := http.NewRequest("POST", "http://127.0.0.1:9090/v1/chat/completions", bytes.NewReader(bodyJSON))
+	req, err := http.NewRequest("POST", internalAPIBaseURL()+"/v1/chat/completions", bytes.NewReader(bodyJSON))
 	if err != nil {
 		return mcpToolError("failed to create request: " + err.Error())
 	}

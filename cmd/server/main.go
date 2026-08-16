@@ -261,6 +261,17 @@ func dataDirPath() string {
 	return filepath.Join(home, ".paap")
 }
 
+func internalAPIBaseURL() string {
+	if url := strings.TrimRight(os.Getenv("PAAP_INTERNAL_URL"), "/"); url != "" {
+		return url
+	}
+	port := os.Getenv("PAAP_PORT")
+	if port == "" {
+		port = "9090"
+	}
+	return "http://127.0.0.1:" + port
+}
+
 // defaultHost is the IPv4 loopback; ::1 is added alongside it at listen time.
 const defaultHost = "127.0.0.1"
 

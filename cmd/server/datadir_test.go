@@ -25,3 +25,21 @@ func TestDataDirPath(t *testing.T) {
 		}
 	})
 }
+
+func TestInternalAPIBaseURL(t *testing.T) {
+	t.Run("explicit override wins", func(t *testing.T) {
+		t.Setenv("PAAP_INTERNAL_URL", "http://paap.internal:19090")
+		t.Setenv("PAAP_PORT", "18080")
+		if got := internalAPIBaseURL(); got != "http://paap.internal:19090" {
+			t.Errorf("internalAPIBaseURL() = %q", got)
+		}
+	})
+
+	t.Run("uses configured port", func(t *testing.T) {
+		t.Setenv("PAAP_INTERNAL_URL", "")
+		t.Setenv("PAAP_PORT", "18080")
+		if got := internalAPIBaseURL(); got != "http://127.0.0.1:18080" {
+			t.Errorf("internalAPIBaseURL() = %q", got)
+		}
+	})
+}

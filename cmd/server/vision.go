@@ -9,7 +9,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -354,13 +353,7 @@ func describeSingleImage(ctx context.Context, img visionImage, model, prompt str
 		return "", fmt.Errorf("marshal request: %w", err)
 	}
 
-	// Determine PAAP's own port from environment or default
-	paapPort := os.Getenv("PAAP_PORT")
-	if paapPort == "" {
-		paapPort = "9090"
-	}
-
-	reqURL := fmt.Sprintf("http://127.0.0.1:%s/v1/chat/completions", paapPort)
+	reqURL := internalAPIBaseURL() + "/v1/chat/completions"
 	req, err := http.NewRequestWithContext(ctx, "POST", reqURL, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return "", fmt.Errorf("create request: %w", err)
