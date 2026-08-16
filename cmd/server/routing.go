@@ -972,15 +972,20 @@ func routeByModel(model string) (providerID, providerName, baseURL, modelID, key
 			if err != nil {
 				// Fallback: check provider_connections for OAuth tokens
 				var connID, connEmail, connToken string
-				connErr := db.DB.QueryRow(`SELECT id, email, access_token FROM provider_connections
-					WHERE provider_id=? AND is_active=1 ORDER BY created_at DESC LIMIT 1`, providerID).Scan(&connID, &connEmail, &connToken)
+				var connExpires int64
+				connErr := db.DB.QueryRow(`SELECT id, COALESCE(email,''), access_token, COALESCE(expires_at,0) FROM provider_connections
+					WHERE provider_id=? AND is_active=1 ORDER BY created_at DESC LIMIT 1`, providerID).Scan(&connID, &connEmail, &connToken, &connExpires)
 				if connErr != nil {
 					return "", "", "", "", "", "", "", "", fmt.Errorf("no active API keys or connections for provider '%s'", providerName)
 				}
 				keyID = connID
 				keyName = connEmail
-				keyValue = connToken
 				keyAccountID = ""
+				if isCodexOAuthProviderID(providerID) {
+					keyValue = refreshCodexConnection(connID, connToken, connExpires)
+				} else {
+					keyValue = connToken
+				}
 				err = nil
 			}
 
@@ -1050,13 +1055,14 @@ func routeByModel(model string) (providerID, providerName, baseURL, modelID, key
 		keyAccountID = ""
 		err = nil
 
-		// Proactive refresh: check expiry with 5 min lead, mutex per connection,
-		// merge refresh_token, atomic DB update. On failure: deactivate connection
-		// and surface clear "reconnect" error instead of silent 401.
-		var refreshErr error
-		keyValue, refreshErr = ensureAnigravityToken(connID, connRefresh)
-		if refreshErr != nil {
-			return "", "", "", "", "", "", "", "", fmt.Errorf("anigravity token error: %v", refreshErr)
+		if isCodexOAuthProviderID(providerID) {
+			keyValue = refreshCodexConnection(connID, connToken, connExpires)
+		} else {
+			var refreshErr error
+			keyValue, refreshErr = ensureAnigravityToken(connID, connRefresh)
+			if refreshErr != nil {
+				return "", "", "", "", "", "", "", "", fmt.Errorf("anigravity token error: %v", refreshErr)
+			}
 		}
 	}
 
@@ -1132,15 +1138,20 @@ func routeByGroup(groupName string) (providerID, providerName, baseURL, modelID,
 	if err != nil {
 		// Fallback: check provider_connections for OAuth tokens
 		var connID, connEmail, connToken string
-		connErr := db.DB.QueryRow(`SELECT id, email, access_token FROM provider_connections 
-			WHERE provider_id=? AND is_active=1 ORDER BY created_at DESC LIMIT 1`, selected.providerID).Scan(&connID, &connEmail, &connToken)
+		var connExpires int64
+		connErr := db.DB.QueryRow(`SELECT id, COALESCE(email,''), access_token, COALESCE(expires_at,0) FROM provider_connections 
+			WHERE provider_id=? AND is_active=1 ORDER BY created_at DESC LIMIT 1`, selected.providerID).Scan(&connID, &connEmail, &connToken, &connExpires)
 		if connErr != nil {
 			return "", "", "", "", "", "", "", "", fmt.Errorf("no active API keys or connections for provider '%s'", selected.providerName)
 		}
 		keyID = connID
 		keyName = connEmail
-		keyValue = connToken
 		keyAccountID = ""
+		if isCodexOAuthProviderID(selected.providerID) {
+			keyValue = refreshCodexConnection(connID, connToken, connExpires)
+		} else {
+			keyValue = connToken
+		}
 		err = nil
 	}
 

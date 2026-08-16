@@ -838,17 +838,24 @@ func oauthCodexDeviceCodePoll(w http.ResponseWriter, r *http.Request) {
 		expiresAt = time.Now().Add(time.Duration(tokenData.ExpiresIn) * time.Second).UTC().Format(time.RFC3339)
 	}
 
-	// Store token
+	// Store in provider_connections (same as Anigravity)
 	accountID := extractChatGPTAccountID(tokenData.AccessToken)
-	var existingID string
-	err = db.DB.QueryRow("SELECT id FROM api_keys WHERE provider_id=? AND key_type='oauth'", "builtin-openai-codex").Scan(&existingID)
-	if err == nil {
-		db.DB.Exec(`UPDATE api_keys SET key_encrypted=?, oauth_refresh_token=?, oauth_expires_at=?, account_id=?, is_active=1 WHERE id=?`,
-			tokenData.AccessToken, tokenData.RefreshToken, expiresAt, accountID, existingID)
+	connName := "openai-codex"
+	if accountID != "" {
+		connName = accountID[:8] + "…"
+	}
+	var existingConnID string
+	db.DB.QueryRow(`SELECT id FROM provider_connections WHERE provider_id=? AND auth_type='oauth' AND is_active=1 LIMIT 1`, "builtin-openai-codex").Scan(&existingConnID)
+	now := time.Now().Unix()
+	if existingConnID != "" {
+		db.DB.Exec(`UPDATE provider_connections SET access_token=?, refresh_token=?, expires_at=?, name=?, updated_at=? WHERE id=?`,
+			tokenData.AccessToken, tokenData.RefreshToken, expiresAt, connName, now, existingConnID)
 	} else {
-		keyID := genID()
-		db.DB.Exec(`INSERT INTO api_keys (id, provider_id, name, key_encrypted, key_type, oauth_refresh_token, oauth_expires_at, account_id, is_active) VALUES (?, ?, 'openai-codex', ?, 'oauth', ?, ?, ?, 1)`,
-			keyID, "builtin-openai-codex", tokenData.AccessToken, tokenData.RefreshToken, expiresAt, accountID)
+		connID := genID()
+		db.DB.Exec(`INSERT INTO provider_connections
+			(id, provider_id, auth_type, name, access_token, refresh_token, expires_at, test_status, is_active, created_at, updated_at)
+			VALUES (?, ?, 'oauth', ?, ?, ?, ?, 'connected', 1, ?, ?)`,
+			connID, "builtin-openai-codex", connName, tokenData.AccessToken, tokenData.RefreshToken, expiresAt, now, now)
 	}
 
 	db.DB.Exec("UPDATE providers SET oauth_data='' WHERE id=?", "builtin-openai-codex")
@@ -883,6 +890,62 @@ func newCodexTokenExchangeRequest(authorizationCode, codeVerifier string) (*http
 
 func isCodexOAuthProviderID(providerID string) bool {
 	return providerID == "openai-codex" || providerID == "builtin-openai-codex"
+}
+
+// refreshCodexConnection refreshes a Codex OAuth connection if the token is expired.
+// Returns the (possibly refreshed) access token. If not expired, returns currentToken unchanged.
+func refreshCodexConnection(connID, currentToken string, expiresAtUnix int64) string {
+	if expiresAtUnix == 0 {
+		return currentToken
+	}
+	// 5-minute buffer
+	if time.Now().Unix() < expiresAtUnix-300 {
+		return currentToken
+	}
+	var refreshToken string
+	db.DB.QueryRow("SELECT COALESCE(refresh_token,'') FROM provider_connections WHERE id=?", connID).Scan(&refreshToken)
+	if refreshToken == "" {
+		return currentToken // can't refresh, use as-is
+	}
+	form := url.Values{
+		"grant_type":    {"refresh_token"},
+		"refresh_token": {refreshToken},
+		"client_id":     {codexClientID},
+	}
+	req, err := http.NewRequest(http.MethodPost, codexTokenURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return currentToken
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "codex_cli_rs/0.0.0")
+	client := &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := client.Do(req)
+	if err != nil || resp.StatusCode != 200 {
+		if resp != nil {
+			resp.Body.Close()
+		}
+		return currentToken
+	}
+	defer resp.Body.Close()
+	var tokenData struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		ExpiresIn    int    `json:"expires_in"`
+	}
+	json.NewDecoder(resp.Body).Decode(&tokenData)
+	if tokenData.AccessToken == "" {
+		return currentToken
+	}
+	newRefresh := tokenData.RefreshToken
+	if newRefresh == "" {
+		newRefresh = refreshToken
+	}
+	newExpires := time.Now().Add(time.Duration(tokenData.ExpiresIn) * time.Second).Unix()
+	db.DB.Exec("UPDATE provider_connections SET access_token=?, refresh_token=?, expires_at=?, updated_at=? WHERE id=?",
+		tokenData.AccessToken, newRefresh, newExpires, time.Now().Unix(), connID)
+	log.Printf("[PAAP] Codex connection %s refreshed (expires: %d)", connID[:8], newExpires)
+	return tokenData.AccessToken
 }
 
 func oauthRoutes(w http.ResponseWriter, r *http.Request) {
