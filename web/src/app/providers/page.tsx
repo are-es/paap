@@ -35,7 +35,7 @@ export default function ProvidersPage() {
   return (
     <div className="p-6 md:p-8 min-h-full">
       <div className="flex items-center justify-between mb-6">
-        <h1 className="font-heading text-2xl font-bold">Providers</h1>
+        <h1 className="font-heading text-[30px] font-bold tracking-tight">Providers</h1>
         <div className="flex items-center gap-2">
           <DocsButton onClick={() => setShowDocs(true)} />
           <Button onClick={() => setAddOpen(true)}>
@@ -92,7 +92,7 @@ export default function ProvidersPage() {
         <div className="space-y-6">
           {builtin.length > 0 && (
             <div>
-              <h2 className="text-[13px] font-medium text-muted-foreground mb-3">
+              <h2 className="text-lg font-medium text-muted-foreground mb-3">
                 Built-in
               </h2>
               <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(420px, 1fr))" }}>
@@ -102,7 +102,7 @@ export default function ProvidersPage() {
           )}
           {custom.length > 0 && (
             <div>
-              <h2 className="text-[13px] font-medium text-muted-foreground mb-3">
+              <h2 className="text-lg font-medium text-muted-foreground mb-3">
                 Custom
               </h2>
               <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(420px, 1fr))" }}>
