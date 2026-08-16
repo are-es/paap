@@ -22,19 +22,42 @@ check_dep() {
   exit 1
 }
 
+check_go_version() {
+  local version major minor
+  version=$(go env GOVERSION 2>/dev/null | sed -n 's/^go\([0-9]\+\)\.\([0-9]\+\).*/\1 \2/p')
+  if [ -z "$version" ]; then
+    echo "❌ Could not determine Go version. Go 1.25+ required."
+    exit 1
+  fi
+  read -r major minor <<< "$version"
+  if [ "$major" -lt 1 ] || { [ "$major" -eq 1 ] && [ "$minor" -lt 25 ]; }; then
+    echo "❌ Go 1.25+ required; found $(go version)."
+    exit 1
+  fi
+  echo "✅ Go $(go env GOVERSION) found"
+}
+
 echo ""
 echo "Checking dependencies..."
 check_dep go
+check_go_version
 check_dep node
 check_dep npm
 check_dep git
+check_dep cc
 
 # Clone or update
+SOURCE_CHANGED=true
 if [ -d "$INSTALL_DIR/paap/.git" ]; then
   echo ""
   echo "📁 PAAP already exists. Updating..."
   cd "$INSTALL_DIR/paap"
+  OLD_COMMIT=$(git rev-parse HEAD)
   git pull
+  NEW_COMMIT=$(git rev-parse HEAD)
+  if [ "$OLD_COMMIT" = "$NEW_COMMIT" ]; then
+    SOURCE_CHANGED=false
+  fi
 else
   echo ""
   echo "📥 Cloning PAAP..."
@@ -43,38 +66,29 @@ else
   cd "$INSTALL_DIR/paap"
 fi
 
-# Build backend (skip if binary exists and recent)
+# Build backend when source changed or binary is missing.
 echo ""
-if [ -f "bin/paap-server" ]; then
-  BINARY_AGE=$(( $(date +%s) - $(stat -c %Y bin/paap-server 2>/dev/null || echo 0) ))
-  if [ $BINARY_AGE -lt 3600 ]; then
-    echo "✅ Backend binary recent ($(($BINARY_AGE / 60))m old) — skip build"
-  else
-    echo "🔨 Building backend..."
-    CGO_ENABLED=1 go build -o bin/paap-server ./cmd/server/
-    echo "✅ Backend built"
-  fi
-else
+if [ "$SOURCE_CHANGED" = true ] || [ ! -f "bin/paap-server" ]; then
   echo "🔨 Building backend..."
   CGO_ENABLED=1 go build -o bin/paap-server ./cmd/server/
   echo "✅ Backend built"
+else
+  echo "✅ Backend matches current source — skip build"
 fi
 
-# Build frontend (skip if out/ exists and recent)
+# Build frontend when source changed or export is missing.
 echo ""
-if [ -d "web/out" ] && [ -f "web/out/index.html" ]; then
-  FRONTEND_AGE=$(( $(date +%s) - $(stat -c %Y web/out/index.html 2>/dev/null || echo 0) ))
-  if [ $FRONTEND_AGE -lt 3600 ]; then
-    echo "✅ Frontend build recent ($(($FRONTEND_AGE / 60))m old) — skip build"
-  else
-    echo "🔨 Building frontend..."
-    cd web && npm run build && cd ..
-    echo "✅ Frontend built"
-  fi
-else
+if [ "$SOURCE_CHANGED" = true ] || [ ! -f "web/out/index.html" ]; then
   echo "🔨 Building frontend..."
-  cd web && npm install --production=false && npm run build && cd ..
+  cd web
+  if [ ! -d "node_modules" ]; then
+    npm install --production=false
+  fi
+  npm run build
+  cd ..
   echo "✅ Frontend built"
+else
+  echo "✅ Frontend matches current source — skip build"
 fi
 
 # Create data directory (skip if exists)

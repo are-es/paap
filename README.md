@@ -23,7 +23,8 @@ OpenAI-compatible API gateway for configured providers and custom endpoints. Man
 
 - Go 1.25+
 - Node.js 22+
-- SQLite (included in Go binary)
+- C compiler (`cc` or `gcc`) — required by CGO for `github.com/mattn/go-sqlite3`
+- SQLite development headers if your OS packages `sqlite3` separately
 
 ### Install
 
