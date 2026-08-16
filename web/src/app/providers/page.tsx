@@ -10,7 +10,7 @@ import {
   providerNeonColor,
   getNeonClasses,
 } from "@/components/providers/provider-helpers";
-import { Plus, Layers, KeyRound, Server, Puzzle } from "lucide-react";
+import { Plus, Layers, KeyRound } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AddProviderModal } from "@/components/providers/add-provider-modal";
 import { DocsModal, DocsButton } from "@/components/ui/docs-modal";
@@ -71,16 +71,16 @@ export default function ProvidersPage() {
       )}
 
       {/* Filter tabs */}
-      <div className="flex items-center gap-1 mb-4">
+      <div className="flex items-center gap-0 mb-4 border-b border-border">
         {([["all", "All"], ["builtin", "Built-in"], ["custom", "Custom"]] as const).map(([key, label]) => (
           <button
             key={key}
             onClick={() => setFilter(key)}
             className={cn(
-              "px-3 py-1.5 text-sm rounded-md transition-colors",
+              "px-3 py-2 text-sm transition-colors -mb-px",
               filter === key
-                ? "bg-primary/15 text-primary font-medium"
-                : "text-muted-foreground hover:text-foreground hover:bg-muted/40"
+                ? "text-foreground font-medium border-b-2 border-foreground"
+                : "text-muted-foreground hover:text-foreground"
             )}
           >
             {label}
@@ -92,8 +92,8 @@ export default function ProvidersPage() {
         <div className="space-y-6">
           {builtin.length > 0 && (
             <div>
-              <h2 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3 flex items-center gap-1.5">
-                <Server className="w-3.5 h-3.5" /> Built-in
+              <h2 className="text-xs font-medium text-muted-foreground mb-3">
+                Built-in
               </h2>
               <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(420px, 1fr))" }}>
                 {builtin.map((p) => <ProviderCard key={p.id} provider={p} />)}
@@ -102,8 +102,8 @@ export default function ProvidersPage() {
           )}
           {custom.length > 0 && (
             <div>
-              <h2 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3 flex items-center gap-1.5">
-                <Puzzle className="w-3.5 h-3.5" /> Custom
+              <h2 className="text-xs font-medium text-muted-foreground mb-3">
+                Custom
               </h2>
               <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(420px, 1fr))" }}>
                 {custom.map((p) => <ProviderCard key={p.id} provider={p} />)}
@@ -155,9 +155,8 @@ function ProviderCard({ provider }: { provider: Provider }) {
     <div
       onClick={handleClick}
       className={cn(
-        "group relative flex rounded-lg border border-border bg-card overflow-hidden cursor-pointer transition-all duration-200",
-        neonClasses.hover,
-        "hover:shadow-lg hover:shadow-primary/5 hover:-translate-y-0.5"
+        "group relative flex rounded-lg border border-border bg-card overflow-hidden cursor-pointer transition-colors",
+        neonClasses.hover
       )}
       style={{ "--glow-color": `${neon}30` } as React.CSSProperties}
     >
