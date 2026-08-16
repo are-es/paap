@@ -647,24 +647,10 @@ function ConnectionsSection({ providerId }: { providerId: string }) {
       <div className="space-y-2 mt-3">
         {connections.map((conn) => (
           <div key={conn.id} className="flex items-center gap-3 px-3 py-2.5 rounded-lg border border-border bg-secondary/60">
-            <button
-              onClick={() => toggleMutation.mutate(conn.id)}
-              className={cn(
-                "w-8 h-[18px] rounded-full relative transition-colors shrink-0",
-                conn.is_active
-                  ? "bg-green-500"
-                  : "bg-foreground/15"
-              )}
-            >
-              <span
-                className={cn(
-                  "absolute top-0.5 w-3.5 h-3.5 rounded-full shadow-sm transition-all bg-white ring-1 ring-black/10",
-                  conn.is_active
-                    ? "left-[16px]"
-                    : "left-0.5"
-                )}
-              />
-            </button>
+            <ToggleSwitch
+              enabled={conn.is_active}
+              onChange={() => toggleMutation.mutate(conn.id)}
+            />
             <div className="flex-1">
               <div className="text-sm font-medium">{conn.name}</div>
               {conn.email && <div className="text-xs text-muted-foreground">{conn.email}</div>}
