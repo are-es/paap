@@ -160,7 +160,6 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 
 	// ── Resolve compression level — determines injection vs compression ──
 	compressLevel := resolveCompressionLevel()
-	compressionMode := getSettingStrCached("compression_mode", "")
 	log.Printf("[compression] resolved level=%s (off=%v)", compressLevel.String(), compressLevel == compression.LevelOff)
 
 	var compressionTokensBefore, compressionTokensSaved int
@@ -181,52 +180,6 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 					}
 					log.Printf("[PAAP] OFF→inject PI: position=%s text_len=%d", piPosition, len(piText))
 					injectSystemPrompt(&msgMaps, piText, piPosition)
-					rawBody["messages"] = func() []interface{} {
-						out := make([]interface{}, len(msgMaps))
-						for i, m := range msgMaps {
-							out[i] = m
-						}
-						return out
-					}()
-				}
-			}
-		}
-		if compressionMode != "" {
-			// Support per-mode levels: "caveman:ultra,ponytail:full"
-			modes := strings.Split(compressionMode, ",")
-			var combinedText string
-			for _, modeEntry := range modes {
-				modeEntry = strings.TrimSpace(modeEntry)
-				if modeEntry == "" {
-					continue
-				}
-				parts := strings.SplitN(modeEntry, ":", 2)
-				mode := strings.TrimSpace(parts[0])
-				level := "full"
-				if len(parts) > 1 {
-					level = strings.TrimSpace(parts[1])
-				}
-				text := getCompressionInstruction(mode, level)
-				if text != "" {
-					if mode == "caveman" && getSettingStrCached("caveman_voice", "true") == "true" {
-						text += "\n\nCAVEMAN VOICE: Drop articles (a/an/the), filler (just/really/basically/actually/simply), pleasantries, hedging. Fragments OK. Short synonyms (big not extensive, fix not implement a solution for). Code blocks, file paths, commands, errors, URLs: keep exact. No decorative emoji. No narrating tool calls. No status phrases. State the thing, the action, the reason. Then next step."
-					}
-					if combinedText != "" {
-						combinedText += "\n\n"
-					}
-					combinedText += text
-				}
-			}
-			if combinedText != "" {
-				if msgs, ok := rawBody["messages"].([]interface{}); ok {
-					var msgMaps []map[string]interface{}
-					for _, m := range msgs {
-						if mm, ok := m.(map[string]interface{}); ok {
-							msgMaps = append(msgMaps, mm)
-						}
-					}
-					log.Printf("[PAAP] OFF→inject mode=%s text_len=%d", compressionMode, len(combinedText))
-					injectSystemPrompt(&msgMaps, combinedText, "prepend")
 					rawBody["messages"] = func() []interface{} {
 						out := make([]interface{}, len(msgMaps))
 						for i, m := range msgMaps {
@@ -587,7 +540,7 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 					tIn, tOut, streamBody := handleStreaming(w, resp2)
 					resp2.Body.Close()
 					logProxyRequest(providerID, providerName, modelID, nextKeyID, nextKeyName, groupName, proxyUsed, 200, tIn, tOut, latencyMs, "", streamBody)
-					TrafficLog(TrafficEntry{Model: modelID, Provider: providerName, StatusCode: 200, LatencyMs: latencyMs, CompressMode: compressionMode, PAAPOverheadMs: paapOverheadMs, TTFBMs: ttfbMs, IsStream: true, TokensIn: tIn, TokensOut: tOut})
+					TrafficLog(TrafficEntry{Model: modelID, Provider: providerName, StatusCode: 200, LatencyMs: latencyMs, CompressMode: compressLevel.String(), PAAPOverheadMs: paapOverheadMs, TTFBMs: ttfbMs, IsStream: true, TokensIn: tIn, TokensOut: tOut})
 				} else {
 					// Parse tokens from non-streaming response
 					bodyBytes2, _ := io.ReadAll(resp2.Body)
@@ -595,7 +548,7 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 					var tokensIn, tokensOut int
 					parseUsageJSON(bodyBytes2, &tokensIn, &tokensOut)
 					logProxyRequest(providerID, providerName, modelID, nextKeyID, nextKeyName, groupName, proxyUsed, 200, tokensIn, tokensOut, latencyMs, "", bodyBytes2)
-					TrafficLog(TrafficEntry{Model: modelID, Provider: providerName, StatusCode: 200, LatencyMs: latencyMs, CompressMode: compressionMode, PAAPOverheadMs: paapOverheadMs, TTFBMs: ttfbMs, IsStream: false, TokensIn: tokensIn, TokensOut: tokensOut})
+					TrafficLog(TrafficEntry{Model: modelID, Provider: providerName, StatusCode: 200, LatencyMs: latencyMs, CompressMode: compressLevel.String(), PAAPOverheadMs: paapOverheadMs, TTFBMs: ttfbMs, IsStream: false, TokensIn: tokensIn, TokensOut: tokensOut})
 					w.Header().Set("Content-Type", "application/json")
 					w.Write(bodyBytes2)
 				}
@@ -1317,13 +1270,6 @@ func getGroupInjectPrompt(groupName string) (injectPrompt, injectPosition string
 	return injectPrompt, injectPosition
 }
 
-// getCompressionInstruction returns compressed instruction text for the given mode and level
-
-// getCompressionInstruction returns compressed instruction text from config files
-func getCompressionInstruction(mode, level string) string {
-	return GetCompressionPrompt(mode, level)
-}
-
 // injectSystemPrompt injects a system prompt into the messages
 // Wrapped with behavior rules — AI follows but never discusses
 func injectSystemPrompt(messages *[]map[string]interface{}, injectPrompt, injectPosition string) {
@@ -1434,34 +1380,12 @@ func resolveUpstreamURL(baseURL, accountID string) string {
 	return base + "/chat/completions"
 }
 
-// resolveCompressionLevel determines the compression level from settings.
-// New "compress.level" takes precedence. Falls back to old settings.
+// resolveCompressionLevel determines the compression level from its active setting.
 func resolveCompressionLevel() compression.Level {
-	// New setting
 	if lvl := getSettingStrCached("compress_level", ""); lvl != "" {
 		return compression.ParseLevel(lvl)
 	}
-
-	// Old settings mapping
-	mode := getSettingStrCached("compression_mode", "")
-	if getSettingStrCached("rtk_enabled", "true") == "true" {
-		return compression.LevelMedium
-	}
-
-	if strings.Contains(mode, "caveman") {
-		level := getSettingStrCached("compression_level", "full")
-		switch level {
-		case "lite":
-			return compression.LevelLite
-		case "full":
-			return compression.LevelMedium
-		case "ultra":
-			return compression.LevelHigh
-		}
-		return compression.LevelMedium
-	}
-
-	return compression.LevelMedium
+	return compression.LevelOff
 }
 
 // handleAnthropicNativeFromOpenAI translates OpenAI /v1/chat/completions request

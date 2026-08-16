@@ -91,16 +91,13 @@ else
   echo "✅ Frontend matches current source — skip build"
 fi
 
-# Create data directory (skip if exists)
+# Create data directory.
 echo ""
-if [ -d "$INSTALL_DIR/config" ]; then
+if [ -d "$INSTALL_DIR" ]; then
   echo "✅ Data directory exists — skip"
 else
   echo "📁 Setting up data directory..."
   mkdir -p "$INSTALL_DIR"
-  mkdir -p "$INSTALL_DIR/config"
-  cp -n config/caveman.md "$INSTALL_DIR/config/" 2>/dev/null || true
-  cp -n config/ponytail.md "$INSTALL_DIR/config/" 2>/dev/null || true
   echo "✅ Data directory ready"
 fi
 

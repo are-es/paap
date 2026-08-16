@@ -3,6 +3,8 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/dolvin/paap/cmd/server/compression"
 )
 
 // bigToolText builds a tool result body well past anthropicMinCompressSize that
@@ -20,6 +22,17 @@ func setCompressLevel(t *testing.T, level string) {
 	t.Helper()
 	setSetting("compress_level", level)
 	t.Cleanup(func() { setSetting("compress_level", "off") })
+}
+
+func TestResolveCompressionLevelUsesOnlyCompressLevel(t *testing.T) {
+	setSetting("compress_level", "")
+	setSetting("compression_mode", "caveman:ultra")
+	t.Cleanup(func() {
+		setSetting("compression_mode", "")
+	})
+	if got := resolveCompressionLevel(); got != compression.LevelOff {
+		t.Fatalf("resolveCompressionLevel() = %s, want off", got.String())
+	}
 }
 
 func toolResultMsg(text string, isError bool) map[string]interface{} {

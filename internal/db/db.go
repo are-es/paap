@@ -317,7 +317,7 @@ func migrate() error {
 	DB.Exec(`INSERT OR IGNORE INTO system_settings (key, value) VALUES ('prompt_injection_enabled', 'false')`)
 	DB.Exec(`INSERT OR IGNORE INTO system_settings (key, value) VALUES ('prompt_injection_text', '')`)
 	DB.Exec(`INSERT OR IGNORE INTO system_settings (key, value) VALUES ('prompt_injection_position', 'prepend')`)
-	DB.Exec(`INSERT OR IGNORE INTO system_settings (key, value) VALUES ('rtk_enabled', 'true')`)
+
 	// === Vision Tool settings ===
 	DB.Exec(`INSERT OR IGNORE INTO system_settings (key, value) VALUES ('vision_enabled', 'false')`)
 	DB.Exec(`INSERT OR IGNORE INTO system_settings (key, value) VALUES ('vision_model', '')`)
