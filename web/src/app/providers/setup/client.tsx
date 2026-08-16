@@ -124,7 +124,9 @@ export function ProviderSetupClient() {
           </button>
         </div>
       )}
-      <KeysSection providerId={providerId} />
+      {provider?.auth_type !== "connection" && (
+        <KeysSection providerId={providerId} />
+      )}
       {provider?.auth_type === "connection" && (
         <ConnectionsSection providerId={providerId} />
       )}
@@ -577,7 +579,48 @@ function ConnectionsSection({ providerId }: { providerId: string }) {
   const connections = connectionsQuery.data ?? [];
 
   return (
-    <NeonCollapse title="Connections" icon={<Globe className="w-4 h-4" />} count={connections.length} defaultOpen accentColor="purple">
+    <NeonCollapse
+      title="Connections"
+      icon={<Globe className="w-4 h-4" />}
+      count={connections.length}
+      defaultOpen
+      accentColor="purple"
+      action={
+        <div className="flex gap-2">
+          {oauthFlow ? (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                if (pollTimerRef.current) {
+                  clearTimeout(pollTimerRef.current);
+                  pollTimerRef.current = null;
+                }
+                setOauthFlow(null);
+                setPolling(false);
+              }}
+              className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] rounded border border-border text-muted-foreground hover:text-foreground transition-colors font-medium"
+            >
+              Cancel
+            </button>
+          ) : (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                if (isGoogleOAuth) {
+                  startGoogleOAuth();
+                } else {
+                  startOAuth();
+                }
+              }}
+              className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] rounded border border-purple-500/20 text-purple-600 bg-purple-500/5 hover:bg-purple-500/10 transition-colors font-medium"
+            >
+              <Plus className="w-3 h-3" />
+              {isGoogleOAuth ? "Connect Google" : isCodexOAuth ? "Connect OpenAI" : "Connect"}
+            </button>
+          )}
+        </div>
+      }
+    >
       <div className="space-y-2 mt-3">
         {connections.map((conn) => (
           <div key={conn.id} className="flex items-center gap-3 px-3 py-2.5 rounded-lg border border-border bg-secondary/60">
@@ -613,8 +656,8 @@ function ConnectionsSection({ providerId }: { providerId: string }) {
         ))}
       </div>
 
-      {oauthFlow ? (
-        <div className="mt-3 p-4 rounded-lg border border-neon-cyan/20 bg-neon-cyan/5">
+      {oauthFlow && (
+        <div className="p-4 rounded-lg border border-neon-cyan/20 bg-neon-cyan/5">
           <div className="text-sm font-medium mb-2 text-neon-cyan">Authorize in browser</div>
           <div className="space-y-2">
             <div>
@@ -634,22 +677,10 @@ function ConnectionsSection({ providerId }: { providerId: string }) {
               </div>
             )}
           </div>
-          <button onClick={() => { if (pollTimerRef.current) { clearTimeout(pollTimerRef.current); pollTimerRef.current = null; } setOauthFlow(null); setPolling(false); }} className="mt-3 text-xs text-muted-foreground hover:text-foreground">
-            Cancel
-          </button>
         </div>
-      ) : (
-        <button
-          onClick={isGoogleOAuth ? startGoogleOAuth : startOAuth}
-          className="mt-3 inline-flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg border border-border hover:border-neon-purple/40 hover:bg-neon-purple/5 text-muted-foreground hover:text-neon-purple transition-all"
-        >
-          <Plus className="w-3.5 h-3.5" /> {isGoogleOAuth ? "Connect Google" : isCodexOAuth ? "Connect OpenAI" : "Connect"}
-        </button>
       )}
 
-      {oauthError && (
-        <div className="mt-2 text-xs text-neon-magenta">{oauthError}</div>
-      )}
+      {oauthError && <div className="text-xs text-neon-magenta">{oauthError}</div>}
     </NeonCollapse>
   );
 }
