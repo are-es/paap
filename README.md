@@ -30,7 +30,7 @@ OpenAI-compatible API gateway for configured providers and custom endpoints. Man
 
 ```bash
 # Clone
-git clone <repo-url> paap
+git clone https://github.com/are-es/paap
 cd paap
 
 # Build backend
