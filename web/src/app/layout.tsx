@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Space_Grotesk, JetBrains_Mono } from "next/font/google";
+import { Inter, JetBrains_Mono } from "next/font/google";
 import localFont from "next/font/local";
 import { Sidebar } from "@/components/sidebar";
 import { Providers } from "@/components/providers";
@@ -19,7 +19,7 @@ const bricolage = localFont({
   display: "swap",
 });
 
-const spaceGrotesk = Space_Grotesk({
+const inter = Inter({
   variable: "--font-sans",
   subsets: ["latin"],
   display: "swap",
@@ -32,7 +32,7 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "PAAP — Pangkalan API",
+  title: "PAAP - Pangkalan API",
   description: "AI Proxy/Router Dashboard",
   icons: { icon: "/assets/favicon.svg" },
 };
@@ -47,14 +47,14 @@ export default function RootLayout({
       lang="en"
       data-theme="light"
       suppressHydrationWarning
-      className={`${bricolage.variable} ${spaceGrotesk.variable} ${jetbrainsMono.variable} h-full antialiased`}
+      className={`${bricolage.variable} ${inter.variable} ${jetbrainsMono.variable} h-full antialiased`}
     >
       <body className="h-screen overflow-hidden flex font-sans">
         <ThemeProvider>
           <LanguageProvider>
             <Providers>
               <Sidebar />
-              <main className="flex-1 overflow-auto">{children}</main>
+              <main className="flex-1 overflow-auto min-w-0">{children}</main>
             </Providers>
           </LanguageProvider>
         </ThemeProvider>
