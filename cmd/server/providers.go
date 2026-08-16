@@ -11,6 +11,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strconv"
 	"strings"
@@ -214,10 +215,10 @@ func providerList(w http.ResponseWriter, r *http.Request) {
 
 func providerCreate(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name           string `json:"name"`
-		BaseURL        string `json:"base_url"`
-		Icon           string `json:"icon"`
-		CustomHeaders  string `json:"custom_headers"`
+		Name          string `json:"name"`
+		BaseURL       string `json:"base_url"`
+		Icon          string `json:"icon"`
+		CustomHeaders string `json:"custom_headers"`
 	}
 	if err := parseBody(r, &body); err != nil {
 		writeError(w, 400, "invalid json")
@@ -573,12 +574,12 @@ func providerGet(w http.ResponseWriter, r *http.Request, id string) {
 
 func providerUpdate(w http.ResponseWriter, r *http.Request, id string) {
 	var body struct {
-		Name           *string `json:"name"`
-		BaseURL        *string `json:"base_url"`
-		Icon           *string `json:"icon"`
-		IsActive       *bool   `json:"is_active"`
-		RoundRobin     *bool   `json:"round_robin"`
-		CustomHeaders  *string `json:"custom_headers"`
+		Name          *string `json:"name"`
+		BaseURL       *string `json:"base_url"`
+		Icon          *string `json:"icon"`
+		IsActive      *bool   `json:"is_active"`
+		RoundRobin    *bool   `json:"round_robin"`
+		CustomHeaders *string `json:"custom_headers"`
 	}
 	if err := parseBody(r, &body); err != nil {
 		writeError(w, 400, "invalid json")
@@ -802,6 +803,45 @@ func providerTestPrompt(w http.ResponseWriter, r *http.Request, providerID strin
 				if refreshed, err := GetOAuthKeyValue(keyID, keyVal, expiresAt); err == nil {
 					keyVal = refreshed
 				}
+			}
+
+			if isCodexOAuthProviderID(providerID) {
+				start := time.Now()
+				recorder := httptest.NewRecorder()
+				handleCodexProxyBody(recorder, r, map[string]interface{}{
+					"model": body.ModelID,
+					"messages": []interface{}{
+						map[string]interface{}{"role": "user", "content": body.Prompt},
+					},
+					"stream": false,
+				}, keyVal, baseURL, accountID)
+
+				raw := recorder.Body.String()
+				result := map[string]interface{}{
+					"key_id":     keyID,
+					"key_name":   keyName,
+					"latency_ms": time.Since(start).Milliseconds(),
+					"status":     recorder.Code,
+				}
+				var parsed map[string]interface{}
+				if json.Unmarshal(recorder.Body.Bytes(), &parsed) == nil {
+					if choices, ok := parsed["choices"].([]interface{}); ok && len(choices) > 0 {
+						if choice, ok := choices[0].(map[string]interface{}); ok {
+							if message, ok := choice["message"].(map[string]interface{}); ok {
+								result["content"] = message["content"]
+							}
+						}
+					}
+					if usage, ok := parsed["usage"].(map[string]interface{}); ok {
+						result["usage"] = usage
+					}
+				}
+				result["response"] = raw[:min(len(raw), 500)]
+				if recorder.Code != http.StatusOK {
+					autoDisableKey(keyID, keyName, recorder.Code, "")
+				}
+				results = append(results, result)
+				continue
 			}
 
 			// Check if provider supports Anthropic natively
@@ -1582,6 +1622,34 @@ func providerDetectModels(w http.ResponseWriter, r *http.Request, providerID str
 	extraHeaders := map[string]string{}
 
 	switch builtinID {
+	case "openai-codex":
+		// OpenAI Codex: try live API discovery first, fall back to curated list
+		var oauthToken string
+		db.DB.QueryRow("SELECT COALESCE(key_encrypted,'') FROM api_keys WHERE provider_id=? AND key_type='oauth' AND is_active=1 LIMIT 1", providerID).Scan(&oauthToken)
+		var acctID string
+		if oauthToken != "" {
+			acctID = extractChatGPTAccountID(oauthToken)
+		}
+		liveModels := fetchCodexModelsLive(oauthToken, acctID, "")
+		var codexModels []string
+		if len(liveModels) > 0 {
+			codexModels = liveModels
+		} else {
+			codexModels = codexDefaultModels
+		}
+		added := 0
+		for _, m := range codexModels {
+			result, err := db.DB.Exec(`INSERT INTO models (id, provider_id, model_id, is_free, is_selected, created_at)
+				VALUES (?, ?, ?, 0, 1, ?)
+				ON CONFLICT(provider_id, model_id) DO UPDATE SET is_selected=1`, genID(), providerID, m, time.Now().Unix())
+			if err == nil {
+				if changed, _ := result.RowsAffected(); changed == 1 {
+					added++
+				}
+			}
+		}
+		writeJSON(w, map[string]interface{}{"detected": len(codexModels), "added": added})
+		return
 	case "anigravity":
 		// Anigravity uses hardcoded models (API requires OAuth, no /v1/models endpoint)
 		anigravityModels := []string{

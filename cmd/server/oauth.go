@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -29,6 +30,30 @@ const (
 	grokClientIdentifier = "grok-pager"
 	grokClientVersion    = "0.2.93"
 )
+
+// OpenAI Codex OAuth constants
+const (
+	codexClientID      = "app_EMoamEEZ73f0CkXaXp7hrann"
+	codexIssuer        = "https://auth.openai.com"
+	codexDeviceCodeURL = "https://auth.openai.com/api/accounts/deviceauth/usercode"
+	codexPollURL       = "https://auth.openai.com/api/accounts/deviceauth/token"
+	codexTokenURL      = "https://auth.openai.com/oauth/token"
+	codexDeviceURL     = "https://auth.openai.com/codex/device"
+	codexRedirectURI   = "https://auth.openai.com/deviceauth/callback"
+	codexBaseURL       = "https://chatgpt.com/backend-api/codex"
+)
+
+func marshalCodexOAuthData(deviceAuthID, userCode, expiresAt string) (string, error) {
+	data, err := json.Marshal(struct {
+		DeviceAuthID string `json:"device_auth_id"`
+		UserCode     string `json:"user_code"`
+		ExpiresAt    string `json:"expires_at"`
+	}{deviceAuthID, userCode, expiresAt})
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
 
 // Anigravity Google OAuth constants
 const (
@@ -308,21 +333,39 @@ func oauthDisconnect(w http.ResponseWriter, r *http.Request) {
 
 // ── Token Refresh ──────────────────────────────────────────
 
-// RefreshOAuthKey refreshes a single OAuth key's token
+// RefreshOAuthKey refreshes a single OAuth key's token.
+// Detects provider (Grok vs Codex) and uses correct client_id/URL.
 func RefreshOAuthKey(keyID string) (newAccess, newRefresh, newExpires string, err error) {
-	var refreshToken string
-	err = db.DB.QueryRow("SELECT oauth_refresh_token FROM api_keys WHERE id=? AND key_type='oauth'", keyID).Scan(&refreshToken)
+	var refreshToken, providerID string
+	err = db.DB.QueryRow("SELECT oauth_refresh_token, provider_id FROM api_keys WHERE id=? AND key_type='oauth'", keyID).Scan(&refreshToken, &providerID)
 	if err != nil || refreshToken == "" {
 		return "", "", "", fmt.Errorf("no refresh token for key %s", keyID)
 	}
 
+	// Determine client ID and token URL based on provider
+	clientID := grokClientID
+	tokenURL := grokTokenURL
+	if strings.Contains(providerID, "openai-codex") || strings.Contains(providerID, "codex") {
+		clientID = codexClientID
+		tokenURL = codexTokenURL
+	}
+
 	form := url.Values{
 		"grant_type":    {"refresh_token"},
-		"client_id":     {grokClientID},
+		"client_id":     {clientID},
 		"refresh_token": {refreshToken},
 	}
 
-	resp, err := http.PostForm(grokTokenURL, form)
+	req, err := http.NewRequest(http.MethodPost, tokenURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", "", "", fmt.Errorf("refresh request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if isCodexOAuthProviderID(providerID) {
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("User-Agent", "codex_cli_rs/0.0.0")
+	}
+	resp, err := sharedHTTPClient.Do(req)
 	if err != nil {
 		return "", "", "", fmt.Errorf("refresh failed: %v", err)
 	}
@@ -338,6 +381,9 @@ func RefreshOAuthKey(keyID string) (newAccess, newRefresh, newExpires string, er
 	}
 	json.Unmarshal(body, &tokenResp)
 
+	if resp.StatusCode == 429 {
+		return "", "", "", fmt.Errorf("rate limited (429) on token refresh — retry later")
+	}
 	if tokenResp.Error != "" {
 		return "", "", "", fmt.Errorf("refresh error: %s %s", tokenResp.Error, tokenResp.ErrorDesc)
 	}
@@ -619,7 +665,225 @@ func ensureAnigravityToken(connID, refreshToken string) (string, error) {
 	return newAccess, nil
 }
 
+// ── OpenAI Codex Device Code Flow ──────────────────────────────────────────
+
+func oauthCodexDeviceCodeStart(w http.ResponseWriter, r *http.Request) {
+	// Request device code from OpenAI
+	resp, err := http.Post(codexDeviceCodeURL, "application/json",
+		strings.NewReader(fmt.Sprintf(`{"client_id":"%s"}`, codexClientID)))
+	if err != nil {
+		writeError(w, 502, "failed to request device code: "+err.Error())
+		return
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == 429 {
+		writeError(w, 429, "OpenAI is rate-limiting Codex login. Wait a minute and try again.")
+		return
+	}
+	if resp.StatusCode != 200 {
+		writeError(w, resp.StatusCode, fmt.Sprintf("OpenAI returned %d: %s", resp.StatusCode, string(body)))
+		return
+	}
+
+	var deviceResp struct {
+		UserCode     string `json:"user_code"`
+		DeviceAuthID string `json:"device_auth_id"`
+		Interval     string `json:"interval"`
+		ExpiresAt    string `json:"expires_at"`
+	}
+	if err := json.Unmarshal(body, &deviceResp); err != nil {
+		writeError(w, 502, "invalid response from OpenAI: "+err.Error())
+		return
+	}
+
+	interval := 5
+	fmt.Sscanf(deviceResp.Interval, "%d", &interval)
+
+	// Store device_auth_id temporarily.
+	oauthData, err := marshalCodexOAuthData(deviceResp.DeviceAuthID, deviceResp.UserCode, deviceResp.ExpiresAt)
+	if err != nil {
+		writeError(w, 500, "failed to encode device code state")
+		return
+	}
+	if _, err := db.DB.Exec(`UPDATE providers SET oauth_data = ? WHERE id = ?`, oauthData, "builtin-openai-codex"); err != nil {
+		writeError(w, 500, "failed to store device code state")
+		return
+	}
+
+	writeJSON(w, map[string]interface{}{
+		"device_auth_id":   deviceResp.DeviceAuthID,
+		"user_code":        deviceResp.UserCode,
+		"verification_uri": codexDeviceURL,
+		"interval":         interval,
+	})
+}
+
+func oauthCodexDeviceCodePoll(w http.ResponseWriter, r *http.Request) {
+	// Read stored device_auth_id
+	var oauthData string
+	db.DB.QueryRow("SELECT COALESCE(oauth_data,'') FROM providers WHERE id=?", "builtin-openai-codex").Scan(&oauthData)
+	var stored struct {
+		DeviceAuthID string `json:"device_auth_id"`
+		UserCode     string `json:"user_code"`
+		ExpiresAt    string `json:"expires_at"`
+	}
+	if err := json.Unmarshal([]byte(oauthData), &stored); err != nil {
+		writeError(w, 500, "invalid stored device code state")
+		return
+	}
+
+	if stored.DeviceAuthID == "" {
+		writeError(w, 400, "no pending device code flow")
+		return
+	}
+
+	// Check expiry
+	if stored.ExpiresAt != "" {
+		if exp, err := time.Parse(time.RFC3339, stored.ExpiresAt); err == nil && time.Now().After(exp) {
+			db.DB.Exec("UPDATE providers SET oauth_data='' WHERE id=?", "builtin-openai-codex")
+			writeError(w, 408, "device code expired. Start a new flow.")
+			return
+		}
+	}
+
+	// Poll for authorization code.
+	pollBody, err := json.Marshal(map[string]string{
+		"device_auth_id": stored.DeviceAuthID,
+		"user_code":      stored.UserCode,
+	})
+	if err != nil {
+		writeError(w, 500, "failed to encode poll request")
+		return
+	}
+	pollResp, err := http.Post(codexPollURL, "application/json", bytes.NewReader(pollBody))
+	if err != nil {
+		writeError(w, 502, "poll failed: "+err.Error())
+		return
+	}
+	defer pollResp.Body.Close()
+
+	body, _ := io.ReadAll(pollResp.Body)
+
+	if pollResp.StatusCode == 403 || pollResp.StatusCode == 404 {
+		writeJSON(w, map[string]interface{}{"status": "pending"})
+		return
+	}
+	if pollResp.StatusCode != 200 {
+		writeError(w, pollResp.StatusCode, fmt.Sprintf("OpenAI poll returned %d: %s", pollResp.StatusCode, string(body)))
+		return
+	}
+
+	var pollData struct {
+		AuthorizationCode string `json:"authorization_code"`
+		CodeVerifier      string `json:"code_verifier"`
+	}
+	if err := json.Unmarshal(body, &pollData); err != nil {
+		writeError(w, 502, "invalid poll response")
+		return
+	}
+
+	if pollData.AuthorizationCode == "" {
+		writeJSON(w, map[string]interface{}{"status": "pending"})
+		return
+	}
+	if pollData.CodeVerifier == "" {
+		writeError(w, 502, "OpenAI poll response missing code_verifier")
+		return
+	}
+
+	// Exchange authorization code for tokens
+	tokenReq, err := newCodexTokenExchangeRequest(pollData.AuthorizationCode, pollData.CodeVerifier)
+	if err != nil {
+		writeError(w, 500, "failed to create token exchange request: "+err.Error())
+		return
+	}
+	tokenClient := &http.Client{
+		Timeout: 15 * time.Second,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	tokenResp, err := tokenClient.Do(tokenReq)
+	if err != nil {
+		writeError(w, 502, "token exchange failed: "+err.Error())
+		return
+	}
+	defer tokenResp.Body.Close()
+
+	tokenBody, _ := io.ReadAll(tokenResp.Body)
+	if tokenResp.StatusCode != 200 {
+		writeError(w, tokenResp.StatusCode, fmt.Sprintf("token exchange returned %d: %s", tokenResp.StatusCode, string(tokenBody)))
+		return
+	}
+
+	var tokenData struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		ExpiresIn    int    `json:"expires_in"`
+		TokenType    string `json:"token_type"`
+		Scope        string `json:"scope"`
+	}
+	json.Unmarshal(tokenBody, &tokenData)
+
+	if tokenData.AccessToken == "" {
+		writeError(w, 500, "no access_token in response")
+		return
+	}
+
+	// Compute expiry time
+	expiresAt := ""
+	if tokenData.ExpiresIn > 0 {
+		expiresAt = time.Now().Add(time.Duration(tokenData.ExpiresIn) * time.Second).UTC().Format(time.RFC3339)
+	}
+
+	// Store token
+	accountID := extractChatGPTAccountID(tokenData.AccessToken)
+	var existingID string
+	err = db.DB.QueryRow("SELECT id FROM api_keys WHERE provider_id=? AND key_type='oauth'", "builtin-openai-codex").Scan(&existingID)
+	if err == nil {
+		db.DB.Exec(`UPDATE api_keys SET key_encrypted=?, oauth_refresh_token=?, oauth_expires_at=?, account_id=?, is_active=1 WHERE id=?`,
+			tokenData.AccessToken, tokenData.RefreshToken, expiresAt, accountID, existingID)
+	} else {
+		keyID := genID()
+		db.DB.Exec(`INSERT INTO api_keys (id, provider_id, name, key_encrypted, key_type, oauth_refresh_token, oauth_expires_at, account_id, is_active) VALUES (?, ?, 'openai-codex', ?, 'oauth', ?, ?, ?, 1)`,
+			keyID, "builtin-openai-codex", tokenData.AccessToken, tokenData.RefreshToken, expiresAt, accountID)
+	}
+
+	db.DB.Exec("UPDATE providers SET oauth_data='' WHERE id=?", "builtin-openai-codex")
+
+	log.Printf("[PAAP] OpenAI Codex OAuth: connected (token len=%d)", len(tokenData.AccessToken))
+
+	writeJSON(w, map[string]interface{}{
+		"status":     "connected",
+		"expires_in": tokenData.ExpiresIn,
+	})
+}
+
+func newCodexTokenExchangeRequest(authorizationCode, codeVerifier string) (*http.Request, error) {
+	form := url.Values{
+		"grant_type":    {"authorization_code"},
+		"code":          {authorizationCode},
+		"redirect_uri":  {codexRedirectURI},
+		"client_id":     {codexClientID},
+		"code_verifier": {codeVerifier},
+	}
+	req, err := http.NewRequest(http.MethodPost, codexTokenURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "codex_cli_rs/0.0.0")
+	return req, nil
+}
+
 // ── Route Registration ──────────────────────────────────────
+
+func isCodexOAuthProviderID(providerID string) bool {
+	return providerID == "openai-codex" || providerID == "builtin-openai-codex"
+}
 
 func oauthRoutes(w http.ResponseWriter, r *http.Request) {
 	trimmed := strings.TrimPrefix(r.URL.Path, "/api/oauth/")
@@ -631,6 +895,18 @@ func oauthRoutes(w http.ResponseWriter, r *http.Request) {
 	}
 	if trimmed == "anigravity/callback" && r.Method == "GET" {
 		oauthAnigravityCallback(w, r)
+		return
+	}
+
+	// OpenAI Codex device code flow
+	providerID := strings.TrimSuffix(trimmed, "/device-code")
+	if isCodexOAuthProviderID(providerID) && r.Method == "POST" {
+		oauthCodexDeviceCodeStart(w, r)
+		return
+	}
+	providerID = strings.TrimSuffix(trimmed, "/poll")
+	if isCodexOAuthProviderID(providerID) && r.Method == "POST" {
+		oauthCodexDeviceCodePoll(w, r)
 		return
 	}
 

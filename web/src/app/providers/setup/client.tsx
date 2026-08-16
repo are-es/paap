@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useCallback } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -505,6 +505,7 @@ function ConnectionsSection({ providerId }: { providerId: string }) {
     expires_in: number;
   } | null>(null);
   const [polling, setPolling] = useState(false);
+  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [oauthError, setOauthError] = useState("");
 
   const connectionsQuery = useQuery({
@@ -524,6 +525,8 @@ function ConnectionsSection({ providerId }: { providerId: string }) {
   });
 
   const isGoogleOAuth = providerId.includes("anigravity");
+  const isCodexOAuth = providerId.includes("openai-codex");
+  const isRedirectOAuth = isGoogleOAuth;
 
   const startOAuth = async () => {
     setOauthError("");
@@ -546,7 +549,7 @@ function ConnectionsSection({ providerId }: { providerId: string }) {
     window.location.href = `/api/oauth/anigravity/start`;
   };
 
-  const pollForToken = async (intervalSec: number) => {
+  const pollForToken = useCallback(async (intervalSec: number) => {
     const poll = async () => {
       try {
         const res = await fetch(`/api/oauth/${providerId}/poll`, { method: "POST" });
@@ -558,18 +561,18 @@ function ConnectionsSection({ providerId }: { providerId: string }) {
           return;
         }
         if (data.status === "pending" || data.status === "slow_down") {
-          setTimeout(poll, (data.status === "slow_down" ? intervalSec + 5 : intervalSec) * 1000);
+          pollTimerRef.current = setTimeout(poll, (data.status === "slow_down" ? intervalSec + 5 : intervalSec) * 1000);
           return;
         }
         setOauthError(data.error || "Authorization failed");
         setOauthFlow(null);
         setPolling(false);
       } catch {
-        setTimeout(poll, intervalSec * 1000);
+        pollTimerRef.current = setTimeout(poll, intervalSec * 1000);
       }
     };
     poll();
-  };
+  }, [providerId, queryClient]);
 
   const connections = connectionsQuery.data ?? [];
 
@@ -616,7 +619,7 @@ function ConnectionsSection({ providerId }: { providerId: string }) {
           <div className="space-y-2">
             <div>
               <span className="text-xs text-muted-foreground">URL: </span>
-              <a href={oauthFlow.verification_uri_complete} target="_blank" rel="noopener" className="text-sm text-neon-cyan hover:underline font-mono">
+              <a href={oauthFlow.verification_uri_complete || oauthFlow.verification_uri} target="_blank" rel="noopener" className="text-sm text-neon-cyan hover:underline font-mono">
                 {oauthFlow.verification_uri}
               </a>
             </div>
@@ -631,7 +634,7 @@ function ConnectionsSection({ providerId }: { providerId: string }) {
               </div>
             )}
           </div>
-          <button onClick={() => { setOauthFlow(null); setPolling(false); }} className="mt-3 text-xs text-muted-foreground hover:text-foreground">
+          <button onClick={() => { if (pollTimerRef.current) { clearTimeout(pollTimerRef.current); pollTimerRef.current = null; } setOauthFlow(null); setPolling(false); }} className="mt-3 text-xs text-muted-foreground hover:text-foreground">
             Cancel
           </button>
         </div>
@@ -640,7 +643,7 @@ function ConnectionsSection({ providerId }: { providerId: string }) {
           onClick={isGoogleOAuth ? startGoogleOAuth : startOAuth}
           className="mt-3 inline-flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg border border-border hover:border-neon-purple/40 hover:bg-neon-purple/5 text-muted-foreground hover:text-neon-purple transition-all"
         >
-          <Plus className="w-3.5 h-3.5" /> {isGoogleOAuth ? "Connect Google" : "Connect"}
+          <Plus className="w-3.5 h-3.5" /> {isGoogleOAuth ? "Connect Google" : isCodexOAuth ? "Connect OpenAI" : "Connect"}
         </button>
       )}
 
@@ -859,7 +862,7 @@ className="px-3 py-2 rounded-lg border border-input bg-background text-sm focus:
             <div className="whitespace-pre-wrap">{r.res}</div>
             <div className="text-xs text-muted-foreground mt-1 font-mono">
               <span className={r.status >= 200 && r.status < 300 ? "text-neon-green" : "text-neon-magenta"}>{r.status}</span>
-              {" — "}
+              {" - "}
               <span className="text-neon-amber">{r.latency_ms}ms</span>
             </div>
           </div>

@@ -427,6 +427,12 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ── OpenAI Codex: translate Chat Completions → Responses API ──
+	if providerID == "builtin-openai-codex" {
+		handleCodexProxyBody(w, r, rawBody, keyValue, baseURL, keyAccountID)
+		return
+	}
+
 	// ── Anthropic-native providers: translate OpenAI → Anthropic format ──
 	log.Printf("[PAAP] [ANTH-CHECK] model=%s providerID=%s providerName=%s", modelID, providerID, providerName)
 	var supAnthRouting int
@@ -446,6 +452,15 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Set auth headers based on provider
 	setProviderAuth(req, baseURL, keyValue)
+
+	// OpenAI Codex: Cloudflare bypass headers
+	if strings.Contains(strings.ToLower(baseURL), "chatgpt") || strings.Contains(strings.ToLower(baseURL), "codex") {
+		req.Header.Set("User-Agent", "codex_cli_rs/0.0.0 (PAAP)")
+		req.Header.Set("originator", "codex_cli_rs")
+		if accountID := extractChatGPTAccountID(keyValue); accountID != "" {
+			req.Header.Set("ChatGPT-Account-ID", accountID)
+		}
+	}
 
 	// Apply custom headers from provider config
 	if ch := getCustomHeaders(providerID); ch != nil {
@@ -572,7 +587,7 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 					tIn, tOut, streamBody := handleStreaming(w, resp2)
 					resp2.Body.Close()
 					logProxyRequest(providerID, providerName, modelID, nextKeyID, nextKeyName, groupName, proxyUsed, 200, tIn, tOut, latencyMs, "", streamBody)
-				TrafficLog(TrafficEntry{Model: modelID, Provider: providerName, StatusCode: 200, LatencyMs: latencyMs, CompressMode: compressionMode, PAAPOverheadMs: paapOverheadMs, TTFBMs: ttfbMs, IsStream: true, TokensIn: tIn, TokensOut: tOut})
+					TrafficLog(TrafficEntry{Model: modelID, Provider: providerName, StatusCode: 200, LatencyMs: latencyMs, CompressMode: compressionMode, PAAPOverheadMs: paapOverheadMs, TTFBMs: ttfbMs, IsStream: true, TokensIn: tIn, TokensOut: tOut})
 				} else {
 					// Parse tokens from non-streaming response
 					bodyBytes2, _ := io.ReadAll(resp2.Body)
@@ -1507,7 +1522,7 @@ func handleAnthropicNativeFromOpenAI(w http.ResponseWriter, r *http.Request,
 					if cc, ok := msg["cache_control"]; ok {
 						// Anthropic format: system as content block with cache_control
 						sysContent = systemMsg // keep as string for now
-						_ = cc // TODO: convert to Anthropic content block format
+						_ = cc                 // TODO: convert to Anthropic content block format
 					}
 				}
 			}
@@ -1644,7 +1659,6 @@ func handleAnthropicNativeFromOpenAI(w http.ResponseWriter, r *http.Request,
 		hasToolCalls := false
 		toolCallIndex := 0
 
-
 		for scanner.Scan() {
 			line := scanner.Text()
 			if !strings.HasPrefix(line, "data:") {
@@ -1727,8 +1741,8 @@ func handleAnthropicNativeFromOpenAI(w http.ResponseWriter, r *http.Request,
 							"delta": map[string]interface{}{
 								"tool_calls": []map[string]interface{}{{
 									"index": toolCallIndex,
-									"id":   currentToolID,
-									"type": "function",
+									"id":    currentToolID,
+									"type":  "function",
 									"function": map[string]interface{}{
 										"name":      currentToolName,
 										"arguments": currentToolArgs,
@@ -1739,7 +1753,9 @@ func handleAnthropicNativeFromOpenAI(w http.ResponseWriter, r *http.Request,
 					}
 					b, _ := json.Marshal(openaiChunk)
 					fmt.Fprintf(w, "data: %s\n\n", b)
-					if canFlush { flusher.Flush() }
+					if canFlush {
+						flusher.Flush()
+					}
 					toolCallIndex++
 					currentToolID = ""
 					currentToolName = ""
@@ -1753,9 +1769,14 @@ func handleAnthropicNativeFromOpenAI(w http.ResponseWriter, r *http.Request,
 					"created": time.Now().Unix(),
 					"model":   modelID,
 					"choices": []map[string]interface{}{{
-						"index":         0,
-						"delta":         map[string]interface{}{},
-						"finish_reason": func() string { if hasToolCalls { return "tool_calls" }; return "stop" }(),
+						"index": 0,
+						"delta": map[string]interface{}{},
+						"finish_reason": func() string {
+							if hasToolCalls {
+								return "tool_calls"
+							}
+							return "stop"
+						}(),
 					}},
 				}
 				b, _ := json.Marshal(openaiChunk)
