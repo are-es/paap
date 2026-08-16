@@ -10,7 +10,7 @@ import {
   providerNeonColor,
   getNeonClasses,
 } from "@/components/providers/provider-helpers";
-import { Plus, Layers, KeyRound } from "lucide-react";
+import { Plus, Layers, KeyRound, Server, Puzzle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AddProviderModal } from "@/components/providers/add-provider-modal";
 import { DocsModal, DocsButton } from "@/components/ui/docs-modal";
@@ -20,6 +20,7 @@ import { useLanguage } from "@/lib/language-context";
 export default function ProvidersPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [showDocs, setShowDocs] = useState(false);
+  const [filter, setFilter] = useState<"all" | "builtin" | "custom">("all");
   const { t } = useLanguage();
 
   const providersQuery = useQuery({
@@ -28,6 +29,8 @@ export default function ProvidersPage() {
   });
 
   const providers = providersQuery.data ?? [];
+  const builtin = providers.filter((p) => p.provider_type === "builtin");
+  const custom = providers.filter((p) => p.provider_type !== "builtin");
 
   return (
     <div className="p-6 md:p-8 min-h-full">
@@ -67,11 +70,54 @@ export default function ProvidersPage() {
         </div>
       )}
 
-      <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(420px, 1fr))" }}>
-        {providers.map((provider) => (
-          <ProviderCard key={provider.id} provider={provider} />
+      {/* Filter tabs */}
+      <div className="flex items-center gap-1 mb-4">
+        {([["all", "All"], ["builtin", "Built-in"], ["custom", "Custom"]] as const).map(([key, label]) => (
+          <button
+            key={key}
+            onClick={() => setFilter(key)}
+            className={cn(
+              "px-3 py-1.5 text-sm rounded-md transition-colors",
+              filter === key
+                ? "bg-primary/15 text-primary font-medium"
+                : "text-muted-foreground hover:text-foreground hover:bg-muted/40"
+            )}
+          >
+            {label}
+          </button>
         ))}
       </div>
+
+      {filter === "all" ? (
+        <div className="space-y-6">
+          {builtin.length > 0 && (
+            <div>
+              <h2 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3 flex items-center gap-1.5">
+                <Server className="w-3.5 h-3.5" /> Built-in
+              </h2>
+              <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(420px, 1fr))" }}>
+                {builtin.map((p) => <ProviderCard key={p.id} provider={p} />)}
+              </div>
+            </div>
+          )}
+          {custom.length > 0 && (
+            <div>
+              <h2 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3 flex items-center gap-1.5">
+                <Puzzle className="w-3.5 h-3.5" /> Custom
+              </h2>
+              <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(420px, 1fr))" }}>
+                {custom.map((p) => <ProviderCard key={p.id} provider={p} />)}
+              </div>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(420px, 1fr))" }}>
+          {(filter === "builtin" ? builtin : custom).map((p) => (
+            <ProviderCard key={p.id} provider={p} />
+          ))}
+        </div>
+      )}
 
       <AddProviderModal open={addOpen} onClose={() => setAddOpen(false)} />
 
