@@ -839,10 +839,9 @@ func oauthCodexDeviceCodePoll(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Store in provider_connections (same as Anigravity)
-	accountID := extractChatGPTAccountID(tokenData.AccessToken)
-	connName := "openai-codex"
-	if accountID != "" {
-		connName = accountID[:8] + "…"
+	connName := extractCodexEmail(tokenData.AccessToken)
+	if connName == "" {
+		connName = "openai-codex"
 	}
 	var existingConnID string
 	db.DB.QueryRow(`SELECT id FROM provider_connections WHERE provider_id=? AND auth_type='oauth' AND is_active=1 LIMIT 1`, "builtin-openai-codex").Scan(&existingConnID)

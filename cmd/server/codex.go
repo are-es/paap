@@ -59,6 +59,33 @@ func extractChatGPTAccountID(token string) string {
 	return acctID
 }
 
+// extractCodexEmail extracts email from a Codex JWT access token.
+func extractCodexEmail(token string) string {
+	if token == "" {
+		return ""
+	}
+	parts := strings.SplitN(token, ".", 3)
+	if len(parts) < 2 {
+		return ""
+	}
+	padLen := (4 - len(parts[1])%4) % 4
+	payloadB64 := parts[1] + strings.Repeat("=", padLen)
+	payload, err := base64.URLEncoding.DecodeString(payloadB64)
+	if err != nil {
+		return ""
+	}
+	var claims map[string]interface{}
+	if json.Unmarshal(payload, &claims) != nil {
+		return ""
+	}
+	profile, ok := claims["https://api.openai.com/profile"].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	email, _ := profile["email"].(string)
+	return email
+}
+
 // codexCloudflareHeaders returns headers required to avoid Cloudflare 403s.
 func codexCloudflareHeaders(accessToken, accountID string) map[string]string {
 	h := map[string]string{
