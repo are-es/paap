@@ -92,7 +92,7 @@ export default function ProvidersPage() {
         <div className="space-y-6">
           {builtin.length > 0 && (
             <div>
-              <h2 className="text-xs font-medium text-muted-foreground mb-3">
+              <h2 className="text-[13px] font-medium text-muted-foreground mb-3">
                 Built-in
               </h2>
               <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(420px, 1fr))" }}>
@@ -102,7 +102,7 @@ export default function ProvidersPage() {
           )}
           {custom.length > 0 && (
             <div>
-              <h2 className="text-xs font-medium text-muted-foreground mb-3">
+              <h2 className="text-[13px] font-medium text-muted-foreground mb-3">
                 Custom
               </h2>
               <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(420px, 1fr))" }}>
@@ -170,7 +170,7 @@ function ProviderCard({ provider }: { provider: Provider }) {
         <div className="flex-1 min-w-0">
           {/* Top row: name left, badges right */}
           <div className="flex items-start justify-between gap-2 mb-2">
-            <h2 className="font-heading text-sm font-bold whitespace-nowrap mt-px">{provider.name}</h2>
+            <h2 className="font-heading text-base font-bold whitespace-nowrap mt-px">{provider.name}</h2>
             <div className="flex items-center gap-1.5 shrink-0">
               <ProviderTypeBadge providerType={provider.provider_type} />
               <AuthTypeBadge authType={provider.auth_type} />
@@ -179,7 +179,7 @@ function ProviderCard({ provider }: { provider: Provider }) {
           </div>
 
           {/* Stats row */}
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-4 mt-0.5">
             <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
               <Layers className="h-3 w-3" />
               <span className="text-foreground font-medium">{provider.model_count ?? 0}</span> models
