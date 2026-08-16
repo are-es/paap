@@ -303,6 +303,16 @@ export const api = {
       method: "DELETE",
     }),
 
+  enableAllConnections: (providerId: number | string) =>
+    fetchApi<{ status: string; enabled: number }>(`/api/providers/${providerId}/connections/enable-all`, {
+      method: "POST",
+    }),
+
+  deleteDisabledConnections: (providerId: number | string) =>
+    fetchApi<{ status: string; deleted: number }>(`/api/providers/${providerId}/connections/delete-disabled`, {
+      method: "DELETE",
+    }),
+
   // --- Models ---
   getModels: (providerId: number | string) =>
     fetchApi<ModelItem[]>(`/api/providers/${providerId}/models`),

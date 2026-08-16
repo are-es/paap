@@ -452,6 +452,16 @@ func providerRoutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// /api/providers/:id/connections/enable-all
+	if len(parts) == 3 && parts[1] == "connections" && parts[2] == "enable-all" && r.Method == "POST" {
+		connectionEnableAll(w, r, id)
+		return
+	}
+	// /api/providers/:id/connections/delete-disabled
+	if len(parts) == 3 && parts[1] == "connections" && parts[2] == "delete-disabled" && r.Method == "DELETE" {
+		connectionDeleteDisabled(w, r, id)
+		return
+	}
 	// /api/providers/:id/connections/:connId
 	if len(parts) == 3 && parts[1] == "connections" {
 		if r.Method == "DELETE" {

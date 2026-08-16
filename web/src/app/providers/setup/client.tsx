@@ -526,6 +526,16 @@ function ConnectionsSection({ providerId }: { providerId: string }) {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["connections", providerId] }),
   });
 
+  const enableAllMutation = useMutation({
+    mutationFn: () => api.enableAllConnections(providerId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["connections", providerId] }),
+  });
+
+  const deleteDisabledMutation = useMutation({
+    mutationFn: () => api.deleteDisabledConnections(providerId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["connections", providerId] }),
+  });
+
   const isGoogleOAuth = providerId.includes("anigravity");
   const isCodexOAuth = providerId.includes("openai-codex");
   const isRedirectOAuth = isGoogleOAuth;
@@ -587,6 +597,19 @@ function ConnectionsSection({ providerId }: { providerId: string }) {
       accentColor="purple"
       action={
         <div className="flex gap-2">
+          <button
+            onClick={(e) => { e.stopPropagation(); enableAllMutation.mutate(); }}
+            className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] rounded border border-green-500/20 text-green-600 bg-green-500/5 hover:bg-green-500/10 transition-colors font-medium"
+          >
+            Enable All
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); deleteDisabledMutation.mutate(); }}
+            className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] rounded border border-red-500/20 text-red-500 bg-red-500/5 hover:bg-red-500/10 transition-colors font-medium"
+          >
+            <Trash2 className="w-3 h-3" />
+            Delete Disabled
+          </button>
           {oauthFlow ? (
             <button
               onClick={(e) => {
