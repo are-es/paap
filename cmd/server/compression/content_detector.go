@@ -6,13 +6,13 @@ import "strings"
 type ContentType int
 
 const (
-	ContentText         ContentType = iota // Plain text (fallback)
-	ContentJSON                            // JSON object/array
-	ContentSearchResults                   // grep -n format
-	ContentGitDiff                         // git diff output
-	ContentSourceCode                      // Source code (any language)
-	ContentBuildOutput                     // Build/log output with timestamps
-	ContentHTML                            // HTML tags
+	ContentText          ContentType = iota // Plain text (fallback)
+	ContentJSON                             // JSON object/array
+	ContentSearchResults                    // grep -n format
+	ContentGitDiff                          // git diff output
+	ContentSourceCode                       // Source code (any language)
+	ContentBuildOutput                      // Build/log output with timestamps
+	ContentHTML                             // HTML tags
 )
 
 func (c ContentType) String() string {

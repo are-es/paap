@@ -24,27 +24,25 @@ export function ConfigCard({ baseUrl, apiKey }: { baseUrl?: string; apiKey?: str
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-      <div className="relative group rounded-xl border border-primary/15 bg-primary/[0.04] p-4 transition-all duration-300 hover:border-neon-cyan/20">
-        <div className="absolute inset-x-4 top-0 h-px opacity-0 group-hover:opacity-100 transition-opacity duration-500" style={{ background: "linear-gradient(90deg, transparent, var(--neon-cyan), transparent)" }} />
+      <div className="rounded-xl border border-primary/15 bg-primary/[0.04] p-4">
         <div className="flex items-center gap-2 mb-3">
-          <Terminal className="w-3.5 h-3.5 text-neon-cyan/60" />
-          <span className="text-[10px] font-semibold uppercase tracking-widest text-neon-cyan/50">Base URL</span>
+          <Terminal className="w-3.5 h-3.5 text-muted-foreground" />
+          <span className="text-xs text-muted-foreground">Base URL</span>
         </div>
         <div className="flex items-center gap-3">
-          <code className="flex-1 font-mono text-[13px] text-neon-cyan bg-background/50 border border-neon-cyan/10 rounded-lg px-3 py-2.5 truncate">{effectiveBaseUrl}</code>
+          <code className="flex-1 font-mono text-[13px] text-foreground bg-background/50 border border-border rounded-lg px-3 py-2.5 truncate">{effectiveBaseUrl}</code>
           <button onClick={() => copy(effectiveBaseUrl, "url")} className="p-2 rounded-lg border border-border hover:bg-muted text-muted-foreground transition-all">
             {copied === "url" ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
           </button>
         </div>
       </div>
 
-      <div className="relative group rounded-xl border border-primary/15 bg-primary/[0.04] p-4 transition-all duration-300 hover:border-neon-purple/20">
-        <div className="absolute inset-x-4 top-0 h-px opacity-0 group-hover:opacity-100 transition-opacity duration-500" style={{ background: "linear-gradient(90deg, transparent, var(--neon-purple), transparent)" }} />
+      <div className="rounded-xl border border-primary/15 bg-primary/[0.04] p-4">
         <div className="flex items-center gap-2 mb-3">
-          <span className="text-[10px] font-semibold uppercase tracking-widest text-neon-purple/50">API Key</span>
+          <span className="text-xs text-muted-foreground">API Key</span>
         </div>
         <div className="flex items-center gap-3">
-          <code className="flex-1 font-mono text-[13px] text-neon-purple bg-background/50 border border-neon-purple/10 rounded-lg px-3 py-2.5 truncate">{displayKey}</code>
+          <code className="flex-1 font-mono text-[13px] text-foreground bg-background/50 border border-border rounded-lg px-3 py-2.5 truncate">{displayKey}</code>
           <button onClick={() => setShowKey(!showKey)} className="p-2 rounded-lg border border-border hover:bg-muted text-muted-foreground transition-all">
             {showKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
           </button>

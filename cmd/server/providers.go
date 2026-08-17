@@ -817,6 +817,8 @@ func providerTestPrompt(w http.ResponseWriter, r *http.Request, providerID strin
 
 			if isCodexOAuthProviderID(providerID) {
 				start := time.Now()
+				var provName string
+				db.DB.QueryRow("SELECT name FROM providers WHERE id=?", providerID).Scan(&provName)
 				recorder := httptest.NewRecorder()
 				handleCodexProxyBody(recorder, r, map[string]interface{}{
 					"model": body.ModelID,
@@ -824,7 +826,7 @@ func providerTestPrompt(w http.ResponseWriter, r *http.Request, providerID strin
 						map[string]interface{}{"role": "user", "content": body.Prompt},
 					},
 					"stream": false,
-				}, keyVal, baseURL, accountID)
+				}, keyVal, baseURL, accountID, providerID, provName, keyID, keyName)
 
 				raw := recorder.Body.String()
 				result := map[string]interface{}{
@@ -1042,16 +1044,23 @@ func providerTestPrompt(w http.ResponseWriter, r *http.Request, providerID strin
 	if len(formatted) == 0 {
 		// Fallback: check provider_connections for OAuth tokens
 		// If a specific connection was selected (key_id matches a connection), use that one
-		var connID, connEmail, connToken string
+		var connID, connEmail, connToken, connRefresh string
+		var connExpires int64
 		var connErr error
 		if keyIDStr != "" {
-			connErr = db.DB.QueryRow(`SELECT id, COALESCE(email,''), COALESCE(access_token, COALESCE(api_key,''))
-				FROM provider_connections WHERE id=? AND provider_id=? AND is_active=1`, keyIDStr, providerID).Scan(&connID, &connEmail, &connToken)
+			connErr = db.DB.QueryRow(`SELECT id, COALESCE(email,''), COALESCE(access_token, COALESCE(api_key,'')), COALESCE(refresh_token,''), COALESCE(expires_at,0)
+				FROM provider_connections WHERE id=? AND provider_id=? AND is_active=1`, keyIDStr, providerID).Scan(&connID, &connEmail, &connToken, &connRefresh, &connExpires)
 		} else {
-			connErr = db.DB.QueryRow(`SELECT id, COALESCE(email,''), COALESCE(access_token, COALESCE(api_key,''))
-				FROM provider_connections WHERE provider_id=? AND is_active=1 ORDER BY created_at DESC LIMIT 1`, providerID).Scan(&connID, &connEmail, &connToken)
+			connErr = db.DB.QueryRow(`SELECT id, COALESCE(email,''), COALESCE(access_token, COALESCE(api_key,'')), COALESCE(refresh_token,''), COALESCE(expires_at,0)
+				FROM provider_connections WHERE provider_id=? AND is_active=1 ORDER BY created_at DESC LIMIT 1`, providerID).Scan(&connID, &connEmail, &connToken, &connRefresh, &connExpires)
 		}
-		if connErr == nil && connToken != "" {
+		if connErr == nil && (connToken != "" || connRefresh != "") {
+			// Auto refresh if Anigravity
+			if providerID == "builtin-anigravity" {
+				if refreshed, rErr := ensureAnigravityToken(connID, connToken, connRefresh, connExpires); rErr == nil && refreshed != "" {
+					connToken = refreshed
+				}
+			}
 			// Use connection token to make request
 			startTime := time.Now()
 			reqBody := map[string]interface{}{
@@ -1634,8 +1643,9 @@ func providerDetectModels(w http.ResponseWriter, r *http.Request, providerID str
 	switch builtinID {
 	case "openai-codex":
 		// OpenAI Codex: try live API discovery first, fall back to curated list
+		// OAuth tokens are in provider_connections (multi-account), not api_keys
 		var oauthToken string
-		db.DB.QueryRow("SELECT COALESCE(key_encrypted,'') FROM api_keys WHERE provider_id=? AND key_type='oauth' AND is_active=1 LIMIT 1", providerID).Scan(&oauthToken)
+		db.DB.QueryRow("SELECT access_token FROM provider_connections WHERE provider_id=? AND auth_type='oauth' AND is_active=1 ORDER BY created_at DESC LIMIT 1", providerID).Scan(&oauthToken)
 		var acctID string
 		if oauthToken != "" {
 			acctID = extractChatGPTAccountID(oauthToken)
@@ -1661,18 +1671,66 @@ func providerDetectModels(w http.ResponseWriter, r *http.Request, providerID str
 		writeJSON(w, map[string]interface{}{"detected": len(codexModels), "added": added})
 		return
 	case "anigravity":
-		// Anigravity uses hardcoded models (API requires OAuth, no /v1/models endpoint)
-		anigravityModels := []string{
-			"gemini-3-flash-agent",
+		// Dynamic model detection via fetchAvailableModels if OAuth connection exists
+		var anigravityModels []string
+		var connToken string
+		db.DB.QueryRow("SELECT access_token FROM provider_connections WHERE provider_id=? AND is_active=1 ORDER BY created_at DESC LIMIT 1", providerID).Scan(&connToken)
+		if connToken != "" {
+			req, _ := http.NewRequest("POST", "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels", strings.NewReader("{}"))
+			req.Header.Set("Authorization", "Bearer "+connToken)
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("User-Agent", "antigravity/ide/2.1.1 linux/amd64")
+			req.Header.Set("X-Goog-Api-Client", "google-cloud-sdk vscode_cloudshelleditor/0.1")
+			client := &http.Client{Timeout: 10 * time.Second}
+			resp, err := client.Do(req)
+			if err == nil && resp.StatusCode == 200 {
+				defer resp.Body.Close()
+				var fetchResp struct {
+					Models map[string]interface{} `json:"models"`
+				}
+				if json.NewDecoder(resp.Body).Decode(&fetchResp) == nil && len(fetchResp.Models) > 0 {
+					for mid := range fetchResp.Models {
+						// Filter out internal tab completion models
+						if !strings.HasPrefix(mid, "tab_") && !strings.HasPrefix(mid, "chat_") {
+							anigravityModels = append(anigravityModels, mid)
+						}
+					}
+				}
+			}
+		}
+		// Also ensure Gemini 3.7 aliases and core models are present
+		coreAliases := []string{
+			"gemini-3.7-flash",
+			"gemini-3.7-flash-tiered",
+			"gemini-3.7-flash-high",
+			"gemini-3.7-flash-medium",
+			"gemini-3.7-flash-low",
+			"gemini-3.6-flash",
+			"gemini-3.6-flash-high",
+			"gemini-3.6-flash-medium",
+			"gemini-3.6-flash-low",
+			"gemini-3.5-flash",
 			"gemini-3.5-flash-low",
 			"gemini-3.5-flash-extra-low",
+			"gemini-3-flash-agent",
+			"gemini-2.5-pro",
+			"gemini-2.5-flash",
+			"gemini-pro",
 			"gemini-pro-agent",
 			"gemini-3.1-pro-low",
 			"claude-sonnet-4-6",
 			"claude-opus-4-6-thinking",
 			"gpt-oss-120b-medium",
-			"gemini-3-flash",
-			"gemini-3.1-flash-image",
+		}
+		seen := make(map[string]bool)
+		for _, m := range anigravityModels {
+			seen[m] = true
+		}
+		for _, a := range coreAliases {
+			if !seen[a] {
+				anigravityModels = append(anigravityModels, a)
+				seen[a] = true
+			}
 		}
 		added := 0
 		for _, m := range anigravityModels {
@@ -1796,8 +1854,10 @@ func providerDetectModels(w http.ResponseWriter, r *http.Request, providerID str
 			}
 		}
 	case "anigravity":
-		// Anigravity uses hardcoded models (API requires OAuth)
 		anigravityModels := []string{
+			"gemini-3.6-flash-high",
+			"gemini-3.6-flash-medium",
+			"gemini-3.6-flash-low",
 			"gemini-3-flash-agent",
 			"gemini-3.5-flash-low",
 			"gemini-3.5-flash-extra-low",
@@ -1806,8 +1866,6 @@ func providerDetectModels(w http.ResponseWriter, r *http.Request, providerID str
 			"claude-sonnet-4-6",
 			"claude-opus-4-6-thinking",
 			"gpt-oss-120b-medium",
-			"gemini-3-flash",
-			"gemini-3.1-flash-image",
 		}
 		for _, m := range anigravityModels {
 			detected = append(detected, modelEntry{ID: m})

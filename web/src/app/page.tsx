@@ -89,37 +89,31 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <main className="px-8 py-6">
-        <div className="animate-in fade-in slide-in-from-y-2 duration-300">
-          <div className="flex items-center justify-between mb-6">
-            <h1 className="font-heading text-xl font-bold text-foreground">Dashboard</h1>
-            <div className="flex items-center gap-2">
-              <DocsButton onClick={() => setShowDocs(true)} />
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-green-100 text-green-700 border border-green-200">
-                <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-                Online
-              </span>
-            </div>
+      <main className="px-4 md:px-8 py-6">
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-6">
+          <h1 className="font-heading text-xl font-bold text-foreground">Dashboard</h1>
+          <div className="flex items-center gap-2">
+            <DocsButton onClick={() => setShowDocs(true)} />
           </div>
         </div>
 
-        <div className="grid grid-cols-4 gap-3 mb-6 animate-in fade-in slide-in-from-y-2 duration-300 delay-50">
-          {stats.map((stat, i) => (
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 mb-6">
+          {stats.map((stat) => (
             <div
               key={stat.label}
               className="bg-primary/[0.04] border border-primary/15 rounded-lg p-3.5 hover:border-primary/20 transition-colors"
             >
-              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">{stat.label}</p>
+              <p className="text-xs text-muted-foreground mb-1">{stat.label}</p>
               <p className="font-mono text-lg font-bold text-foreground">{stat.value}</p>
             </div>
           ))}
         </div>
 
-        <div className="grid grid-cols-2 gap-3 mb-6 animate-in fade-in slide-in-from-y-2 duration-300 delay-100">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mb-6">
           <section className="bg-primary/[0.04] border border-primary/15 rounded-lg p-3">
-            <h2 className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">Base URL</h2>
+            <h2 className="text-xs text-muted-foreground mb-1.5">Base URL</h2>
             <div className="relative">
-              <code className="block font-mono text-[11px] bg-muted/50 border border-border rounded px-2 py-1.5 text-foreground break-all">
+              <code className="block font-mono text-xs bg-muted/50 border border-border rounded px-2 py-1.5 text-foreground break-all">
                 {settings?.base_url ?? "Not configured"}
               </code>
               {settings?.base_url && (
@@ -139,13 +133,13 @@ export default function DashboardPage() {
           </section>
 
           <section className="bg-primary/[0.04] border border-primary/15 rounded-lg p-3">
-            <h2 className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">Gateway API Key</h2>
+            <h2 className="text-xs text-muted-foreground mb-1.5">Gateway API Key</h2>
             {gatewayKeys.length > 0 ? (
               <div className="space-y-1.5">
                 <div className="flex items-center gap-1.5">
-                  <div className="relative flex-1">
+                  <div className="relative flex-1 min-w-0">
                     <select
-                      className="w-full font-mono text-[11px] bg-muted/50 border border-border rounded px-2 py-1.5 text-foreground appearance-none cursor-pointer pr-6"
+                      className="w-full font-mono text-xs bg-muted/50 border border-border rounded px-2 py-1.5 text-foreground appearance-none cursor-pointer pr-6 truncate"
                       onChange={(e) => {
                         const key = gatewayKeys.find(k => k.id === Number(e.target.value));
                         if (key) setSelectedKeyId(key.id);
@@ -154,7 +148,7 @@ export default function DashboardPage() {
                     >
                       {gatewayKeys.map(k => {
                         const masked = k.key.slice(0, 3) + "••••••••" + k.key.slice(-4);
-                        return <option key={k.id} value={k.id}>{showKeyId === k.id ? k.key : `${k.name} — ${masked}`}</option>;
+                        return <option key={k.id} value={k.id}>{showKeyId === k.id ? k.key : `${k.name}, ${masked}`}</option>;
                       })}
                     </select>
                     <svg className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 9 6 6 6-6"/></svg>
@@ -180,7 +174,7 @@ export default function DashboardPage() {
                 <div className="flex items-center gap-1.5">
                   <button
                     onClick={() => setShowAddKey(true)}
-                    className="inline-flex items-center gap-0.5 px-2 py-0.5 text-[10px] font-semibold rounded border border-primary/20 text-primary bg-primary/5 hover:bg-primary/10 transition-colors"
+                    className="inline-flex items-center gap-0.5 px-2 py-0.5 text-xs rounded border border-primary/20 text-primary bg-primary/5 hover:bg-primary/10 transition-colors"
                   >
                     <Plus className="w-2.5 h-2.5" />
                     Generate
@@ -191,7 +185,7 @@ export default function DashboardPage() {
                       if (keyId) deleteKeyMutation.mutate(keyId);
                     }}
                     disabled={deleteKeyMutation.isPending}
-                    className="inline-flex items-center gap-0.5 px-2 py-0.5 text-[10px] font-semibold rounded border border-destructive/20 text-destructive bg-destructive/5 hover:bg-destructive/10 transition-colors disabled:opacity-50"
+                    className="inline-flex items-center gap-0.5 px-2 py-0.5 text-xs rounded border border-destructive/20 text-destructive bg-destructive/5 hover:bg-destructive/10 transition-colors disabled:opacity-50"
                   >
                     <Trash2 className="w-2.5 h-2.5" />
                     Revoke
@@ -200,10 +194,10 @@ export default function DashboardPage() {
               </div>
             ) : (
               <div className="text-center py-2 text-muted-foreground">
-                <p className="text-[11px] mb-1.5">No gateway key configured</p>
+                <p className="text-xs mb-1.5">No gateway key configured</p>
                 <button
                   onClick={() => setShowAddKey(true)}
-                  className="inline-flex items-center gap-0.5 px-2.5 py-1 text-[11px] rounded border border-primary/20 text-primary bg-primary/5 hover:bg-primary/10 transition-all"
+                  className="inline-flex items-center gap-0.5 px-2.5 py-1 text-xs rounded border border-primary/20 text-primary bg-primary/5 hover:bg-primary/10 transition-all"
                 >
                   <Plus className="w-2.5 h-2.5" />
                   Generate Key
@@ -213,14 +207,14 @@ export default function DashboardPage() {
           </section>
         </div>
 
-        <div className="mb-6 animate-in fade-in slide-in-from-y-2 duration-300 delay-150">
+        <div className="mb-6 min-w-0">
           <ProviderTopology providers={providers} />
         </div>
 
         <Modal open={showAddKey} onClose={() => setShowAddKey(false)} title="Add Gateway Key">
           <div className="space-y-4">
             <div>
-              <label className="text-[11px] uppercase tracking-widest text-muted-foreground font-semibold mb-2 block">
+              <label className="text-xs text-muted-foreground font-semibold mb-2 block">
                 Key Name
               </label>
               <input

@@ -52,6 +52,14 @@ func isProviderRoundRobin(providerID string) bool {
 // - Other 4xx: fallback only, NO disable, NO fail_count increment
 // Returns true if key was disabled.
 func autoDisableKey(keyID, keyName string, statusCode int, errBody string) bool {
+	// OAuth providers (Codex, Anigravity) carry a provider_connections ID in keyID,
+	// not an api_keys ID. Without this dispatch every UPDATE below matches zero rows
+	// and the failure is silently dropped — no fail_count, no last_error, dead
+	// connection stays in rotation forever.
+	if !keyIDExists(keyID) && connectionIDExists(keyID) {
+		return autoDisableConnection(keyID, keyName, statusCode, errBody)
+	}
+
 	if statusCode >= 200 && statusCode < 300 {
 		db.DB.Exec("UPDATE api_keys SET fail_count=0, last_error='' WHERE id=?", keyID)
 		return false
@@ -73,6 +81,76 @@ func autoDisableKey(keyID, keyName string, statusCode int, errBody string) bool 
 
 	// All other 4xx (401, 403, 404, 429, etc): fallback only, no disable, no fail_count change
 	log.Printf("[PAAP] Key %s (%s) client error %d: %s", keyName, keyID, statusCode, errBody)
+	return false
+}
+
+// keyIDExists reports whether id is a row in api_keys.
+func keyIDExists(id string) bool {
+	if id == "" {
+		return false
+	}
+	var n int
+	db.DB.QueryRow("SELECT COUNT(*) FROM api_keys WHERE id=?", id).Scan(&n)
+	return n > 0
+}
+
+// connectionIDExists reports whether id is a row in provider_connections.
+func connectionIDExists(id string) bool {
+	if id == "" {
+		return false
+	}
+	var n int
+	db.DB.QueryRow("SELECT COUNT(*) FROM provider_connections WHERE id=?", id).Scan(&n)
+	return n > 0
+}
+
+// autoDisableConnection is the provider_connections counterpart of autoDisableKey.
+// OAuth-based providers (Codex, Anigravity) store credentials in provider_connections,
+// so failures there were previously silent — no fail_count, no last_error, and the
+// dead connection stayed active forever. Same policy as autoDisableKey:
+//   - 2xx: reset fail_count + clear last_error
+//   - 402 / quota / billing: immediate disable
+//   - 403 with account-verification / permission wording: immediate disable (needs human action)
+//   - 5xx: record error, no disable
+//   - other 4xx: record error, no disable
+//
+// Returns true if the connection was disabled.
+func autoDisableConnection(connID, connName string, statusCode int, errBody string) bool {
+	if statusCode >= 200 && statusCode < 300 {
+		db.DB.Exec("UPDATE provider_connections SET fail_count=0, last_error='', test_status='connected' WHERE id=?", connID)
+		return false
+	}
+
+	lowerBody := strings.ToLower(errBody)
+	trimmed := truncateStr(errBody, 500)
+
+	if statusCode == 402 || strings.Contains(lowerBody, "quota") || strings.Contains(lowerBody, "billing") {
+		db.DB.Exec("UPDATE provider_connections SET fail_count=3, last_error=?, test_status='failed', is_active=0, updated_at=? WHERE id=?",
+			trimmed, time.Now().Unix(), connID)
+		log.Printf("[PAAP] Auto-disabled connection %s (%s) — billing/quota exhausted (%d)", connName, connID, statusCode)
+		return true
+	}
+
+	// Account verification / permission errors need the user to act — the token will
+	// never start working on its own, so keep it out of the rotation.
+	if statusCode == 403 && (strings.Contains(lowerBody, "validation_required") ||
+		strings.Contains(lowerBody, "verify your account") ||
+		strings.Contains(lowerBody, "permission_denied")) {
+		db.DB.Exec("UPDATE provider_connections SET fail_count=3, last_error=?, test_status='failed', is_active=0, updated_at=? WHERE id=?",
+			trimmed, time.Now().Unix(), connID)
+		log.Printf("[PAAP] Auto-disabled connection %s (%s) — account verification required (403)", connName, connID)
+		return true
+	}
+
+	if statusCode >= 500 {
+		db.DB.Exec("UPDATE provider_connections SET last_error=?, updated_at=? WHERE id=?", trimmed, time.Now().Unix(), connID)
+		log.Printf("[PAAP] Connection %s (%s) server error %d", connName, connID, statusCode)
+		return false
+	}
+
+	db.DB.Exec("UPDATE provider_connections SET fail_count=fail_count+1, last_error=?, test_status='failed', updated_at=? WHERE id=?",
+		trimmed, time.Now().Unix(), connID)
+	log.Printf("[PAAP] Connection %s (%s) client error %d", connName, connID, statusCode)
 	return false
 }
 
@@ -376,13 +454,13 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 
 	// ── Anigravity: use Google Gemini format ──
 	if providerID == "builtin-anigravity" {
-		anigravityRequest(w, r, modelID, rawBody, keyValue, isStream)
+		anigravityRequest(w, r, modelID, rawBody, keyValue, isStream, providerID, providerName, keyID, keyName)
 		return
 	}
 
 	// ── OpenAI Codex: translate Chat Completions → Responses API ──
 	if providerID == "builtin-openai-codex" {
-		handleCodexProxyBody(w, r, rawBody, keyValue, baseURL, keyAccountID)
+		handleCodexProxyBody(w, r, rawBody, keyValue, baseURL, keyAccountID, providerID, providerName, keyID, keyName)
 		return
 	}
 
@@ -970,16 +1048,13 @@ func routeByModel(model string) (providerID, providerName, baseURL, modelID, key
 			// Get key (apikey or OAuth) via standard path
 			keyID, keyName, keyValue, keyAccountID, err = getNextActiveKey(providerID)
 			if err != nil {
-				// Fallback: check provider_connections for OAuth tokens
-				var connID, connEmail, connToken string
-				var connExpires int64
-				connErr := db.DB.QueryRow(`SELECT id, COALESCE(email,''), access_token, COALESCE(expires_at,0) FROM provider_connections
-					WHERE provider_id=? AND is_active=1 ORDER BY created_at DESC LIMIT 1`, providerID).Scan(&connID, &connEmail, &connToken, &connExpires)
+				// Fallback: check provider_connections for OAuth tokens (round-robin)
+				connID, connName, connToken, _, connExpires, connErr := getNextActiveConnection(providerID)
 				if connErr != nil {
 					return "", "", "", "", "", "", "", "", fmt.Errorf("no active API keys or connections for provider '%s'", providerName)
 				}
 				keyID = connID
-				keyName = connEmail
+				keyName = connName
 				keyAccountID = ""
 				if isCodexOAuthProviderID(providerID) {
 					keyValue = refreshCodexConnection(connID, connToken, connExpires)
@@ -1041,17 +1116,13 @@ func routeByModel(model string) (providerID, providerName, baseURL, modelID, key
 	// Get a key for this provider (round-robin) — handles both apikey and OAuth
 	keyID, keyName, keyValue, keyAccountID, err = getNextActiveKey(providerID)
 	if err != nil {
-		// Fallback: check provider_connections for OAuth tokens (Anigravity, etc.)
-		var connID, connEmail, connToken, connRefresh string
-		var connExpires int64
-		connErr := db.DB.QueryRow(`SELECT id, email, access_token, COALESCE(refresh_token,''), COALESCE(expires_at,0) 
-			FROM provider_connections WHERE provider_id=? AND is_active=1 ORDER BY created_at DESC LIMIT 1`, providerID).Scan(
-			&connID, &connEmail, &connToken, &connRefresh, &connExpires)
+		// Fallback: check provider_connections for OAuth tokens (round-robin)
+		connID, connName, connToken, connRefresh, connExpires, connErr := getNextActiveConnection(providerID)
 		if connErr != nil {
 			return "", "", "", "", "", "", "", "", fmt.Errorf("no active API keys or connections for provider '%s'", providerName)
 		}
 		keyID = connID
-		keyName = connEmail
+		keyName = connName
 		keyAccountID = ""
 		err = nil
 
@@ -1059,7 +1130,7 @@ func routeByModel(model string) (providerID, providerName, baseURL, modelID, key
 			keyValue = refreshCodexConnection(connID, connToken, connExpires)
 		} else {
 			var refreshErr error
-			keyValue, refreshErr = ensureAnigravityToken(connID, connRefresh)
+			keyValue, refreshErr = ensureAnigravityToken(connID, connToken, connRefresh, connExpires)
 			if refreshErr != nil {
 				return "", "", "", "", "", "", "", "", fmt.Errorf("anigravity token error: %v", refreshErr)
 			}
@@ -1202,6 +1273,55 @@ func getNextActiveKey(providerID string) (keyID, keyName, keyValue, accountID st
 	db.DB.Exec("UPDATE api_keys SET last_used = CURRENT_TIMESTAMP WHERE id = ?", selected.id)
 
 	return selected.id, selected.name, selected.value, selected.accountID, nil
+}
+
+// getNextActiveConnection gets next active OAuth connection with round-robin.
+// Used for providers that use provider_connections instead of api_keys (e.g. Codex multi-account).
+func getNextActiveConnection(providerID string) (connID, connName, connToken, connRefresh string, connExpires int64, err error) {
+	roundRobin := isProviderRoundRobin(providerID)
+
+	rows, err := db.DB.Query(`SELECT id, COALESCE(name,''), COALESCE(email,''), access_token, COALESCE(refresh_token,''), COALESCE(expires_at,0)
+		FROM provider_connections WHERE provider_id=? AND is_active=1 ORDER BY created_at ASC`, providerID)
+	if err != nil {
+		return "", "", "", "", 0, err
+	}
+	defer rows.Close()
+
+	type conn struct {
+		id      string
+		name    string
+		email   string
+		token   string
+		refresh string
+		expires int64
+	}
+	var conns []conn
+	for rows.Next() {
+		var c conn
+		rows.Scan(&c.id, &c.name, &c.email, &c.token, &c.refresh, &c.expires)
+		conns = append(conns, c)
+	}
+
+	if len(conns) == 0 {
+		return "", "", "", "", 0, fmt.Errorf("no active connections")
+	}
+
+	var selected conn
+	if roundRobin {
+		counter := getProviderRRCounter(providerID + "_conns")
+		idx := int(counter.Add(1)-1) % len(conns)
+		selected = conns[idx]
+	} else {
+		selected = conns[0]
+	}
+
+	// Use email as name if available
+	displayName := selected.name
+	if selected.email != "" {
+		displayName = selected.email
+	}
+
+	return selected.id, displayName, selected.token, selected.refresh, selected.expires, nil
 }
 
 // getNextActiveKeyExcluding gets next active key, skipping already-tried IDs

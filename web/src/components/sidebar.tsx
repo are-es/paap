@@ -7,7 +7,6 @@ import Image from "next/image";
 import {
   LayoutDashboard,
   Server,
-  Sparkles,
   ScrollText,
   Layers,
   Globe,
@@ -17,24 +16,13 @@ import {
   ChevronRight,
   Sun,
   Moon,
-  BookOpen,
+  Minimize2,
 } from "lucide-react";
 import { useTheme } from "@/components/theme-provider";
 import { cn } from "@/lib/utils";
 import { useLanguage } from "@/lib/language-context";
 
 const STORAGE_KEY = "paap-sidebar-collapsed";
-
-const navItems = [
-  { href: "/", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/providers", label: "Providers", icon: Server },
-  { href: "/tools", label: "Tools", icon: Wrench },
-  { href: "/compression", label: "Compression", icon: Sparkles },
-  { href: "/logs", label: "Logs", icon: ScrollText },
-  { href: "/groups", label: "Groups", icon: Layers },
-  { href: "/proxy", label: "Proxy", icon: Globe },
-  { href: "/settings", label: "Settings", icon: Settings },
-];
 
 export function Sidebar() {
   const pathname = usePathname();
@@ -47,7 +35,7 @@ export function Sidebar() {
     { href: "/", label: t("nav.dashboard"), icon: LayoutDashboard },
     { href: "/providers", label: t("nav.providers"), icon: Server },
     { href: "/tools", label: t("nav.tools"), icon: Wrench },
-    { href: "/compression", label: "Compression", icon: Sparkles },
+    { href: "/compression", label: "Compression", icon: Minimize2 },
     { href: "/logs", label: t("nav.logs"), icon: ScrollText },
     { href: "/groups", label: t("nav.groups"), icon: Layers },
     { href: "/proxy", label: t("nav.proxy"), icon: Globe },
@@ -70,18 +58,19 @@ export function Sidebar() {
     <aside
       className={cn(
         "flex flex-col shrink-0 h-screen transition-[width] duration-200 ease-in-out",
-        "border-r border-border backdrop-blur-xl bg-sidebar overflow-hidden",
-        collapsed ? "w-16" : "w-56"
+        "border-r border-border bg-sidebar overflow-hidden",
+        collapsed ? "w-16" : "w-56",
+        "max-md:w-16 max-md:shrink"
       )}
       aria-label="Primary sidebar"
     >
-      <div className="flex items-center gap-2 px-4 py-4 border-b border-border">
+      <div className="flex items-center justify-center px-4 py-4 border-b border-border">
         <Image
           src="/assets/logo.svg"
           alt="PAAP"
           width={collapsed ? 28 : 120}
           height={28}
-          className="shrink-0 h-auto w-auto"
+          className="shrink-0 h-auto w-auto max-md:w-7"
           priority
         />
       </div>
@@ -94,20 +83,21 @@ export function Sidebar() {
               key={href}
               href={href}
               aria-current={active ? "page" : undefined}
+              aria-label={label}
               className={cn(
                 "relative flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all duration-200",
-                collapsed && "justify-center",
+                "max-md:justify-center max-md:px-0",
                 active
                   ? "bg-primary/10 text-primary font-medium"
                   : "text-muted-foreground hover:bg-secondary hover:text-foreground"
               )}
-              title={collapsed ? label : undefined}
+              title={collapsed || typeof window !== "undefined" && window.innerWidth < 768 ? label : undefined}
             >
               {active && (
-                <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-4 rounded-r-full bg-primary" />
+                <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-4 rounded-r-full bg-primary max-md:hidden" />
               )}
               <Icon className="w-5 h-5 shrink-0" aria-hidden="true" />
-              {!collapsed && <span className="whitespace-nowrap">{label}</span>}
+              <span className="whitespace-nowrap max-md:hidden">{label}</span>
             </Link>
           );
         })}
@@ -118,10 +108,11 @@ export function Sidebar() {
           onClick={toggle}
           className={cn(
             "flex items-center gap-3 px-3 py-2 rounded-lg text-sm w-full transition-colors",
-            collapsed ? "justify-center" : "",
+            "max-md:justify-center max-md:px-0 max-md:min-h-[44px] max-md:min-w-[44px]",
             "text-muted-foreground hover:bg-secondary hover:text-foreground"
           )}
-          title={collapsed ? (theme === "dark" ? "Light mode" : "Dark mode") : undefined}
+          title={collapsed || typeof window !== "undefined" && window.innerWidth < 768 ? (theme === "dark" ? "Light mode" : "Dark mode") : undefined}
+          aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
         >
           {theme === "dark" ? (
             <Sun className="w-5 h-5 shrink-0" />
@@ -135,7 +126,8 @@ export function Sidebar() {
           aria-expanded={mounted ? !collapsed : true}
           aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
           className={cn(
-            "flex items-center justify-center py-2.5 rounded-lg w-full text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+            "flex items-center justify-center py-2.5 rounded-lg w-full text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors",
+            "max-md:min-h-[44px] max-md:min-w-[44px]"
           )}
         >
           {collapsed ? (

@@ -80,7 +80,7 @@ type ToolMatch struct {
 
 // ── Tool System ─────────────────────────────────────────
 var (
-	toolsCache     []*Tool
+	toolsCache      []*Tool
 	toolsCacheDirty = true
 )
 
@@ -190,11 +190,11 @@ func ProcessTools(rawBody map[string]interface{}) *ToolMatch {
 				log.Printf("[PAAP] [TOOLS] Vision tool triggered — fallback chain: %v", models)
 				return &ToolMatch{ToolName: tool.Name, Models: models}
 			}
-		// Future tools can be added here
-		// case ToolTypeWebSearch:
-		//     if hasSearchQuery(messages) {
-		//         return tool.RouteModel
-		//     }
+			// Future tools can be added here
+			// case ToolTypeWebSearch:
+			//     if hasSearchQuery(messages) {
+			//         return tool.RouteModel
+			//     }
 		}
 	}
 

@@ -481,14 +481,14 @@ func loadModelPricingFromDB() {
 
 // Fallback pricing for models not in DB
 var modelPricingFallback = map[string][2]float64{
-	"mimo-v2.5":     {0.14, 0.28},
-	"mimo-v2.5-pro": {0.435, 0.87},
-	"deepseek-v4-flash": {0.14, 0.28},
-	"deepseek-v4-pro":   {0.435, 0.87},
-	"minimax-m3": {0.51, 2.04},
-	"gemini-2.5-flash": {0.15, 0.60},
-	"gemini-2.5-pro":   {1.25, 10.00},
-	"muse-spark-1.1": {1.25, 4.25},
+	"mimo-v2.5":                  {0.14, 0.28},
+	"mimo-v2.5-pro":              {0.435, 0.87},
+	"deepseek-v4-flash":          {0.14, 0.28},
+	"deepseek-v4-pro":            {0.435, 0.87},
+	"minimax-m3":                 {0.51, 2.04},
+	"gemini-2.5-flash":           {0.15, 0.60},
+	"gemini-2.5-pro":             {1.25, 10.00},
+	"muse-spark-1.1":             {1.25, 4.25},
 	"deepseek/deepseek-v4-flash": {0.098, 0.196},
 	"deepseek/deepseek-v4-pro":   {0.435, 0.87},
 	"moonshotai/kimi-k2.6":       {0.61, 3.07},

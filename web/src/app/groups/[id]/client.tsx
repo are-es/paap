@@ -24,15 +24,16 @@ import { cn } from "@/lib/utils";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 
 const MODE_OPTIONS = [
-  { value: "rr_race_keys", label: "RR + Race Keys", icon: Zap, desc: "Rotate models, race keys per model — best of both" },
+  { value: "rr_race_keys", label: "RR + Race Keys", icon: Zap, desc: "Rotate models, race keys per model - best of both" },
   { value: "race_all", label: "Race All", icon: Zap, desc: "Cross-provider race, fastest wins" },
   { value: "race_keys", label: "Race Keys", icon: Key, desc: "Race N keys within provider" },
   { value: "round_robin", label: "Round Robin", icon: RotateCw, desc: "Rotate models per request" },
   { value: "fail_first", label: "Fail First", icon: ChevronDown, desc: "Cascade fallback A→B→C" },
 ] as const;
 
-export function GroupSetupClient() {
-  const { id } = useParams<{ id: string }>();
+export function GroupSetupClient({ groupId }: { groupId?: string }) {
+  const params = useParams<{ id: string }>();
+  const id = groupId ?? params.id;
   const queryClient = useQueryClient();
 
   const groupQuery = useQuery({
@@ -394,7 +395,7 @@ function NewGroupForm() {
     mutationFn: () => api.addGroup({ name: name.trim(), race_mode: mode, max_keys: 1 }),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["groups"] });
-      router.push(`/groups/${data.id}`);
+      router.push(`/groups/detail?id=${data.id}`);
     },
   });
 

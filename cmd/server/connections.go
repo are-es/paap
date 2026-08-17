@@ -14,7 +14,7 @@ func connectionList(w http.ResponseWriter, r *http.Request, providerID string) {
 	rows, err := db.DB.Query(`SELECT id, auth_type, name, email, 
 		CASE WHEN api_key != '' THEN '***' || SUBSTR(api_key, -4) ELSE '' END as key_preview,
 		CASE WHEN access_token != '' THEN '***' || SUBSTR(access_token, -4) ELSE '' END as token_preview,
-		test_status, fail_count, is_active, created_at
+		test_status, fail_count, COALESCE(last_error,''), is_active, created_at
 		FROM provider_connections WHERE provider_id=? ORDER BY created_at DESC`, providerID)
 	if err != nil {
 		writeError(w, 500, err.Error())
@@ -24,10 +24,10 @@ func connectionList(w http.ResponseWriter, r *http.Request, providerID string) {
 
 	var list []map[string]interface{}
 	for rows.Next() {
-		var id, authType, name, email, keyPreview, tokenPreview, testStatus string
+		var id, authType, name, email, keyPreview, tokenPreview, testStatus, lastError string
 		var failCount, isActive int
 		var createdAt int64
-		rows.Scan(&id, &authType, &name, &email, &keyPreview, &tokenPreview, &testStatus, &failCount, &isActive, &createdAt)
+		rows.Scan(&id, &authType, &name, &email, &keyPreview, &tokenPreview, &testStatus, &failCount, &lastError, &isActive, &createdAt)
 		item := map[string]interface{}{
 			"id":          id,
 			"auth_type":   authType,
@@ -35,6 +35,7 @@ func connectionList(w http.ResponseWriter, r *http.Request, providerID string) {
 			"email":       email,
 			"test_status": testStatus,
 			"fail_count":  failCount,
+			"last_error":  lastError,
 			"is_active":   isActive == 1,
 			"created_at":  createdAt,
 		}

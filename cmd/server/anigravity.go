@@ -8,13 +8,81 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dolvin/paap/internal/db"
 )
 
+var (
+	tsCacheMu sync.RWMutex
+	tsCache   = make(map[string]string)
+	latestTs  string = "ErIFCq8FARFNMg8p7FEUyMRblRrnnnf1ksKhFIEj28WB+p6bNvRS+Qdr/zpVq98S175EB3/nXBH3uxsMvZl+7sjmK8oPdZ7vdWJXA8U9XbFZjH6SSDVoMNZlvzbSIS2nqQLBsE8CgQIYW98T0Y81uJO9djeJhfEK8Hkr2gJOJ+BwXPbhvZP6mLkvMIv5OmLhCr5XTx5iVcOl4HNqOZ4c8Ps4ePy0M9hkYDcl3MBzW3SFPo4cAGtAVYlzAmN8rFQt17bCHFYKdJJo6HSvNcWJTTgEO5ljeetChe5sr7XDJLbdETz+6O4teuVjE+rFMGiwS4Y23uP6qCaZMo4v9cqT+rgB/UlBbexuMTf/ZxI4VpRsWMAnhf4M1sUd+PCQKAvujCmAnAgWYYKhIG8zq7820qn9662F1ZY4eXWwXPolQGlwgUCeuC/Zl+u5XT+gWse76sNg9ZoueKTcwDkHclUjxTGKj7er4CQcW0IFABHNPuSO5z0YPW6amD9b2hPK5cIMzb8HDUT3ThYQF29hnvtRlGaE2Fo2PGQmLk2+Lj3MCbdb47g0ySL9u5eDobHFIuCuylDwmQ2TUHKYaqYJumhSSrV6vmKoo2HGfCw9Fbn920uQfULwGp1RgHJsmK9bYqgw6MlXgSTdKaAEKEJI8a9cOU6/EmFUXl/s7eJD33OAm1Ow164a55iAXEwcBbTKWwqDmaciRvbCwNYNilTT86WI5qHckPKOMZM55YHPTthN54i18drZmk1+9ykvw3fTWLHMEw3jnema7EWSc9rjNqolTWAzMYEtbp7ZA54A9HE4G/bqEapifCbwDi3fLCo2U5qbaSIjqUsORByVujzZvLemOWXOPYu/KEEw+40tsblDlDbox1nk0PLkLgX0PyG6qxN0NWa9yff7P76ckxJpo7Ca9jX78Gzu"
+)
+
+func saveThoughtSignature(funcName, sig string) {
+	if sig == "" {
+		return
+	}
+	tsCacheMu.Lock()
+	defer tsCacheMu.Unlock()
+	latestTs = sig
+	if funcName != "" {
+		tsCache[funcName] = sig
+	}
+}
+
+func getThoughtSignature(funcName, toolCallID string, msg, tm map[string]interface{}) string {
+	// 1. Check embedded in toolCallID (call_123___ts___<sig>)
+	if idx := strings.Index(toolCallID, "___ts___"); idx != -1 {
+		sig := toolCallID[idx+len("___ts___"):]
+		if sig != "" {
+			return sig
+		}
+	}
+	// 2. Check tm (tool_call map)
+	if tm != nil {
+		if s, ok := tm["thought_signature"].(string); ok && s != "" {
+			return s
+		}
+		if s, ok := tm["thoughtSignature"].(string); ok && s != "" {
+			return s
+		}
+	}
+	// 3. Check msg (assistant message)
+	if msg != nil {
+		if s, ok := msg["thought_signature"].(string); ok && s != "" {
+			return s
+		}
+		if s, ok := msg["thoughtSignature"].(string); ok && s != "" {
+			return s
+		}
+		if ec, ok := msg["extra_content"].(map[string]interface{}); ok {
+			if g, ok := ec["google"].(map[string]interface{}); ok {
+				if s, ok := g["thought_signature"].(string); ok && s != "" {
+					return s
+				}
+				if s, ok := g["thoughtSignature"].(string); ok && s != "" {
+					return s
+				}
+			}
+		}
+		if rc, ok := msg["reasoning_content"].(string); ok && strings.HasPrefix(rc, "E") && len(rc) > 50 && !strings.Contains(rc, " ") {
+			return rc
+		}
+	}
+	// 4. Check cache by funcName
+	tsCacheMu.RLock()
+	defer tsCacheMu.RUnlock()
+	if sig, ok := tsCache[funcName]; ok && sig != "" {
+		return sig
+	}
+	// 5. Fallback to latest seen or default valid signature
+	return latestTs
+}
+
 // anigravityRequest translates OpenAI format to Google Gemini format for Anigravity
-func anigravityRequest(w http.ResponseWriter, r *http.Request, model string, rawBody map[string]interface{}, accessToken string, isStream bool) {
+func anigravityRequest(w http.ResponseWriter, r *http.Request, model string, rawBody map[string]interface{}, accessToken string, isStream bool, providerID, providerName, keyID, keyName string) {
 	messages, _ := rawBody["messages"].([]interface{})
 	var contents []map[string]interface{}
 	var systemInstruction string
@@ -57,11 +125,15 @@ func anigravityRequest(w http.ResponseWriter, r *http.Request, model string, raw
 					}
 				}
 			}
+			cleanToolCallID := toolCallID
+			if idx := strings.Index(cleanToolCallID, "___ts___"); idx != -1 {
+				cleanToolCallID = cleanToolCallID[:idx]
+			}
 			contents = append(contents, map[string]interface{}{
 				"role": "user",
 				"parts": []map[string]interface{}{
 					{"functionResponse": map[string]interface{}{
-						"id":       toolCallID,
+						"id":       cleanToolCallID,
 						"name":     funcName,
 						"response": map[string]interface{}{"result": content},
 					}},
@@ -89,6 +161,10 @@ func anigravityRequest(w http.ResponseWriter, r *http.Request, model string, raw
 							if toolCallID == "" {
 								toolCallID = "call_" + funcName
 							}
+							cleanToolCallID := toolCallID
+							if idx := strings.Index(cleanToolCallID, "___ts___"); idx != -1 {
+								cleanToolCallID = cleanToolCallID[:idx]
+							}
 							var args map[string]interface{}
 							if argsStr, ok := fn["arguments"].(string); ok {
 								json.Unmarshal([]byte(argsStr), &args)
@@ -96,14 +172,21 @@ func anigravityRequest(w http.ResponseWriter, r *http.Request, model string, raw
 							if args == nil {
 								args = map[string]interface{}{}
 							}
-							parts = append(parts, map[string]interface{}{
-								"thoughtSignature": "EuwGCukGAXLI2nxwZIq54WWSoL/YN0P3TsDZ7zRnLi8g0S4aVr2HUGxvaHKySuY6HAVzcE0GPGjXrytLIldxthSvfxgUlJh6Qa9Z+Oj5QZBlYdg6HaJ6yuY5R7waE6rdwBsRf7Ft2j3DJ9rMi9qhWFqApewYtPhls3VHtuvND3l8Rm09+lbAXQs6KKWEWrxNLKTBkfpMgXhRERc/TQRMZu1twAablm6/Zk1tsYRvfWKLsNbeKF+CCojJdXJKvnR/8Ouuoa+Y2Ti20hcW7aZIIjZDFYPU//k6Ybmhg69J/imbFai2ckhfLaisqdDkdoIiBJScTOUvYqP6AE9d4MsydSC+UlhIMk4hoP76R8vUSCZRMkjOaDXstf/QoVZKbt94wyRZgAJ1G0BqI8L5ow86kLpA4wJEtxsRGymOE4bKUvApveBakYDNM9APkf+LbtbzWSseGjoZcSlycF9iN8Q2XNYKRrHbv3Lr5Y8JjdH/5y/6SHkNehTEZugaeGnSPSyCTWto1kQgHpxdWmhkLfJGNUGLmue7Mesj4TSms4J33mRpYVhNB/J333FCqIP0hr/E7BkkjEn7yZ4X7SQlh+xKPurapsnHRwiKmtsilmEFrnTE9iQr+pMr6M29qqFNv1tr5yumbaJw8JW9sB15tNsRv+dW6BjNanbsKz7HCgKUBc8tGy+7YuhXzAfViyRefcjK7eZW0Fbyt7AbybJTKz78W8NH7ye6LAwzOebXpeZ4D43fNIt8bKh26qgduSQv/7o+pAflkuqHZ99YWgHQ8h8OkZFi3eOiSYjsjhdZ/czWOdoPI/OnqIldzMPF5YlrKBLFX8VhRKVmqgsmWf5PHGulHhMkVlS+XG2UIseGy69ARa93D78Gsa+1n1kJr7EEB7Rh+27vUMxVYLdz1yMSvE5nalTAlg/ZeG8+XQ0cHuAI3KbQpHW2Q++RdXfm5JzD5WdJZUU+Zn8t8UUn85BH4RxZLeE0qJikgSsKoYVBc6YhiMjhPgkR95ReimY4Z0xCJdRo1gjexOFeODZMpQF6Yxnoic7IrdgsFA3iePTbFnPp3IAM1fAThWhXJUn3QInUOTd5o1qmTmn6REbL15g/JQNl+dqUoPkhleeb2V3kjqp1okmO3wMZbPknR3S1LZNmlS72/iBQUm+n2b/RCn4PjmM2",
+
+							sig := getThoughtSignature(funcName, toolCallID, msg, tm)
+
+							partMap := map[string]interface{}{
 								"functionCall": map[string]interface{}{
-									"id":   toolCallID,
+									"id":   cleanToolCallID,
 									"name": funcName,
 									"args": args,
 								},
-							})
+							}
+							if sig != "" {
+								partMap["thoughtSignature"] = sig
+								partMap["thought_signature"] = sig
+							}
+							parts = append(parts, partMap)
 						}
 					}
 				}
@@ -155,6 +238,9 @@ func anigravityRequest(w http.ResponseWriter, r *http.Request, model string, raw
 			"temperature":     1.0,
 			"topP":            0.95,
 			"maxOutputTokens": 64000,
+			"thinkingConfig": map[string]interface{}{
+				"includeThoughts": true,
+			},
 		},
 	}
 
@@ -192,25 +278,37 @@ func anigravityRequest(w http.ResponseWriter, r *http.Request, model string, raw
 		}
 	}
 
+	// Extract reasoning effort before stripping fields
+	effort := extractReasoningEffort(rawBody, geminiReq)
+
 	// ── Strip blacklisted fields (9router reference) ──
 	blacklist := []string{"thinking", "reasoning_effort", "reasoning", "enable_thinking", "thinking_budget", "thinkingConfig", "output_config"}
 	for _, key := range blacklist {
 		delete(rawBody, key)
 	}
 
-	// ── Handle thinkingConfig → reasoning_effort conversion ──
+	// ── Configure thinkingConfig based on effort ──
 	if gc, ok := geminiReq["generationConfig"].(map[string]interface{}); ok {
-		if tc, ok := gc["thinkingConfig"].(map[string]interface{}); ok {
-			if budget, ok := tc["thinkingBudget"].(float64); ok && budget > 0 {
-				// Convert budget to effort level (OmniRoute reference)
-				// Don't send thinkingConfig to API, just note effort
+		if effort == "off" || effort == "none" || effort == "0" {
+			gc["thinkingConfig"] = map[string]interface{}{
+				"thinkingBudget": 0,
 			}
-			delete(gc, "thinkingConfig")
+		} else {
+			gc["thinkingConfig"] = map[string]interface{}{
+				"includeThoughts": true,
+			}
 		}
 	}
 
+	// Resolve model aliases and auto-route according to reasoning effort level (low/medium/high/max)
+	model = resolveAnigravityModelWithEffort(model, effort)
+
 	// Build outer wrapper
 	projectID := getAnigravityProjectID()
+	if projectID == "" {
+		writeError(w, 400, "Anigravity provider has no Google Cloud Project ID configured. Please reconnect your account via Google OAuth at /providers/setup?id=builtin-anigravity")
+		return
+	}
 	// Generate requestId matching 9router format: agent/{uuid}/{timestamp}/{uuid}/{step}
 	convUUID := generateUUID()
 	trajUUID := generateUUID()
@@ -240,12 +338,14 @@ func anigravityRequest(w http.ResponseWriter, r *http.Request, model string, raw
 	if isStream {
 		action = "streamGenerateContent?alt=sse"
 	}
-	upstreamURL := fmt.Sprintf("https://cloudcode-pa.googleapis.com/v1internal:%s", action)
+	upstreamURL := fmt.Sprintf("https://daily-cloudcode-pa.googleapis.com/v1internal:%s", action)
 
 	req, _ := http.NewRequest("POST", upstreamURL, bytes.NewReader(bodyBytes))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("User-Agent", "antigravity/ide/2.1.1 linux/amd64")
+	req.Header.Set("X-Goog-Api-Client", "google-cloud-sdk vscode_cloudshelleditor/0.1")
+	req.Header.Set("Client-Metadata", `{"ideType":9,"platform":2,"pluginType":2}`)
 
 	client := sharedHTTPClient
 	if isStream {
@@ -257,6 +357,36 @@ func anigravityRequest(w http.ResponseWriter, r *http.Request, model string, raw
 		return
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode == 401 {
+		// Attempt automatic on-demand token refresh and retry once
+		var connID, connRefresh string
+		db.DB.QueryRow("SELECT id, COALESCE(refresh_token,'') FROM provider_connections WHERE provider_id='builtin-anigravity' AND is_active=1 ORDER BY created_at DESC LIMIT 1").Scan(&connID, &connRefresh)
+		if connRefresh != "" {
+			if refreshedToken, rErr := ensureAnigravityToken(connID, "", connRefresh, 0); rErr == nil && refreshedToken != "" {
+				retryReq, _ := http.NewRequest("POST", upstreamURL, bytes.NewReader(bodyBytes))
+				retryReq.Header.Set("Content-Type", "application/json")
+				retryReq.Header.Set("Authorization", "Bearer "+refreshedToken)
+				retryReq.Header.Set("User-Agent", "antigravity/ide/2.1.1 linux/amd64")
+				retryReq.Header.Set("X-Goog-Api-Client", "google-cloud-sdk vscode_cloudshelleditor/0.1")
+				retryReq.Header.Set("Client-Metadata", `{"ideType":9,"platform":2,"pluginType":2}`)
+				retryResp, retryErr := client.Do(retryReq)
+				if retryErr == nil && retryResp.StatusCode == 200 {
+					defer retryResp.Body.Close()
+					if isStream {
+						handleAnigravityStreaming(w, retryResp)
+					} else {
+						handleAnigravityNonStreaming(w, retryResp)
+					}
+					return
+				}
+				if retryResp != nil {
+					defer retryResp.Body.Close()
+					resp = retryResp
+				}
+			}
+		}
+	}
 
 	if resp.StatusCode != 200 {
 		errBody, _ := io.ReadAll(resp.Body)
@@ -271,9 +401,143 @@ func anigravityRequest(w http.ResponseWriter, r *http.Request, model string, raw
 	}
 }
 
+// extractReasoningEffort extracts reasoning effort level (low/medium/high/max) from various client parameter formats
+func extractReasoningEffort(rawBody map[string]interface{}, geminiReq map[string]interface{}) string {
+	// 1. OpenAI reasoning_effort field (e.g. "low", "medium", "high", "max")
+	if v, ok := rawBody["reasoning_effort"].(string); ok && v != "" {
+		return strings.ToLower(v)
+	}
+	// 2. reasoning field
+	if v, ok := rawBody["reasoning"].(string); ok && v != "" {
+		return strings.ToLower(v)
+	}
+	// 3. Anthropic thinking map (e.g. {"type": "enabled", "budget_tokens": 4000})
+	if m, ok := rawBody["thinking"].(map[string]interface{}); ok {
+		if b, ok := m["budget_tokens"].(float64); ok {
+			if b <= 2000 {
+				return "low"
+			} else if b <= 4000 {
+				return "medium"
+			} else {
+				return "high"
+			}
+		}
+	}
+	// 4. thinking_budget numeric
+	if b, ok := rawBody["thinking_budget"].(float64); ok {
+		if b <= 2000 {
+			return "low"
+		} else if b <= 4000 {
+			return "medium"
+		} else {
+			return "high"
+		}
+	}
+	// 5. Google thinkingConfig inside generationConfig
+	if gc, ok := geminiReq["generationConfig"].(map[string]interface{}); ok {
+		if tc, ok := gc["thinkingConfig"].(map[string]interface{}); ok {
+			if b, ok := tc["thinkingBudget"].(float64); ok {
+				if b <= 2000 {
+					return "low"
+				} else if b <= 4000 {
+					return "medium"
+				} else {
+					return "high"
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// resolveAnigravityModelWithEffort maps friendly/unified model names and effort level to upstream models
+func resolveAnigravityModelWithEffort(model, effort string) string {
+	m := strings.ToLower(strings.TrimSpace(model))
+
+	// If effort not explicitly provided, check if model name itself specifies effort level
+	if effort == "" {
+		if strings.HasSuffix(m, "-low") {
+			effort = "low"
+		} else if strings.HasSuffix(m, "-medium") || strings.HasSuffix(m, "-med") {
+			effort = "medium"
+		} else if strings.HasSuffix(m, "-high") || strings.HasSuffix(m, "-max") {
+			effort = "high"
+		}
+	}
+
+	switch {
+	// Gemini 3.7 Flash unified (supports high/max deep thinking)
+	case strings.HasPrefix(m, "gemini-3.7") || m == "gemini-3.7-flash" || m == "gemini-3.7-flash-tiered":
+		return "gemini-3.7-flash-tiered"
+
+	// Gemini 3.6 Flash unified (auto-routes to low/medium/high by reasoning effort)
+	case strings.HasPrefix(m, "gemini-3.6"):
+		switch effort {
+		case "low":
+			return "gemini-3.6-flash-low"
+		case "medium":
+			return "gemini-3.6-flash-medium"
+		case "high", "max":
+			return "gemini-3.6-flash-high"
+		default:
+			return "gemini-3.6-flash-high"
+		}
+
+	// Gemini 3.5 Flash unified
+	case strings.HasPrefix(m, "gemini-3.5"):
+		switch effort {
+		case "low":
+			return "gemini-3.5-flash-extra-low"
+		case "medium":
+			return "gemini-3.5-flash-low"
+		case "high", "max":
+			return "gemini-3-flash-agent"
+		default:
+			return "gemini-3.5-flash-low"
+		}
+
+	// Gemini 3 Flash
+	case m == "gemini-3-flash" || m == "gemini-3.0-flash":
+		if effort == "high" || effort == "max" {
+			return "gemini-3-flash-agent"
+		}
+		return "gemini-3-flash"
+
+	// Gemini Pro
+	case strings.HasPrefix(m, "gemini-3.1-pro") || m == "gemini-pro" || m == "gemini-pro-agent":
+		if effort == "high" || effort == "max" {
+			return "gemini-pro-agent"
+		}
+		return "gemini-3.1-pro-low"
+
+	// Gemini 2.5
+	case strings.HasPrefix(m, "gemini-2.5-flash"):
+		return "gemini-2.5-flash"
+	case strings.HasPrefix(m, "gemini-2.5-pro"):
+		return "gemini-2.5-pro"
+
+	// Claude
+	case strings.HasPrefix(m, "claude-sonnet") || strings.HasPrefix(m, "claude-3-7-sonnet") || strings.HasPrefix(m, "claude-3-5-sonnet") || strings.HasPrefix(m, "claude-4-sonnet"):
+		return "claude-sonnet-4-6"
+	case strings.HasPrefix(m, "claude-opus") || strings.HasPrefix(m, "claude-4-opus"):
+		return "claude-opus-4-6-thinking"
+
+	// GPT OSS
+	case strings.HasPrefix(m, "gpt-oss") || strings.HasPrefix(m, "gpt-120b"):
+		return "gpt-oss-120b-medium"
+
+	default:
+		return model
+	}
+}
+
 // testAnigravityRequest makes a simple test request to Anigravity and returns content + latency
 func testAnigravityRequest(model, prompt, accessToken string) (string, int64, error) {
+	model = resolveAnigravityModelWithEffort(model, "")
 	projectID := getAnigravityProjectID()
+	if projectID == "" {
+		return "", 0, fmt.Errorf("no Google Cloud Project ID configured — please reconnect your account via Google OAuth")
+	}
 	convUUID := generateUUID()
 	trajUUID := generateUUID()
 	requestID := fmt.Sprintf("agent/%s/%d/%s/1", convUUID, time.Now().UnixMilli(), trajUUID)
@@ -293,18 +557,23 @@ func testAnigravityRequest(model, prompt, accessToken string) (string, int64, er
 			"generationConfig": map[string]interface{}{
 				"temperature":     1.0,
 				"topP":            0.95,
-				"maxOutputTokens": 1000,
+				"maxOutputTokens": 4000,
+				"thinkingConfig": map[string]interface{}{
+					"includeThoughts": true,
+				},
 			},
 		},
 	}
 
 	bodyBytes, _ := json.Marshal(fullBody)
-	upstreamURL := "https://cloudcode-pa.googleapis.com/v1internal:generateContent"
+	upstreamURL := "https://daily-cloudcode-pa.googleapis.com/v1internal:generateContent"
 
 	req, _ := http.NewRequest("POST", upstreamURL, bytes.NewReader(bodyBytes))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("User-Agent", "antigravity/ide/2.1.1 linux/amd64")
+	req.Header.Set("X-Goog-Api-Client", "google-cloud-sdk vscode_cloudshelleditor/0.1")
+	req.Header.Set("Client-Metadata", `{"ideType":9,"platform":2,"pluginType":2}`)
 
 	startTime := time.Now()
 	client := sharedHTTPClient
@@ -325,7 +594,8 @@ func testAnigravityRequest(model, prompt, accessToken string) (string, int64, er
 			Candidates []struct {
 				Content struct {
 					Parts []struct {
-						Text string `json:"text"`
+						Text    string `json:"text"`
+						Thought bool   `json:"thought"`
 					} `json:"parts"`
 				} `json:"content"`
 			} `json:"candidates"`
@@ -338,7 +608,9 @@ func testAnigravityRequest(model, prompt, accessToken string) (string, int64, er
 	content := ""
 	if len(wrapper.Response.Candidates) > 0 {
 		for _, part := range wrapper.Response.Candidates[0].Content.Parts {
-			if part.Text != "" {
+			if !part.Thought && part.Text != "" {
+				content += part.Text
+			} else if part.Text != "" && content == "" {
 				content = part.Text
 			}
 		}
@@ -357,6 +629,7 @@ func testAnigravityRequest(model, prompt, accessToken string) (string, int64, er
 type geminiPart struct {
 	Text             string              `json:"text"`
 	ThoughtSignature string              `json:"thoughtSignature"`
+	Thought          bool                `json:"thought"`
 	FunctionCall     *geminiFunctionCall `json:"functionCall"`
 }
 
@@ -398,26 +671,48 @@ func handleAnigravityNonStreaming(w http.ResponseWriter, resp *http.Response) {
 
 	content := ""
 	reasoningContent := ""
+	currentThoughtSig := ""
 	var toolCalls []map[string]interface{}
 	toolCallIdx := 0
 
 	if len(geminiResp.Candidates) > 0 {
 		for _, part := range geminiResp.Candidates[0].Content.Parts {
-			if part.Text != "" {
-				content = part.Text
-			}
 			if part.ThoughtSignature != "" {
-				reasoningContent = part.ThoughtSignature
+				currentThoughtSig = part.ThoughtSignature
+				saveThoughtSignature("", currentThoughtSig)
+				if reasoningContent == "" {
+					reasoningContent = part.ThoughtSignature
+				}
+			}
+			if part.Thought && part.Text != "" {
+				reasoningContent += part.Text
+			} else if part.Text != "" {
+				content += part.Text
 			}
 			if part.FunctionCall != nil {
+				sig := part.ThoughtSignature
+				if sig == "" {
+					sig = currentThoughtSig
+				}
+				if sig == "" {
+					sig = getThoughtSignature(part.FunctionCall.Name, "", nil, nil)
+				}
+				saveThoughtSignature(part.FunctionCall.Name, sig)
+
+				callID := fmt.Sprintf("call_%d_%d", time.Now().UnixMilli(), toolCallIdx)
+				if sig != "" {
+					callID = fmt.Sprintf("call_%d_%d___ts___%s", time.Now().UnixMilli(), toolCallIdx, sig)
+				}
+
 				argsJSON, _ := json.Marshal(part.FunctionCall.Args)
 				toolCalls = append(toolCalls, map[string]interface{}{
-					"id":   fmt.Sprintf("call_%d_%d", time.Now().UnixMilli(), toolCallIdx),
+					"id":   callID,
 					"type": "function",
 					"function": map[string]interface{}{
 						"name":      part.FunctionCall.Name,
 						"arguments": string(argsJSON),
 					},
+					"thought_signature": sig,
 				})
 				toolCallIdx++
 			}
@@ -458,11 +753,17 @@ func handleAnigravityNonStreaming(w http.ResponseWriter, resp *http.Response) {
 	}
 
 	if geminiResp.UsageMetadata != nil {
-		openaiResp["usage"] = map[string]interface{}{
+		usageMap := map[string]interface{}{
 			"prompt_tokens":     geminiResp.UsageMetadata.PromptTokenCount,
 			"completion_tokens": geminiResp.UsageMetadata.CandidatesTokenCount,
 			"total_tokens":      geminiResp.UsageMetadata.TotalTokenCount,
 		}
+		if geminiResp.UsageMetadata.ThoughtsTokenCount > 0 {
+			usageMap["completion_tokens_details"] = map[string]interface{}{
+				"reasoning_tokens": geminiResp.UsageMetadata.ThoughtsTokenCount,
+			}
+		}
+		openaiResp["usage"] = usageMap
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -503,8 +804,10 @@ func handleAnigravityStreaming(w http.ResponseWriter, resp *http.Response) {
 		PromptTokenCount     int
 		CandidatesTokenCount int
 		TotalTokenCount      int
+		ThoughtsTokenCount   int
 	}
 	var lastFinishReason string
+	var streamThoughtSig string
 	toolCallIdx := 0
 
 	for scanner.Scan() {
@@ -537,10 +840,12 @@ func handleAnigravityStreaming(w http.ResponseWriter, resp *http.Response) {
 				PromptTokenCount     int
 				CandidatesTokenCount int
 				TotalTokenCount      int
+				ThoughtsTokenCount   int
 			}{
 				PromptTokenCount:     geminiChunk.UsageMetadata.PromptTokenCount,
 				CandidatesTokenCount: geminiChunk.UsageMetadata.CandidatesTokenCount,
 				TotalTokenCount:      geminiChunk.UsageMetadata.TotalTokenCount,
+				ThoughtsTokenCount:   geminiChunk.UsageMetadata.ThoughtsTokenCount,
 			}
 		}
 
@@ -551,11 +856,33 @@ func handleAnigravityStreaming(w http.ResponseWriter, resp *http.Response) {
 			openaiFinish = &mapped
 		}
 
-		// Process parts - text and function calls
+		// Process parts - reasoning, text and function calls
 		if len(geminiChunk.Candidates) > 0 {
 			for _, part := range geminiChunk.Candidates[0].Content.Parts {
-				// Text chunk - NO finish_reason on intermediate chunks
-				if part.Text != "" {
+				if part.ThoughtSignature != "" {
+					streamThoughtSig = part.ThoughtSignature
+					saveThoughtSignature("", streamThoughtSig)
+				}
+				// Reasoning thought chunk
+				if part.Thought && part.Text != "" {
+					chunk := map[string]interface{}{
+						"id":      fmt.Sprintf("anigravity-%d", time.Now().UnixMilli()),
+						"object":  "chat.completion.chunk",
+						"created": time.Now().Unix(),
+						"model":   "anigravity",
+						"choices": []map[string]interface{}{
+							{
+								"index":         0,
+								"delta":         map[string]interface{}{"reasoning_content": part.Text},
+								"finish_reason": nil,
+							},
+						},
+					}
+					chunkBytes, _ := json.Marshal(chunk)
+					fmt.Fprintf(w, "data: %s\n\n", string(chunkBytes))
+					flusher.Flush()
+				} else if part.Text != "" {
+					// Regular text chunk
 					chunk := map[string]interface{}{
 						"id":      fmt.Sprintf("anigravity-%d", time.Now().UnixMilli()),
 						"object":  "chat.completion.chunk",
@@ -576,6 +903,20 @@ func handleAnigravityStreaming(w http.ResponseWriter, resp *http.Response) {
 
 				// Function call chunk - NO finish_reason on intermediate chunks
 				if part.FunctionCall != nil {
+					sig := part.ThoughtSignature
+					if sig == "" {
+						sig = streamThoughtSig
+					}
+					if sig == "" {
+						sig = getThoughtSignature(part.FunctionCall.Name, "", nil, nil)
+					}
+					saveThoughtSignature(part.FunctionCall.Name, sig)
+
+					callID := fmt.Sprintf("call_%d_%d", time.Now().UnixMilli(), toolCallIdx)
+					if sig != "" {
+						callID = fmt.Sprintf("call_%d_%d___ts___%s", time.Now().UnixMilli(), toolCallIdx, sig)
+					}
+
 					argsJSON, _ := json.Marshal(part.FunctionCall.Args)
 					chunk := map[string]interface{}{
 						"id":      fmt.Sprintf("anigravity-%d", time.Now().UnixMilli()),
@@ -589,12 +930,13 @@ func handleAnigravityStreaming(w http.ResponseWriter, resp *http.Response) {
 									"tool_calls": []map[string]interface{}{
 										{
 											"index": toolCallIdx,
-											"id":    fmt.Sprintf("call_%d_%d", time.Now().UnixMilli(), toolCallIdx),
+											"id":    callID,
 											"type":  "function",
 											"function": map[string]interface{}{
 												"name":      part.FunctionCall.Name,
 												"arguments": string(argsJSON),
 											},
+											"thought_signature": sig,
 										},
 									},
 								},
@@ -626,11 +968,17 @@ func handleAnigravityStreaming(w http.ResponseWriter, resp *http.Response) {
 				},
 			}
 			if lastUsage != nil {
-				finalChunk["usage"] = map[string]interface{}{
+				usageMap := map[string]interface{}{
 					"prompt_tokens":     lastUsage.PromptTokenCount,
 					"completion_tokens": lastUsage.CandidatesTokenCount,
 					"total_tokens":      lastUsage.TotalTokenCount,
 				}
+				if lastUsage.ThoughtsTokenCount > 0 {
+					usageMap["completion_tokens_details"] = map[string]interface{}{
+						"reasoning_tokens": lastUsage.ThoughtsTokenCount,
+					}
+				}
+				finalChunk["usage"] = usageMap
 			}
 			chunkBytes, _ := json.Marshal(finalChunk)
 			fmt.Fprintf(w, "data: %s\n\n", string(chunkBytes))
@@ -689,8 +1037,5 @@ func getAnigravityProjectID() string {
 	var projectID string
 	db.DB.QueryRow(`SELECT COALESCE(project_id, '') FROM provider_connections 
 		WHERE provider_id='builtin-anigravity' AND is_active=1 ORDER BY created_at DESC LIMIT 1`).Scan(&projectID)
-	if projectID == "" {
-		return "cloud-code-antigravity-default"
-	}
 	return projectID
 }

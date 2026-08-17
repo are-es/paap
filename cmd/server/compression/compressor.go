@@ -374,5 +374,3 @@ func CompressInterfaceMessages(messages []ChatMessage, level Level, modelName st
 
 	return results
 }
-
-

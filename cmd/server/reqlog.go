@@ -137,14 +137,14 @@ func LogResponse(statusCode int, latencyMs int64, tokensIn, tokensOut int, provi
 	ts := time.Now().Format("2006-01-02T15:04:05Z")
 
 	entry := map[string]interface{}{
-		"timestamp":       ts,
-		"direction":       "←",
-		"status_code":     statusCode,
-		"latency_ms":      latencyMs,
-		"tokens_in":       tokensIn,
-		"tokens_out":      tokensOut,
-		"provider":        provider,
-		"key":             maskKey(keyValue),
+		"timestamp":   ts,
+		"direction":   "←",
+		"status_code": statusCode,
+		"latency_ms":  latencyMs,
+		"tokens_in":   tokensIn,
+		"tokens_out":  tokensOut,
+		"provider":    provider,
+		"key":         maskKey(keyValue),
 	}
 
 	// Parse response body if available

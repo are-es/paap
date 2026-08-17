@@ -26,6 +26,7 @@ export interface ApiKeyItem {
   is_active: boolean;
   last_used?: string | null;
   fail_count?: number;
+  last_error?: string;
   source?: "apikey" | "connection";
 }
 
@@ -36,6 +37,8 @@ export interface ConnectionItem {
   email?: string | null;
   is_active: boolean;
   test_status?: string | null;
+  fail_count?: number;
+  last_error?: string;
 }
 
 export interface ModelItem {

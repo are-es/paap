@@ -98,7 +98,7 @@ export function DocsModal({ open, onClose, title, sections }: DocsModalProps) {
   );
 }
 
-// Docs button — reusable
+// Docs button - reusable
 export function DocsButton({ onClick }: { onClick: () => void }) {
   return (
     <button

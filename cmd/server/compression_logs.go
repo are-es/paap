@@ -12,15 +12,15 @@ import (
 
 // compressionLogEntry is a single compression event for the API response.
 type compressionLogEntry struct {
-	Timestamp      string  `json:"timestamp"`
-	ContentType    string  `json:"content_type"`
-	Level          string  `json:"level"`
-	OriginalSize   int     `json:"original_size"`
-	CompressedSize int     `json:"compressed_size"`
-	SavedPercent   float64 `json:"saved_percent"`
-	OriginalTokens int     `json:"original_tokens"`
-	CompressedTokens int   `json:"compressed_tokens"`
-	SavedTokens    int     `json:"saved_tokens"`
+	Timestamp        string  `json:"timestamp"`
+	ContentType      string  `json:"content_type"`
+	Level            string  `json:"level"`
+	OriginalSize     int     `json:"original_size"`
+	CompressedSize   int     `json:"compressed_size"`
+	SavedPercent     float64 `json:"saved_percent"`
+	OriginalTokens   int     `json:"original_tokens"`
+	CompressedTokens int     `json:"compressed_tokens"`
+	SavedTokens      int     `json:"saved_tokens"`
 }
 
 // compressionLogsHandler handles GET /api/compression/logs.
@@ -200,11 +200,11 @@ func compressionSummaryHandler(w http.ResponseWriter, r *http.Request) {
 	_ = database.QueryRow(`SELECT COUNT(*) FROM logs WHERE tokens_saved > 0`).Scan(&count)
 
 	resp := map[string]interface{}{
-		"request_count":  count,
-		"total_before":   totalBefore,
-		"total_after":    totalAfter,
-		"total_saved":    totalSaved,
-		"saved_percent":  func() float64 {
+		"request_count": count,
+		"total_before":  totalBefore,
+		"total_after":   totalAfter,
+		"total_saved":   totalSaved,
+		"saved_percent": func() float64 {
 			if totalBefore > 0 {
 				return float64(totalSaved) / float64(totalBefore) * 100
 			}

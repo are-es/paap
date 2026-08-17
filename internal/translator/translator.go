@@ -142,6 +142,11 @@ func AnthropicToOpenAIRequest(body map[string]interface{}) (map[string]interface
 
 	result["messages"] = openaiMessages
 
+	// thinking / extended thinking config (pass-through)
+	if thinking, ok := body["thinking"].(map[string]interface{}); ok {
+		result["thinking"] = thinking
+	}
+
 	// Convert tools
 	if tools, ok := body["tools"].([]interface{}); ok {
 		openaiTools := convertAnthropicToolsToOpenAI(tools)
@@ -508,10 +513,18 @@ func OpenAIToAnthropicResponse(openaiResp map[string]interface{}) map[string]int
 					}
 				}
 
-				if len(contentBlocks) == 0 {
-					contentBlocks = []interface{}{}
-				}
-				result["content"] = contentBlocks
+					// Reasoning / thinking summary (OpenAI-style reasoning content)
+					if reasoning, ok := message["reasoning"].(string); ok && reasoning != "" {
+						contentBlocks = append(contentBlocks, map[string]interface{}{
+							"type": "thinking",
+							"thinking": reasoning,
+						})
+					}
+
+					if len(contentBlocks) == 0 {
+						contentBlocks = []interface{}{}
+					}
+					result["content"] = contentBlocks
 
 				// Stop reason
 				finishReason, _ := choice["finish_reason"].(string)

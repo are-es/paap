@@ -296,6 +296,7 @@ func migrate() error {
 	DB.Exec("ALTER TABLE api_keys ADD COLUMN fail_count INTEGER DEFAULT 0")
 	DB.Exec("ALTER TABLE api_keys ADD COLUMN last_error TEXT DEFAULT ''")
 	DB.Exec("ALTER TABLE api_keys ADD COLUMN last_tested_at INTEGER DEFAULT 0")
+	DB.Exec("ALTER TABLE provider_connections ADD COLUMN last_error TEXT DEFAULT ''")
 	DB.Exec("ALTER TABLE groups ADD COLUMN race_mode TEXT DEFAULT 'round_robin'")
 	DB.Exec("ALTER TABLE groups ADD COLUMN selected_keys TEXT DEFAULT '[]'")
 	DB.Exec("ALTER TABLE groups ADD COLUMN selected_models TEXT DEFAULT '[]'")

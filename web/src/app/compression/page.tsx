@@ -162,7 +162,7 @@ export default function CompressionPage() {
           </div>
         </div>
 
-        {/* COMPRESSION LEVEL — HORIZONTAL */}
+        {/* COMPRESSION LEVEL - HORIZONTAL */}
         <div className="bg-primary/[0.04] border border-primary/15 rounded-lg p-4">
           <div className="flex items-center gap-2 mb-4">
             <Zap className="w-4 h-4 text-muted-foreground" />

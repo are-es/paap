@@ -12,26 +12,35 @@ interface ProviderTopologyProps {
 }
 
 const NEON_CYAN = "#22d3ee";
+const GW_R = 48;
+const PROV_W = 110;
+const PROV_H = 40;
 
-function TopologyIcon({ logo, color, name, isActive }: { logo: string | null; color: string; name: string; isActive: boolean }) {
+// ─── Provider Logo + Name Card ──────────────────────────────
+function ProviderCard({ logo, color, name, isActive }: { logo: string | null; color: string; name: string; isActive: boolean }) {
   const [imgError, setImgError] = useState(false);
   const showLogo = logo && !imgError;
   return (
     <div
-      className="w-[48px] h-[48px] rounded-xl flex items-center justify-center transition-all"
+      data-prov-card
+      className="w-[110px] h-[40px] rounded-[10px] flex items-center gap-2 px-2.5 transition-all"
       style={{
-        background: showLogo ? "var(--background, #0f0f1a)" : color,
+        background: "#0f0f1a",
         border: `2px solid ${isActive ? color + "80" : color + "30"}`,
         boxShadow: isActive
-          ? `0 0 20px ${color}50, 0 2px 8px rgba(0,0,0,0.4)`
+          ? `0 0 14px ${color}40`
           : "0 2px 8px rgba(0,0,0,0.2)",
+        transformOrigin: "center center",
       }}
     >
       {showLogo ? (
-        <Image src={logo} alt="" width={32} height={32} className="rounded-lg object-contain" unoptimized onError={() => setImgError(true)} />
+        <Image src={logo} alt="" width={24} height={24} className="rounded-md object-contain flex-shrink-0" unoptimized onError={() => setImgError(true)} />
       ) : (
-        <span className="text-lg font-black text-white drop-shadow-sm">{name.slice(0, 2).toUpperCase()}</span>
+        <div className="w-6 h-6 rounded-md flex-shrink-0" style={{ background: color + "20" }}>
+          <span className="flex items-center justify-center w-full h-full text-[10px] font-bold" style={{ color }}>{name.slice(0, 2).toUpperCase()}</span>
+        </div>
       )}
+      <span className="text-[10px] font-medium text-[#d4d4d8] whitespace-nowrap overflow-hidden text-ellipsis">{name}</span>
     </div>
   );
 }
@@ -55,7 +64,6 @@ function providerColor(provider: Provider): string {
 interface Pos { x: number; y: number }
 
 const LS_KEY = "paap-topo-positions";
-const CARD_SIZE = 48;
 
 // Border intersection: line from center → target hits card border
 function borderPoint(cx: number, cy: number, hw: number, hh: number, tx: number, ty: number) {
@@ -79,7 +87,6 @@ function curvePath(x1: number, y1: number, x2: number, y2: number, style: number
   const side = style % 2 === 0 ? 1 : -1;
 
   if (style === 0) {
-    // S-curve
     const cp1x = x1 + ex * 0.3 + nx * curve * side;
     const cp1y = y1 + ey * 0.3 + ny * curve * side;
     const cp2x = x1 + ex * 0.7 - nx * curve * side;
@@ -87,13 +94,11 @@ function curvePath(x1: number, y1: number, x2: number, y2: number, style: number
     return `M ${x1} ${y1} C ${cp1x} ${cp1y} ${cp2x} ${cp2y} ${x2} ${y2}`;
   }
   if (style === 1) {
-    // Arc
     const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
     const cpx = mx + nx * curve * 1.4 * side;
     const cpy = my + ny * curve * 1.4 * side;
     return `M ${x1} ${y1} Q ${cpx} ${cpy} ${x2} ${y2}`;
   }
-  // Wave
   const cp1x = x1 + ex * 0.25 + nx * curve * 0.6 * side;
   const cp1y = y1 + ey * 0.25 + ny * curve * 0.6 * side;
   const cp2x = x1 + ex * 0.6 + nx * curve * 0.3 * side;
@@ -101,93 +106,15 @@ function curvePath(x1: number, y1: number, x2: number, y2: number, style: number
   return `M ${x1} ${y1} C ${cp1x} ${cp1y} ${cp2x} ${cp2y} ${x2} ${y2}`;
 }
 
-// ─── Snake Edge Component ───────────────────────────────────
-function SnakeEdge({ pathD, color }: { pathD: string; color: string }) {
-  const ref = useRef<SVGPathElement>(null);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    let start: number | null = null;
-    const dur = 3000; // 3 seconds per cycle (slow)
-
-    function animate(ts: number) {
-      if (!el) return;
-      if (!start) start = ts;
-      const progress = ((ts - start) % dur) / dur;
-      // Snake offset: 20% of path length
-      el.setAttribute("stroke-dashoffset", String(100 - progress * 120));
-      // Fade in/out
-      let opacity = 0.9;
-      if (progress < 0.08) opacity = (progress / 0.08) * 0.9;
-      else if (progress > 0.85) opacity = ((1 - progress) / 0.15) * 0.9;
-      el.setAttribute("opacity", String(opacity));
-      requestAnimationFrame(animate);
-    }
-    const raf = requestAnimationFrame(animate);
-    return () => cancelAnimationFrame(raf);
-  }, []);
-
-  return (
-    <path
-      ref={ref}
-      d={pathD}
-      fill="none"
-      stroke={color}
-      strokeWidth="2.5"
-      strokeLinecap="round"
-      strokeDasharray="20 80"
-      strokeDashoffset="100"
-      pathLength="100"
-      opacity="0"
-      style={{ filter: `drop-shadow(0 0 4px ${color}) drop-shadow(0 0 8px ${color})` }}
-    />
-  );
-}
-
-// ─── Heartbeat Ring Component ───────────────────────────────
-function HeartbeatRing({ cx, cy, color }: { cx: number; cy: number; color: string }) {
-  const ref = useRef<SVGCircleElement>(null);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    let start: number | null = null;
-    const dur = 1200;
-
-    function animate(ts: number) {
-      if (!el) return;
-      if (!start) start = ts;
-      const p = ((ts - start) % dur) / dur;
-      el.setAttribute("r", String(24 + p * 20));
-      el.setAttribute("opacity", String(0.7 * (1 - p)));
-      requestAnimationFrame(animate);
-    }
-    const raf = requestAnimationFrame(animate);
-    return () => cancelAnimationFrame(raf);
-  }, []);
-
-  return (
-    <circle
-      ref={ref}
-      cx={cx}
-      cy={cy}
-      r="24"
-      fill="none"
-      stroke={color}
-      strokeWidth="1.5"
-      opacity="0.7"
-    />
-  );
-}
-
 // ─── Main Component ─────────────────────────────────────────
 export function ProviderTopology({ providers }: ProviderTopologyProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
   const [activeProviders, setActiveProviders] = useState<Set<string>>(new Set());
   const [activeModels, setActiveModels] = useState<Set<string>>(new Set());
   const [tooltip, setTooltip] = useState<{ name: string; info: string; x: number; y: number } | null>(null);
   const [dims, setDims] = useState({ w: 700, h: 400 });
+  const animRaf = useRef<number | null>(null);
 
   const [positions, setPositions] = useState<Record<string, Pos>>(() => {
     try {
@@ -257,6 +184,89 @@ export function ProviderTopology({ providers }: ProviderTopologyProps) {
     return () => ro.disconnect();
   }, []);
 
+  // ─── JS Animation Loop (single raf, dots + card pulse) ─────
+  useEffect(() => {
+    const CYCLE = 1800; // 1.8s per cycle
+    const DOT1_END = 0.40;
+    const DOT2_START = 0.50;
+    const DOT2_END = 0.90;
+
+    function tick() {
+      const svg = svgRef.current;
+      const container = containerRef.current;
+      if (!svg || !container) { animRaf.current = requestAnimationFrame(tick); return; }
+
+      const t = (Date.now() % CYCLE) / CYCLE;
+
+      // Find all active path groups
+      const groups = svg.querySelectorAll("[data-active-group]");
+      groups.forEach((g) => {
+        const provId = g.getAttribute("data-prov-id");
+        const pathEl = g.querySelector("path[data-edge]") as SVGPathElement | null;
+        if (!pathEl) return;
+
+        const totalLen = pathEl.getTotalLength();
+        const d1 = g.querySelector("[data-dot1]") as SVGCircleElement | null;
+        const c1 = g.querySelector("[data-dot1-core]") as SVGCircleElement | null;
+        const d2 = g.querySelector("[data-dot2]") as SVGCircleElement | null;
+        const c2 = g.querySelector("[data-dot2-core]") as SVGCircleElement | null;
+
+        // Dot 1: gw → provider
+        if (d1 && c1) {
+          if (t < DOT1_END) {
+            const progress = t / DOT1_END;
+            const pt = pathEl.getPointAtLength(progress * totalLen);
+            d1.setAttribute("cx", String(pt.x));
+            d1.setAttribute("cy", String(pt.y));
+            c1.setAttribute("cx", String(pt.x));
+            c1.setAttribute("cy", String(pt.y));
+            d1.setAttribute("opacity", "0.9");
+            c1.setAttribute("opacity", "0.7");
+          } else {
+            d1.setAttribute("opacity", "0");
+            c1.setAttribute("opacity", "0");
+          }
+        }
+
+        // Dot 2: gw → provider (second wave)
+        if (d2 && c2) {
+          if (t >= DOT2_START && t < DOT2_END) {
+            const progress = (t - DOT2_START) / (DOT2_END - DOT2_START);
+            const pt = pathEl.getPointAtLength(progress * totalLen);
+            d2.setAttribute("cx", String(pt.x));
+            d2.setAttribute("cy", String(pt.y));
+            c2.setAttribute("cx", String(pt.x));
+            c2.setAttribute("cy", String(pt.y));
+            d2.setAttribute("opacity", "0.75");
+            c2.setAttribute("opacity", "0.5");
+          } else {
+            d2.setAttribute("opacity", "0");
+            c2.setAttribute("opacity", "0");
+          }
+        }
+
+        // Card pulse when dot arrives
+        const cardEl = container.querySelector(`[data-prov-id="${provId}"] [data-prov-card]`) as HTMLElement | null;
+        if (cardEl) {
+          const pulse1 = t >= 0.37 && t < 0.44;
+          const pulse2 = t >= 0.48 && t < 0.55;
+          if (pulse1) {
+            cardEl.style.transform = `scale(${1 + 0.08 * Math.sin((t - 0.37) / 0.07 * Math.PI)})`;
+          } else if (pulse2) {
+            cardEl.style.transform = `scale(${1 + 0.06 * Math.sin((t - 0.48) / 0.07 * Math.PI)})`;
+          } else {
+            cardEl.style.transform = "scale(1)";
+          }
+        }
+      });
+
+      animRaf.current = requestAnimationFrame(tick);
+    }
+
+    animRaf.current = requestAnimationFrame(tick);
+    return () => { if (animRaf.current) cancelAnimationFrame(animRaf.current); };
+  }, []); // runs once — reads DOM each frame
+
   const onlineProviders = providers.filter((p) => p.status !== "offline");
   const cx = dims.w / 2;
   const cy = dims.h / 2;
@@ -289,8 +299,8 @@ export function ProviderTopology({ providers }: ProviderTopologyProps) {
   const getPos = useCallback((key: string): Pos => {
     const raw = positions[key] ?? defaultPos(key);
     const pad = 10;
-    const hw = key === "gateway" ? 40 : CARD_SIZE / 2;
-    const hh = key === "gateway" ? 28 : CARD_SIZE / 2;
+    const hw = key === "gateway" ? GW_R : PROV_W / 2;
+    const hh = key === "gateway" ? GW_R : PROV_H / 2;
     return {
       x: Math.max(pad + hw, Math.min(dims.w - pad - hw, raw.x)),
       y: Math.max(pad + hh, Math.min(dims.h - pad - hh, raw.y)),
@@ -352,33 +362,53 @@ export function ProviderTopology({ providers }: ProviderTopologyProps) {
         onMouseLeave={handleMouseUp}
       >
         {/* SVG edges layer */}
-        <svg className="absolute inset-0 w-full h-full pointer-events-none z-[4]" style={{ overflow: "visible" }}>
+        <svg ref={svgRef} className="absolute inset-0 w-full h-full pointer-events-none z-[4]" style={{ overflow: "visible" }}>
           {/* Gateway → Provider edges */}
           {onlineProviders.map((prov, provIdx) => {
             const provPos = getPos(`prov-${prov.id}`);
             const isActive = activeProviders.has(prov.name);
-            if (!isActive) return null; // No idle lines
+            const color = providerColor(prov);
 
-            const gwEdge = borderPoint(gwPos.x, gwPos.y, 40, 28, provPos.x, provPos.y);
-            const pvEdge = borderPoint(provPos.x, provPos.y, CARD_SIZE / 2, CARD_SIZE / 2, gwPos.x, gwPos.y);
+            const gwEdge = borderPoint(gwPos.x, gwPos.y, GW_R, GW_R, provPos.x, provPos.y);
+            const pvEdge = borderPoint(provPos.x, provPos.y, PROV_W / 2, PROV_H / 2, gwPos.x, gwPos.y);
             const d = curvePath(gwEdge.x, gwEdge.y, pvEdge.x, pvEdge.y, provIdx % 3);
 
             return (
-              <g key={`edge-${prov.id}`}>
-                <SnakeEdge pathD={d} color={providerColor(prov)} />
-                <HeartbeatRing cx={provPos.x} cy={provPos.y} color={providerColor(prov)} />
+              <g key={`edge-${prov.id}`} data-active-group={isActive ? "1" : ""} data-prov-id={prov.id}>
+                {/* Idle line (ALWAYS visible) */}
+                <path
+                  data-edge={isActive ? "active" : "idle"}
+                  d={d}
+                  fill="none"
+                  stroke={isActive ? color : "#b0b8c8"}
+                  strokeWidth={isActive ? "2" : "1.2"}
+                  opacity={isActive ? 0.35 : 0.5}
+                  strokeDasharray="8 4"
+                  strokeLinecap="round"
+                  style={isActive ? { filter: `drop-shadow(0 0 3px ${color})` } : undefined}
+                />
+                {/* Dots (only for active — JS drives visibility) */}
+                {isActive && (
+                  <>
+                    <circle data-dot1 r="4.5" fill={color} opacity="0" style={{ filter: `drop-shadow(0 0 5px ${color}) drop-shadow(0 0 10px ${color})` }} />
+                    <circle data-dot1-core r="1.8" fill="#fff" opacity="0" />
+                    <circle data-dot2 r="3.5" fill={color} opacity="0" style={{ filter: `drop-shadow(0 0 4px ${color}) drop-shadow(0 0 8px ${color})` }} />
+                    <circle data-dot2-core r="1.2" fill="#fff" opacity="0" />
+                  </>
+                )}
               </g>
             );
           })}
         </svg>
 
-        {/* PAAP Gateway Node */}
+        {/* PAAP Gateway Node — Big Circle */}
         <div
           className="absolute z-10"
           style={{
-            top: gwPos.y - 28,
-            left: gwPos.x - 40,
-            width: 80,
+            top: gwPos.y - GW_R,
+            left: gwPos.x - GW_R,
+            width: GW_R * 2,
+            height: GW_R * 2,
             cursor: dragging.current === "gateway" ? "grabbing" : "grab",
           }}
           onMouseDown={(e) => handleMouseDown(e, "gateway")}
@@ -386,21 +416,21 @@ export function ProviderTopology({ providers }: ProviderTopologyProps) {
           onMouseLeave={() => setTooltip(null)}
         >
           <div
-            className="w-[80px] h-[56px] rounded-[14px] flex items-center justify-center transition-all overflow-hidden"
+            className="w-full h-full rounded-full flex items-center justify-center overflow-hidden"
             style={{
               background: "var(--background, #0f0f1a)",
-              border: `2px solid ${hasActive ? "rgba(34,211,238,0.5)" : "rgba(34,211,238,0.3)"}`,
+              border: `2px solid ${hasActive ? "rgba(34,211,238,0.5)" : "rgba(34,211,238,0.25)"}`,
               boxShadow: hasActive
                 ? "0 0 28px rgba(34,211,238,0.3), 0 2px 10px rgba(0,0,0,0.4)"
-                : "0 0 20px rgba(34,211,238,0.15), 0 2px 10px rgba(0,0,0,0.4)",
-              animation: hasActive ? "gwHeartbeat 0.6s ease-in-out infinite" : "none",
+                : "0 0 16px rgba(34,211,238,0.1), 0 2px 8px rgba(0,0,0,0.4)",
+              animation: hasActive ? "gwHeartbeat 0.7s ease-in-out infinite alternate" : "none",
             }}
           >
-            <Image src="/assets/logo.svg" alt="PAAP" width={48} height={48} className="object-contain" unoptimized />
+            <Image src="/assets/logo.svg" alt="PAAP" width={56} height={56} className="object-contain" unoptimized />
           </div>
         </div>
 
-        {/* Provider Nodes — Logo Only */}
+        {/* Provider Nodes — Logo + Name */}
         {onlineProviders.map((prov) => {
           const pos = getPos(`prov-${prov.id}`);
           const isActive = activeProviders.has(prov.name);
@@ -411,10 +441,11 @@ export function ProviderTopology({ providers }: ProviderTopologyProps) {
           return (
             <div
               key={prov.id}
+              data-prov-id={prov.id}
               className="absolute z-10"
               style={{
-                top: pos.y - CARD_SIZE / 2,
-                left: pos.x - CARD_SIZE / 2,
+                top: pos.y - PROV_H / 2,
+                left: pos.x - PROV_W / 2,
                 cursor: dragging.current === `prov-${prov.id}` ? "grabbing" : "grab",
               }}
               onMouseDown={(e) => handleMouseDown(e, `prov-${prov.id}`)}
@@ -426,7 +457,7 @@ export function ProviderTopology({ providers }: ProviderTopologyProps) {
               })}
               onMouseLeave={() => setTooltip(null)}
             >
-              <TopologyIcon logo={logo} color={color} name={prov.name} isActive={isActive} />
+              <ProviderCard logo={logo} color={color} name={prov.name} isActive={isActive} />
             </div>
           );
         })}
@@ -458,9 +489,8 @@ export function ProviderTopology({ providers }: ProviderTopologyProps) {
 
       <style jsx global>{`
         @keyframes gwHeartbeat {
-          0%, 100% { transform: scale(1); box-shadow: 0 0 28px rgba(34,211,238,0.3), 0 2px 10px rgba(0,0,0,0.4); }
-          30% { transform: scale(1.06); box-shadow: 0 0 40px rgba(34,211,238,0.5), 0 2px 10px rgba(0,0,0,0.4); }
-          60% { transform: scale(0.97); box-shadow: 0 0 18px rgba(34,211,238,0.2), 0 2px 10px rgba(0,0,0,0.4); }
+          0% { box-shadow: 0 0 20px rgba(34,211,238,0.25), 0 2px 8px rgba(0,0,0,0.4); }
+          100% { box-shadow: 0 0 32px rgba(34,211,238,0.5), 0 2px 8px rgba(0,0,0,0.4); }
         }
       `}</style>
     </section>

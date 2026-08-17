@@ -134,7 +134,7 @@ export default function ProxyPage() {
         </div>
       </div>
 
-      {/* PROXY TABLE — fixed height, scrollable */}
+      {/* PROXY TABLE - fixed height, scrollable */}
       <div className="bg-primary/[0.04] border border-primary/15 rounded-lg overflow-hidden flex-1 min-h-0">
         <div className="overflow-y-auto" style={{ height: "calc(100vh - 220px)" }}>
           <table className="w-full text-xs">

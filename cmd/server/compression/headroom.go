@@ -263,5 +263,3 @@ func offloadDiffStrip(text string) string {
 	}
 	return strings.Join(result, "\n")
 }
-
-

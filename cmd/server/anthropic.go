@@ -356,6 +356,7 @@ func handleAnthropicStreaming(w http.ResponseWriter, upstreamResp *http.Response
 	}
 
 	var tokensIn, tokensOut int
+	var collectedThinking string
 	scanner := bufio.NewScanner(upstreamResp.Body)
 	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
 
@@ -380,7 +381,7 @@ func handleAnthropicStreaming(w http.ResponseWriter, upstreamResp *http.Response
 		batch = append(batch, lineBytes...)
 		batchSize += len(lineBytes)
 
-		// Parse Anthropic SSE data lines for token usage
+		// Parse Anthropic SSE data lines for token usage + thinking extraction
 		if strings.HasPrefix(line, "data:") {
 			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 			var chunk map[string]interface{}
@@ -408,6 +409,22 @@ func handleAnthropicStreaming(w http.ResponseWriter, upstreamResp *http.Response
 					flushBatch()
 					break
 				}
+
+				// Extract thinking/reasoning blocks from content_block_delta
+				if chunk["type"] == "content_block_delta" {
+					if delta, ok := chunk["delta"].(map[string]interface{}); ok {
+						if delta["type"] == "thinking_delta" {
+							if text, ok := delta["thinking"].(string); ok && text != "" {
+								collectedThinking += text
+							}
+						}
+						if delta["type"] == "text_delta" {
+							if text, ok := delta["text"].(string); ok && text != "" {
+								// text already in stream, just pass through
+							}
+						}
+					}
+				}
 			}
 		}
 
@@ -418,6 +435,21 @@ func handleAnthropicStreaming(w http.ResponseWriter, upstreamResp *http.Response
 
 	if err := scanner.Err(); err != nil {
 		log.Printf("Error reading Anthropic upstream stream: %v", err)
+	}
+
+	// Inject thinking summary at end if collected
+	if collectedThinking != "" {
+		thinkingEvent := map[string]interface{}{
+			"type":  "content_block_start",
+			"index": 0,
+			"content_block": map[string]interface{}{
+				"type":     "thinking",
+				"thinking": collectedThinking,
+			},
+		}
+		thinkingBytes, _ := json.Marshal(thinkingEvent)
+		w.Write(append(thinkingBytes, '\n'))
+		flusher.Flush()
 	}
 
 	flushBatch()

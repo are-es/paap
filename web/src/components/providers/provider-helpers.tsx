@@ -63,7 +63,7 @@ export function ProviderIcon({
 
 export function AuthTypeBadge({ authType }: { authType: string }) {
   return (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-muted text-muted-foreground border border-border">
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-muted text-muted-foreground border border-border">
       {authType === "connection" ? "OAuth" : "API Key"}
     </span>
   );
@@ -71,7 +71,7 @@ export function AuthTypeBadge({ authType }: { authType: string }) {
 
 export function ProviderTypeBadge({ providerType }: { providerType: string }) {
   return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider border ${
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs border ${
       providerType === "builtin"
         ? "bg-primary/10 text-primary border-primary/20"
         : "bg-muted text-muted-foreground border-border"
@@ -84,12 +84,12 @@ export function ProviderTypeBadge({ providerType }: { providerType: string }) {
 export function StatusPill({ status }: { status: string }) {
   const isOnline = status === "online";
   return (
-    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider ${
+    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs ${
       isOnline
         ? "bg-green-100 text-green-700 border border-green-200"
         : "bg-muted text-muted-foreground border border-border"
     }`}>
-      <span className={`w-1.5 h-1.5 rounded-full ${isOnline ? "bg-green-500 animate-pulse" : "bg-muted-foreground"}`} />
+      <span className={`w-1.5 h-1.5 rounded-full ${isOnline ? "bg-green-500" : "bg-muted-foreground"}`} />
       {status}
     </span>
   );

@@ -386,11 +386,11 @@ func handleCodexProxy(w http.ResponseWriter, r *http.Request, providerID, keyVal
 		writeError(w, 400, "invalid request body")
 		return
 	}
-	handleCodexProxyBody(w, r, rawBody, keyValue, baseURL, "")
+	handleCodexProxyBody(w, r, rawBody, keyValue, baseURL, "", "builtin-openai-codex", "OpenAI Codex", "", "")
 }
 
 // handleCodexProxyBody forwards a request body already parsed by the main router.
-func handleCodexProxyBody(w http.ResponseWriter, r *http.Request, rawBody map[string]interface{}, keyValue, baseURL, accountID string) {
+func handleCodexProxyBody(w http.ResponseWriter, r *http.Request, rawBody map[string]interface{}, keyValue, baseURL, accountID, providerID, providerName, keyID, keyName string) {
 	startTime := time.Now()
 	messages, _ := rawBody["messages"].([]interface{})
 	if len(messages) == 0 {
@@ -436,15 +436,21 @@ func handleCodexProxyBody(w http.ResponseWriter, r *http.Request, rawBody map[st
 	if resp.StatusCode != 200 {
 		errBody, _ := io.ReadAll(resp.Body)
 		log.Printf("[PAAP] [CODEX-RESP] status=%d body=%s", resp.StatusCode, truncateStr(string(errBody), 500))
+		latencyMs := time.Since(startTime).Milliseconds()
+		logProxyRequest(providerID, providerName, model, keyID, keyName, "", "", resp.StatusCode, 0, 0, latencyMs, string(errBody), nil)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(resp.StatusCode)
 		w.Write(errBody)
 		return
 	}
 	if isStream {
-		handleCodexStreamingResponse(w, resp, model)
+		tIn, tOut := handleCodexStreamingResponse(w, resp, model)
+		latencyMs := time.Since(startTime).Milliseconds()
+		logProxyRequest(providerID, providerName, model, keyID, keyName, "", "", 200, tIn, tOut, latencyMs, "", nil)
 	} else {
-		handleCodexNonStreamingResponse(w, resp, model)
+		tIn, tOut := handleCodexNonStreamingResponse(w, resp, model)
+		latencyMs := time.Since(startTime).Milliseconds()
+		logProxyRequest(providerID, providerName, model, keyID, keyName, "", "", 200, tIn, tOut, latencyMs, "", nil)
 	}
 }
 
@@ -509,7 +515,7 @@ func handleCodexProxyWithUpstream(w http.ResponseWriter, r *http.Request, provid
 	}
 }
 
-func handleCodexNonStreamingResponse(w http.ResponseWriter, resp *http.Response, model string) {
+func handleCodexNonStreamingResponse(w http.ResponseWriter, resp *http.Response, model string) (int, int) {
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 256*1024), 256*1024)
 	var outputText strings.Builder
@@ -624,6 +630,7 @@ func handleCodexNonStreamingResponse(w http.ResponseWriter, resp *http.Response,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(chatResp)
+	return totalInputTokens, totalOutputTokens
 }
 
 // SSE chunk helpers — avoids Go composite literal type inference issues
@@ -661,7 +668,7 @@ func makeChatChunkDeltaWithUsage(chatID, model string, delta map[string]interfac
 	}
 }
 
-func handleCodexStreamingResponse(w http.ResponseWriter, resp *http.Response, model string) {
+func handleCodexStreamingResponse(w http.ResponseWriter, resp *http.Response, model string) (int, int) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -846,6 +853,7 @@ func handleCodexStreamingResponse(w http.ResponseWriter, resp *http.Response, mo
 			}
 		}
 	}
+	return totalInputTokens, totalOutputTokens
 }
 
 func sendCodexSSE(w http.ResponseWriter, data interface{}, flusher http.Flusher, canFlush bool) {

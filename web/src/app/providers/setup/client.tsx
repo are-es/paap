@@ -33,6 +33,16 @@ import {
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { cn } from "@/lib/utils";
 
+// parseKeyError extracts a human-readable message from a stored upstream error body.
+// Bodies are usually JSON ({"error":{"message":"..."}}), but can be raw text.
+function parseKeyError(raw: string): string {
+  try {
+    return JSON.parse(raw).error?.message || raw.slice(0, 40);
+  } catch {
+    return raw.slice(0, 40);
+  }
+}
+
 export function ProviderSetupClient() {
   const searchParams = useSearchParams();
   const providerId = searchParams.get("id") ?? "";
@@ -459,8 +469,8 @@ function KeysSection({ providerId }: { providerId: string }) {
                 <div className="font-mono text-xs text-muted-foreground truncate">{displayKey}</div>
               </div>
               {key.fail_count != null && key.fail_count > 0 && (
-                <span className="px-1.5 py-0.5 rounded text-[10px] bg-neon-magenta/10 text-neon-magenta border border-neon-magenta/20 font-mono">
-                  {key.fail_count} fails
+                <span className="px-1.5 py-0.5 rounded text-[10px] bg-neon-magenta/10 text-neon-magenta border border-neon-magenta/20 font-mono" title={key.last_error || ""}>
+                  {key.fail_count} fails{key.last_error ? `: ${parseKeyError(key.last_error)}` : ""}
                 </span>
               )}
               <button
@@ -651,9 +661,21 @@ function ConnectionsSection({ providerId }: { providerId: string }) {
               enabled={conn.is_active}
               onChange={() => toggleMutation.mutate(conn.id)}
             />
-            <div className="flex-1">
-              <div className="text-sm font-medium">{conn.name}</div>
-              {conn.email && <div className="text-xs text-muted-foreground">{conn.email}</div>}
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm font-medium">{conn.name}</span>
+                {conn.fail_count != null && conn.fail_count > 0 && (
+                  <span
+                    className="px-1.5 py-0.5 rounded text-[10px] bg-neon-magenta/10 text-neon-magenta border border-neon-magenta/20 font-medium"
+                    title={conn.last_error || undefined}
+                  >
+                    {conn.fail_count} fails{conn.last_error ? `: ${parseKeyError(conn.last_error)}` : ""}
+                  </span>
+                )}
+              </div>
+              {conn.email && conn.email !== conn.name && (
+                <div className="text-xs text-muted-foreground">{conn.email}</div>
+              )}
             </div>
             <button
               onClick={() => deleteConnectionMutation.mutate(conn.id)}
@@ -846,6 +868,7 @@ onError: (err: Error) => { setError(err.message); setResults(null); },
 
 const activeKeys = keysQuery.data?.filter((k) => k.is_active) ?? [];
 const selectedModels = modelsQuery.data?.filter((m) => m.selected) ?? [];
+const availableModels = selectedModels.length > 0 ? selectedModels : (modelsQuery.data ?? []);
 
 return (
 <NeonCollapse title="Playground" icon={<Play className="w-4 h-4" />} accentColor="amber">
@@ -865,7 +888,7 @@ className="px-3 py-2 rounded-lg border border-input bg-background text-sm focus:
             className="px-3 py-2 rounded-lg border border-input bg-background text-sm focus:outline-none focus:border-neon-amber/50"
           >
             <option value="">Select model...</option>
-            {selectedModels.map((m) => <option key={m.id} value={m.name}>{m.name}</option>)}
+            {availableModels.map((m) => <option key={m.id} value={m.name}>{m.name}</option>)}
           </select>
         </div>
         <textarea

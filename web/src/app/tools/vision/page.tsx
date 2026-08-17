@@ -18,7 +18,7 @@ import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { DocsModal, DocsButton } from "@/components/ui/docs-modal";
 import { useLanguage } from "@/lib/language-context";
 
-// Add Model Modal — same pattern as Groups
+// Add Model Modal - same pattern as Groups
 function AddModelModal({ open, onClose, providers, existingModels, onAdd }: {
   open: boolean;
   onClose: () => void;
@@ -123,7 +123,7 @@ export default function VisionSetupPage() {
     }
   }, [visionTool, initialized]);
 
-  // Save mutation — explicit save to API
+  // Save mutation - explicit save to API
   const saveModels = useCallback(async (models: string[]) => {
     const routeModelJson = JSON.stringify(models);
     if (visionTool) {
@@ -153,7 +153,7 @@ export default function VisionSetupPage() {
     queryClient.invalidateQueries({ queryKey: ["tools"] });
   };
 
-  // Add model from modal — auto-save
+  // Add model from modal - auto-save
   const addModel = async (modelValue: string) => {
     if (routeModels.includes(modelValue)) return;
     const updated = [...routeModels, modelValue];
@@ -161,7 +161,7 @@ export default function VisionSetupPage() {
     await saveModels(updated);
   };
 
-  // Remove model — auto-save
+  // Remove model - auto-save
   const removeModel = async (index: number) => {
     const updated = routeModels.filter((_, i) => i !== index);
     setRouteModels(updated);
@@ -263,7 +263,7 @@ export default function VisionSetupPage() {
             </div>
           )}
 
-          {/* Add button — opens modal */}
+          {/* Add button - opens modal */}
           <button
             onClick={() => setShowAddModal(true)}
             className="w-full px-3 py-2 text-sm text-muted-foreground rounded-lg border border-dashed border-input hover:border-primary hover:text-primary transition-colors flex items-center justify-center gap-2"
@@ -282,7 +282,7 @@ export default function VisionSetupPage() {
           <li>2. PAAP detects images in request</li>
           <li>3. PAAP tries first model in fallback chain</li>
           <li>4. If first model fails (no keys, error), tries next model</li>
-          <li>5. Images sent intact — not converted to text descriptions</li>
+          <li>5. Images sent intact, not converted to text descriptions</li>
         </ul>
       </div>
 

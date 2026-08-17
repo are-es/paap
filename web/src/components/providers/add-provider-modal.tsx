@@ -74,7 +74,7 @@ export function AddProviderModal({ open, onClose }: AddProviderModalProps) {
               return api.updateProvider(providerId, { icon: fetchUrl });
             }
           })
-          .catch(() => {}); // silent fail — fallback initials still work
+          .catch(() => {}); // silent fail - fallback initials still work
       }
       reset();
       onClose();
@@ -149,7 +149,7 @@ export function AddProviderModal({ open, onClose }: AddProviderModalProps) {
               autoFocus
             />
             {baseUrl && !nameTouched && (
-              <p className="text-[10px] text-muted-foreground mt-1">Auto name: {inferNameFromUrl(baseUrl) || "—"}</p>
+              <p className="text-[10px] text-muted-foreground mt-1">Auto name: {inferNameFromUrl(baseUrl) || "--"}</p>
             )}
           </div>
 

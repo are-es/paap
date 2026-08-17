@@ -58,3 +58,5 @@ ARES.md
 
 # ARES orchestrator workspace
 .ares/
+.trash/
+previews/

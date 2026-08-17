@@ -7,7 +7,8 @@ import (
 
 // DeduplicateLogLines removes consecutive repeated lines and appends a count.
 // Repeated sequences of 2+ identical lines become:
-//   [previous line] (×N)
+//
+//	[previous line] (×N)
 //
 // This is the native replacement for rtk's log filter.
 func DeduplicateLogLines(s string) string {

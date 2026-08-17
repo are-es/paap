@@ -108,8 +108,8 @@ func handleStreaming(w http.ResponseWriter, upstreamResp *http.Response) (int, i
 
 	// Build virtual full response body for logging
 	virtualResponse := map[string]interface{}{
-		"id":      "",
-		"model":   model,
+		"id":    "",
+		"model": model,
 		"choices": []interface{}{
 			map[string]interface{}{
 				"index": 0,
