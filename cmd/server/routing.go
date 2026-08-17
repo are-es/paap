@@ -46,16 +46,13 @@ func isProviderRoundRobin(providerID string) bool {
 }
 
 // autoDisableKey handles non-2xx responses.
-// - 2xx: reset fail_count
-// - 5xx: upstream error, don't disable but log (caller still fallbacks to other keys)
-// - 402 / billing / quota: immediate disable (1x) — saldo habis permanent
-// - Other 4xx: fallback only, NO disable, NO fail_count increment
+// - 2xx: reset fail_count = 0, clear last_error
+// - 402 / billing / quota: immediate disable (1x fail)
+// - other non-2xx (5xx, 429, 401, 403, network, etc.): increment fail_count; auto-disable if fail_count >= 3
 // Returns true if key was disabled.
 func autoDisableKey(keyID, keyName string, statusCode int, errBody string) bool {
 	// OAuth providers (Codex, Anigravity) carry a provider_connections ID in keyID,
-	// not an api_keys ID. Without this dispatch every UPDATE below matches zero rows
-	// and the failure is silently dropped — no fail_count, no last_error, dead
-	// connection stays in rotation forever.
+	// not an api_keys ID.
 	if !keyIDExists(keyID) && connectionIDExists(keyID) {
 		return autoDisableConnection(keyID, keyName, statusCode, errBody)
 	}
@@ -66,21 +63,28 @@ func autoDisableKey(keyID, keyName string, statusCode int, errBody string) bool 
 	}
 
 	lowerBody := strings.ToLower(errBody)
+	trimmed := truncateStr(errBody, 500)
+
+	// 402 / billing / quota: immediate disable (1x fail)
 	if statusCode == 402 || strings.Contains(lowerBody, "quota") || strings.Contains(lowerBody, "billing") {
 		db.DB.Exec("UPDATE api_keys SET fail_count=3, last_error=?, last_tested_at=strftime('%s','now'), is_active=0 WHERE id=?",
-			errBody, keyID)
-		log.Printf("[PAAP] Auto-disabled key %s (%s) — billing/quota exhausted (%d: %s)", keyName, keyID, statusCode, errBody)
+			trimmed, keyID)
+		log.Printf("[PAAP] Auto-disabled key %s (%s) — billing/quota exhausted (%d: %s)", keyName, keyID, statusCode, trimmed)
 		return true
 	}
 
-	if statusCode >= 500 {
-		// Server error — fallback only, no disable
-		log.Printf("[PAAP] Key %s (%s) server error %d: %s", keyName, keyID, statusCode, errBody)
-		return false
+	// Any other error (5xx, 429, 401, 403, 400, etc.): increment fail_count and disable if >= 3
+	db.DB.Exec("UPDATE api_keys SET fail_count=fail_count+1, last_error=?, last_tested_at=strftime('%s','now') WHERE id=?",
+		trimmed, keyID)
+	var fc int
+	db.DB.QueryRow("SELECT fail_count FROM api_keys WHERE id=?", keyID).Scan(&fc)
+	if fc >= 3 {
+		db.DB.Exec("UPDATE api_keys SET is_active=0 WHERE id=?", keyID)
+		log.Printf("[PAAP] Auto-disabled key %s (%s) — exceeded 3 consecutive failures (fail_count=%d, status=%d)", keyName, keyID, fc, statusCode)
+		return true
 	}
 
-	// All other 4xx (401, 403, 404, 429, etc): fallback only, no disable, no fail_count change
-	log.Printf("[PAAP] Key %s (%s) client error %d: %s", keyName, keyID, statusCode, errBody)
+	log.Printf("[PAAP] Key %s (%s) error %d (fail_count=%d): %s", keyName, keyID, statusCode, fc, trimmed)
 	return false
 }
 
@@ -105,15 +109,11 @@ func connectionIDExists(id string) bool {
 }
 
 // autoDisableConnection is the provider_connections counterpart of autoDisableKey.
-// OAuth-based providers (Codex, Anigravity) store credentials in provider_connections,
-// so failures there were previously silent — no fail_count, no last_error, and the
-// dead connection stayed active forever. Same policy as autoDisableKey:
-//   - 2xx: reset fail_count + clear last_error
-//   - 402 / quota / billing: immediate disable
-//   - 403 with account-verification / permission wording: immediate disable (needs human action)
-//   - 5xx: record error, no disable
-//   - other 4xx: record error, no disable
-//
+// OAuth-based providers (Codex, Anigravity) store credentials in provider_connections.
+// - 2xx: reset fail_count = 0, clear last_error, test_status='connected'
+// - 402 / quota / billing: immediate disable (1x fail)
+// - 403 with account-verification / permission wording: immediate disable (needs human action)
+// - other non-2xx (5xx, 429, 401, 400, etc.): increment fail_count; auto-disable if fail_count >= 3
 // Returns true if the connection was disabled.
 func autoDisableConnection(connID, connName string, statusCode int, errBody string) bool {
 	if statusCode >= 200 && statusCode < 300 {
@@ -124,6 +124,7 @@ func autoDisableConnection(connID, connName string, statusCode int, errBody stri
 	lowerBody := strings.ToLower(errBody)
 	trimmed := truncateStr(errBody, 500)
 
+	// 402 / quota / billing: immediate disable (1x fail)
 	if statusCode == 402 || strings.Contains(lowerBody, "quota") || strings.Contains(lowerBody, "billing") {
 		db.DB.Exec("UPDATE provider_connections SET fail_count=3, last_error=?, test_status='failed', is_active=0, updated_at=? WHERE id=?",
 			trimmed, time.Now().Unix(), connID)
@@ -131,8 +132,7 @@ func autoDisableConnection(connID, connName string, statusCode int, errBody stri
 		return true
 	}
 
-	// Account verification / permission errors need the user to act — the token will
-	// never start working on its own, so keep it out of the rotation.
+	// Account verification / permission errors need the user to act
 	if statusCode == 403 && (strings.Contains(lowerBody, "validation_required") ||
 		strings.Contains(lowerBody, "verify your account") ||
 		strings.Contains(lowerBody, "permission_denied")) {
@@ -142,15 +142,18 @@ func autoDisableConnection(connID, connName string, statusCode int, errBody stri
 		return true
 	}
 
-	if statusCode >= 500 {
-		db.DB.Exec("UPDATE provider_connections SET last_error=?, updated_at=? WHERE id=?", trimmed, time.Now().Unix(), connID)
-		log.Printf("[PAAP] Connection %s (%s) server error %d", connName, connID, statusCode)
-		return false
-	}
-
+	// Any other error (5xx, 429, 401, 400, etc.): increment fail_count and disable if >= 3
 	db.DB.Exec("UPDATE provider_connections SET fail_count=fail_count+1, last_error=?, test_status='failed', updated_at=? WHERE id=?",
 		trimmed, time.Now().Unix(), connID)
-	log.Printf("[PAAP] Connection %s (%s) client error %d", connName, connID, statusCode)
+	var fc int
+	db.DB.QueryRow("SELECT fail_count FROM provider_connections WHERE id=?", connID).Scan(&fc)
+	if fc >= 3 {
+		db.DB.Exec("UPDATE provider_connections SET is_active=0 WHERE id=?", connID)
+		log.Printf("[PAAP] Auto-disabled connection %s (%s) — exceeded 3 consecutive failures (fail_count=%d, status=%d)", connName, connID, fc, statusCode)
+		return true
+	}
+
+	log.Printf("[PAAP] Connection %s (%s) error %d (fail_count=%d)", connName, connID, statusCode, fc)
 	return false
 }
 
@@ -1316,6 +1319,55 @@ func getNextActiveConnection(providerID string) (connID, connName, connToken, co
 	}
 
 	// Use email as name if available
+	displayName := selected.name
+	if selected.email != "" {
+		displayName = selected.email
+	}
+
+	return selected.id, displayName, selected.token, selected.refresh, selected.expires, nil
+}
+
+// getNextActiveConnectionExcluding gets next active OAuth connection, skipping already-tried IDs
+func getNextActiveConnectionExcluding(providerID string, exclude map[string]bool) (connID, connName, connToken, connRefresh string, connExpires int64, err error) {
+	roundRobin := isProviderRoundRobin(providerID)
+
+	rows, err := db.DB.Query(`SELECT id, COALESCE(name,''), COALESCE(email,''), access_token, COALESCE(refresh_token,''), COALESCE(expires_at,0)
+		FROM provider_connections WHERE provider_id=? AND is_active=1 ORDER BY created_at ASC`, providerID)
+	if err != nil {
+		return "", "", "", "", 0, err
+	}
+	defer rows.Close()
+
+	type conn struct {
+		id      string
+		name    string
+		email   string
+		token   string
+		refresh string
+		expires int64
+	}
+	var conns []conn
+	for rows.Next() {
+		var c conn
+		rows.Scan(&c.id, &c.name, &c.email, &c.token, &c.refresh, &c.expires)
+		if !exclude[c.id] {
+			conns = append(conns, c)
+		}
+	}
+
+	if len(conns) == 0 {
+		return "", "", "", "", 0, fmt.Errorf("no active connections")
+	}
+
+	var selected conn
+	if roundRobin {
+		counter := getProviderRRCounter(providerID + "_conns")
+		idx := int(counter.Add(1)-1) % len(conns)
+		selected = conns[idx]
+	} else {
+		selected = conns[0]
+	}
+
 	displayName := selected.name
 	if selected.email != "" {
 		displayName = selected.email

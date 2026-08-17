@@ -388,16 +388,74 @@ func anigravityRequest(w http.ResponseWriter, r *http.Request, model string, raw
 		}
 	}
 
-	if resp.StatusCode != 200 {
-		errBody, _ := io.ReadAll(resp.Body)
-		writeError(w, resp.StatusCode, fmt.Sprintf("anigravity error %d: %s", resp.StatusCode, string(errBody)))
+	if resp.StatusCode == 200 {
+		autoDisableKey(keyID, keyName, 200, "")
+		if isStream {
+			handleAnigravityStreaming(w, resp)
+		} else {
+			handleAnigravityNonStreaming(w, resp)
+		}
 		return
 	}
 
-	if isStream {
-		handleAnigravityStreaming(w, resp)
-	} else {
-		handleAnigravityNonStreaming(w, resp)
+	// On non-200: track failure & auto-disable according to rules (402 immediate, non-402 >3x)
+	errBody, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	errBodyStr := string(errBody)
+	if len(errBodyStr) > 500 {
+		errBodyStr = errBodyStr[:500]
+	}
+	autoDisableKey(keyID, keyName, resp.StatusCode, errBodyStr)
+
+	// Fallback across other active accounts/connections for this provider
+	tried := map[string]bool{keyID: true}
+	for {
+		nextID, nextName, nextTok, nextRef, nextExp, fErr := getNextActiveConnectionExcluding(providerID, tried)
+		if fErr != nil {
+			// No more active connections — return error
+			writeError(w, resp.StatusCode, fmt.Sprintf("anigravity error %d: %s (all accounts exhausted)", resp.StatusCode, errBodyStr))
+			return
+		}
+		tried[nextID] = true
+
+		validToken, tokErr := ensureAnigravityToken(nextID, nextTok, nextRef, nextExp)
+		if tokErr != nil || validToken == "" {
+			autoDisableKey(nextID, nextName, 401, fmt.Sprintf("token error: %v", tokErr))
+			continue
+		}
+
+		req2, _ := http.NewRequest("POST", upstreamURL, bytes.NewReader(bodyBytes))
+		req2.Header.Set("Content-Type", "application/json")
+		req2.Header.Set("Authorization", "Bearer "+validToken)
+		req2.Header.Set("User-Agent", "antigravity/ide/2.1.1 linux/amd64")
+		req2.Header.Set("X-Goog-Api-Client", "google-cloud-sdk vscode_cloudshelleditor/0.1")
+		req2.Header.Set("Client-Metadata", `{"ideType":9,"platform":2,"pluginType":2}`)
+
+		resp2, err2 := client.Do(req2)
+		if err2 != nil {
+			autoDisableKey(nextID, nextName, 502, err2.Error())
+			continue
+		}
+
+		if resp2.StatusCode == 200 {
+			defer resp2.Body.Close()
+			autoDisableKey(nextID, nextName, 200, "")
+			if isStream {
+				handleAnigravityStreaming(w, resp2)
+			} else {
+				handleAnigravityNonStreaming(w, resp2)
+			}
+			return
+		}
+
+		// Non-200 on fallback connection
+		errBody2, _ := io.ReadAll(resp2.Body)
+		resp2.Body.Close()
+		errBody2Str := string(errBody2)
+		if len(errBody2Str) > 500 {
+			errBody2Str = errBody2Str[:500]
+		}
+		autoDisableKey(nextID, nextName, resp2.StatusCode, errBody2Str)
 	}
 }
 
