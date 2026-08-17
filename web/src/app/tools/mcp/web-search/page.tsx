@@ -278,7 +278,7 @@ export default function WebSearchSetupPage() {
                     </span>
                   )}
                   {hasKey ? (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-neon-green/10 text-neon-green flex items-center gap-1">
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-500 flex items-center gap-1">
                       <Check className="w-3 h-3" /> Ready
                     </span>
                   ) : p.needsKey ? (

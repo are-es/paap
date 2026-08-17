@@ -77,7 +77,7 @@ export default function SettingsPage() {
 
       <div className="space-y-4">
         {/* CARD 0: LANGUAGE */}
-        <div className="bg-primary/[0.04] border border-primary/15 rounded-lg p-4">
+        <div className="bg-card border border-border rounded-xl p-5">
           <div className="flex items-center gap-2 mb-1">
             <Languages className="w-4 h-4 text-muted-foreground" />
             <span className="text-sm font-medium">{t("settings.language")}</span>
@@ -88,7 +88,7 @@ export default function SettingsPage() {
           <select
             value={lang}
             onChange={(e) => setLang(e.target.value as any)}
-            className="w-full px-3 py-2 rounded-lg border border-input bg-background text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+            className="w-full px-3 py-2 rounded-lg border border-input bg-background text-sm focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:outline-none"
           >
             {LANGUAGES.map((l) => (
               <option key={l.code} value={l.code}>
@@ -99,7 +99,7 @@ export default function SettingsPage() {
         </div>
 
         {/* CARD 1: PROXY */}
-        <div className="bg-primary/[0.04] border border-primary/15 rounded-lg p-4">
+        <div className="bg-card border border-border rounded-xl p-5">
           <div className="flex items-center gap-2 mb-3">
             <Globe className="w-4 h-4 text-muted-foreground" />
             <span className="text-sm font-medium">Proxy Auto-Test</span>
@@ -110,7 +110,7 @@ export default function SettingsPage() {
           <select
             value={currentInterval}
             onChange={(e) => updateInterval(e.target.value)}
-            className="w-full px-3 py-2 rounded-lg border border-input bg-background text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+            className="w-full px-3 py-2 rounded-lg border border-input bg-background text-sm focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:outline-none"
           >
             {INTERVAL_OPTIONS.map((opt) => (
               <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -119,12 +119,12 @@ export default function SettingsPage() {
         </div>
 
         {/* CARD 2: DATA */}
-        <div className="bg-primary/[0.04] border border-primary/15 rounded-lg p-4">
+        <div className="bg-card border border-border rounded-xl p-5">
           <div className="flex items-center gap-2 mb-3">
             <Trash2 className="w-4 h-4 text-muted-foreground" />
             <span className="text-sm font-medium">Data Management</span>
           </div>
-          <p className="text-[11px] text-muted-foreground mb-3">
+          <p className="text-[11px] text-muted-foreground mb-3 max-w-prose">
             Hapus semua log, cost data, dan usage stats. API keys dan providers TIDAK terpengaruh.
           </p>
           <button
@@ -138,7 +138,7 @@ export default function SettingsPage() {
         </div>
 
         {/* CARD 3: SERVER */}
-        <div className="bg-primary/[0.04] border border-primary/15 rounded-lg p-4">
+        <div className="bg-card border border-border rounded-xl p-5">
           <div className="flex items-center gap-2 mb-3">
             <Power className="w-4 h-4 text-muted-foreground" />
             <span className="text-sm font-medium">Server Control</span>

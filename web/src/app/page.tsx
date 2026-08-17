@@ -101,7 +101,7 @@ export default function DashboardPage() {
           {stats.map((stat) => (
             <div
               key={stat.label}
-              className="bg-primary/[0.04] border border-primary/15 rounded-lg p-3.5 hover:border-primary/20 transition-colors"
+              className="bg-card border border-border rounded-lg p-3.5 hover:border-primary/40 transition-colors"
             >
               <p className="text-xs text-muted-foreground mb-1">{stat.label}</p>
               <p className="font-mono text-lg font-bold text-foreground">{stat.value}</p>
@@ -110,7 +110,7 @@ export default function DashboardPage() {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mb-6">
-          <section className="bg-primary/[0.04] border border-primary/15 rounded-lg p-3">
+          <section className="bg-card border border-border rounded-lg p-3">
             <h2 className="text-xs text-muted-foreground mb-1.5">Base URL</h2>
             <div className="relative">
               <code className="block font-mono text-xs bg-muted/50 border border-border rounded px-2 py-1.5 text-foreground break-all">
@@ -132,14 +132,14 @@ export default function DashboardPage() {
             </div>
           </section>
 
-          <section className="bg-primary/[0.04] border border-primary/15 rounded-lg p-3">
+          <section className="bg-card border border-border rounded-lg p-3">
             <h2 className="text-xs text-muted-foreground mb-1.5">Gateway API Key</h2>
             {gatewayKeys.length > 0 ? (
               <div className="space-y-1.5">
                 <div className="flex items-center gap-1.5">
                   <div className="relative flex-1 min-w-0">
                     <select
-                      className="w-full font-mono text-xs bg-muted/50 border border-border rounded px-2 py-1.5 text-foreground appearance-none cursor-pointer pr-6 truncate"
+                      className="w-full font-mono text-xs bg-muted/50 border border-border rounded px-2 py-1.5 text-foreground appearance-none cursor-pointer pr-6 truncate focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:outline-none"
                       onChange={(e) => {
                         const key = gatewayKeys.find(k => k.id === Number(e.target.value));
                         if (key) setSelectedKeyId(key.id);
@@ -224,7 +224,7 @@ export default function DashboardPage() {
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && keyName) addKeyMutation.mutate();
                 }}
-                className="w-full px-3.5 py-2.5 rounded-lg border border-input bg-background text-sm font-mono placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/30 transition-all"
+                className="w-full px-3.5 py-2.5 rounded-lg border border-input bg-background text-sm font-mono placeholder:text-muted-foreground/50 focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:outline-none transition-all"
                 autoFocus
               />
             </div>

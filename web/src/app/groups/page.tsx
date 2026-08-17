@@ -45,7 +45,7 @@ export default function GroupsPage() {
           {Array.from({ length: 4 }).map((_, i) => (
             <div
               key={i}
-              className="h-32 rounded-xl border border-primary/15 bg-primary/[0.04] animate-pulse"
+              className="h-32 rounded-xl border border-border bg-muted/30 animate-pulse"
             />
           ))}
         </div>
@@ -127,9 +127,9 @@ function GroupCard({
     <Link
       href={`/groups/detail?id=${group.id}`}
       className={cn(
-        "group relative flex flex-col gap-3 p-5 rounded-xl border border-primary/15 bg-primary/[0.04]",
+        "group relative flex flex-col gap-3 p-5 rounded-xl border border-border bg-card",
         "cursor-pointer transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40",
-        "before:absolute before:top-0 before:left-0 before:bottom-0 before:w-[3px] before:rounded-l-xl before:bg-neon-cyan before:opacity-0 before:transition-opacity before:group-hover:opacity-100"
+        "before:absolute before:top-0 before:left-0 before:bottom-0 before:w-[3px] before:rounded-l-xl before:bg-primary before:opacity-0 before:transition-opacity before:group-hover:opacity-100"
       )}
     >
       <div className="flex items-center gap-3">

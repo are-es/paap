@@ -7,6 +7,7 @@ import { api, type SettingsData } from "@/lib/api";
 import { Zap, Save } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DocsModal, DocsButton } from "@/components/ui/docs-modal";
+import { Toggle } from "@/components/ui/toggle";
 import { useLanguage } from "@/lib/language-context";
 
 function fmtTokens(tokens: number): string {
@@ -110,32 +111,23 @@ export default function CompressionPage() {
 
       <div className="space-y-4">
         {/* SYSTEM PROMPT */}
-        <div className="bg-primary/[0.04] border border-primary/15 rounded-lg p-4">
+        <div className="bg-card border border-border rounded-xl p-5">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-sm font-medium">System Prompt</h2>
             <div className="flex items-center gap-3">
               <select
                 value={injectionPosition}
                 onChange={(e) => setInjectionPosition(e.target.value as "prepend" | "append")}
-                className="px-2.5 py-1 text-xs rounded border border-input bg-background focus:outline-none focus:border-primary/50"
+                className="px-2.5 py-1 text-xs rounded border border-input bg-background focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:outline-none"
               >
                 <option value="prepend">Prepend</option>
                 <option value="append">Append</option>
               </select>
-              <button
-                onClick={toggleInjection}
-                className={cn(
-                  "w-9 h-5 rounded-full relative transition-colors",
-                  injectionEnabled ? "bg-green-500" : "bg-foreground/15"
-                )}
-              >
-                <span
-                  className={cn(
-                    "absolute top-[2px] w-4 h-4 rounded-full shadow-sm transition-all bg-white ring-1 ring-black/10",
-                    injectionEnabled ? "left-[18px]" : "left-[2px]"
-                  )}
-                />
-              </button>
+              <Toggle
+                checked={injectionEnabled}
+                onCheckedChange={toggleInjection}
+                size="sm"
+              />
             </div>
           </div>
 
@@ -147,7 +139,7 @@ export default function CompressionPage() {
             value={injectionText}
             onChange={(e) => setInjectionText(e.target.value)}
             rows={6}
-            className="w-full px-3 py-2 text-xs rounded border border-input bg-background font-mono focus:outline-none focus:border-primary/50 resize-none mb-3"
+            className="w-full px-3 py-2 text-xs rounded border border-input bg-background font-mono focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:outline-none resize-none mb-3"
             placeholder={t("compression_system_prompt_placeholder")}
           />
 
@@ -163,7 +155,7 @@ export default function CompressionPage() {
         </div>
 
         {/* COMPRESSION LEVEL - HORIZONTAL */}
-        <div className="bg-primary/[0.04] border border-primary/15 rounded-lg p-4">
+        <div className="bg-card border border-border rounded-xl p-5">
           <div className="flex items-center gap-2 mb-4">
             <Zap className="w-4 h-4 text-muted-foreground" />
             <span className="text-sm font-medium">{t("compression_level_label")}</span>
@@ -181,7 +173,7 @@ export default function CompressionPage() {
                     "flex flex-col items-center gap-1.5 p-3 rounded-lg border transition-all text-center",
                     active
                       ? "border-primary/50 bg-primary/10 ring-1 ring-primary/20"
-                      : "border-border hover:border-primary/20 hover:bg-primary/[0.02]"
+                      : "border-border hover:border-primary/20 hover:bg-muted/40"
                   )}
                 >
                   <span className={cn("text-sm font-bold", active ? meta.color : "text-foreground")}>
@@ -202,20 +194,20 @@ export default function CompressionPage() {
           const pct = Math.round(s.saved_percent || 0);
           return (
             <div className="grid grid-cols-3 gap-3">
-              <div className="bg-primary/[0.04] border border-primary/15 rounded-lg p-4 text-center">
+              <div className="bg-card border border-border rounded-xl p-4 text-center">
                 <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Before</p>
                 <p className="font-mono text-xl font-bold text-foreground">{fmtTokens(totalOrig)}</p>
                 <p className="text-[10px] text-muted-foreground">tokens</p>
               </div>
-              <div className="bg-primary/[0.04] border border-primary/15 rounded-lg p-4 text-center">
+              <div className="bg-card border border-border rounded-xl p-4 text-center">
                 <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">After</p>
                 <p className="font-mono text-xl font-bold text-foreground">{fmtTokens(totalAfter)}</p>
                 <p className="text-[10px] text-muted-foreground">tokens</p>
               </div>
-              <div className="bg-green-500/[0.04] border border-green-500/15 rounded-lg p-4 text-center">
-                <p className="text-[10px] font-semibold text-green-600 uppercase tracking-wider mb-1">Saved</p>
-                <p className="font-mono text-xl font-bold text-green-600">{fmtTokens(totalSaved)}</p>
-                <p className="text-[10px] text-green-600">{pct}%</p>
+              <div className="bg-emerald-500/[0.06] border border-emerald-500/20 rounded-xl p-4 text-center">
+                <p className="text-[10px] font-semibold text-emerald-600 uppercase tracking-wider mb-1">Saved</p>
+                <p className="font-mono text-xl font-bold text-emerald-600">{fmtTokens(totalSaved)}</p>
+                <p className="text-[10px] text-emerald-600">{pct}%</p>
               </div>
             </div>
           );

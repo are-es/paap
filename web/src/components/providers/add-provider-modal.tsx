@@ -122,7 +122,7 @@ export function AddProviderModal({ open, onClose }: AddProviderModalProps) {
     >
       <div className="w-full max-w-md bg-popover border border-border rounded-xl p-5 shadow-2xl">
         <div className="flex items-center justify-between mb-4">
-          <h2 id="add-provider-title" className="font-heading text-lg font-bold text-neon-cyan">
+          <h2 id="add-provider-title" className="font-heading text-lg font-bold text-foreground">
             Add Provider
           </h2>
           <button
@@ -145,7 +145,7 @@ export function AddProviderModal({ open, onClose }: AddProviderModalProps) {
               value={baseUrl}
               onChange={(e) => handleUrlChange(e.target.value)}
               placeholder="https://api.openai.com/v1"
-              className="w-full px-3 py-2 text-sm rounded-lg border border-input bg-background font-mono focus:outline-none focus:border-neon-cyan/50 focus:shadow-[0_0_8px_rgba(0,240,255,0.1)]"
+              className="w-full px-3 py-2 text-sm rounded-lg border border-input bg-background font-mono focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:outline-none"
               autoFocus
             />
             {baseUrl && !nameTouched && (
@@ -164,7 +164,7 @@ export function AddProviderModal({ open, onClose }: AddProviderModalProps) {
               onChange={(e) => { setName(e.target.value); setNameTouched(true); }}
               onFocus={() => setNameTouched(true)}
               placeholder="My Custom Provider"
-              className="w-full px-3 py-2 text-sm rounded-lg border border-input bg-background focus:outline-none focus:border-neon-cyan/50"
+              className="w-full px-3 py-2 text-sm rounded-lg border border-input bg-background focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:outline-none"
             />
           </div>
 
@@ -178,12 +178,12 @@ export function AddProviderModal({ open, onClose }: AddProviderModalProps) {
               value={customHeaderValue}
               onChange={(e) => setCustomHeaderValue(e.target.value)}
               placeholder="X-Custom-Header value"
-              className="w-full px-3 py-2 text-sm rounded-lg border border-input bg-background font-mono focus:outline-none focus:border-neon-cyan/50"
+              className="w-full px-3 py-2 text-sm rounded-lg border border-input bg-background font-mono focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:outline-none"
             />
             <p className="text-[10px] text-muted-foreground mt-1">Sent as X-Custom-Header with every request to this provider</p>
           </div>
 
-          {error && <p className="text-xs text-neon-magenta">{error}</p>}
+          {error && <p className="text-xs text-destructive">{error}</p>}
 
           <div className="flex justify-end gap-2 pt-2">
             <button

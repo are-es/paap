@@ -61,7 +61,7 @@ export function ProviderSetupClient() {
   if (providerQuery.isLoading) {
     return (
       <div className="p-6 md:p-8 min-h-full flex items-center justify-center">
-        <Loader2 className="w-6 h-6 animate-spin text-neon-cyan" />
+        <Loader2 className="w-6 h-6 animate-spin text-primary" />
       </div>
     );
   }
@@ -70,7 +70,7 @@ export function ProviderSetupClient() {
     <>
     <div className="p-6 md:p-8 min-h-full">
       <nav className="flex items-center gap-1.5 text-sm text-muted-foreground mb-6">
-        <Link href="/providers" className="inline-flex items-center gap-1 hover:text-neon-cyan transition-colors">
+        <Link href="/providers" className="inline-flex items-center gap-1 hover:text-primary transition-colors">
           <ArrowLeft className="w-3.5 h-3.5" />
           Providers
         </Link>
@@ -274,7 +274,7 @@ function AddKeyModal({ onClose, providerId }: { onClose: () => void; providerId:
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-          <h3 className="font-medium text-sm text-neon-cyan">Add API Key</h3>
+          <h3 className="font-medium text-sm text-foreground">Add API Key</h3>
           <button onClick={onClose} className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground">
             <X className="w-4 h-4" />
           </button>
@@ -288,7 +288,7 @@ function AddKeyModal({ onClose, providerId }: { onClose: () => void; providerId:
               className={cn(
                 "flex-1 px-4 py-2 text-sm font-medium transition-colors",
                 tab === t
-                  ? "border-b-2 border-neon-cyan text-neon-cyan"
+                  ? "border-b-2 border-primary text-primary"
                   : "text-muted-foreground hover:text-foreground"
               )}
             >
@@ -305,13 +305,13 @@ function AddKeyModal({ onClose, providerId }: { onClose: () => void; providerId:
                 placeholder="Paste API key..."
                 value={singleKey}
                 onChange={(e) => setSingleKey(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg border border-input bg-background text-sm font-mono placeholder:text-muted-foreground/70 focus:outline-none focus:border-neon-cyan/50"
+                className="w-full px-3 py-2 rounded-lg border border-input bg-background text-sm font-mono placeholder:text-muted-foreground/70 focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:outline-none"
                 autoFocus
               />
               <button
                 onClick={() => { if (singleKey.trim()) addMutation.mutate({ key: singleKey.trim(), name: previewKeyName(0) }); }}
                 disabled={!singleKey.trim() || addMutation.isPending}
-                className="mt-3 w-full px-3 py-2 text-sm rounded-lg bg-primary text-primary-foreground font-medium disabled:opacity-40 disabled:bg-muted disabled:text-muted-foreground hover:shadow-[0_0_12px_rgba(0,240,255,0.3)] transition-all"
+                className="mt-3 w-full px-3 py-2 text-sm rounded-lg bg-primary text-primary-foreground font-medium disabled:opacity-40 disabled:bg-muted disabled:text-muted-foreground hover:bg-primary/90 transition-all"
               >
                 {addMutation.isPending ? "Adding..." : `Add ${previewKeyName(0)}`}
               </button>
@@ -326,7 +326,7 @@ function AddKeyModal({ onClose, providerId }: { onClose: () => void; providerId:
                 value={bulkText}
                 onChange={(e) => setBulkText(e.target.value)}
                 rows={6}
-                className="w-full px-3 py-2 rounded-lg border border-input bg-background text-sm font-mono focus:outline-none focus:border-neon-cyan/50"
+                className="w-full px-3 py-2 rounded-lg border border-input bg-background text-sm font-mono focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:outline-none"
                 autoFocus
               />
               <button
@@ -335,7 +335,7 @@ function AddKeyModal({ onClose, providerId }: { onClose: () => void; providerId:
                   if (ks.length > 0) bulkMutation.mutate(ks);
                 }}
                 disabled={!bulkText.trim() || bulkMutation.isPending}
-                className="mt-3 w-full px-3 py-2 text-sm rounded-lg bg-primary text-primary-foreground font-medium disabled:opacity-50 hover:shadow-[0_0_12px_rgba(0,240,255,0.3)] transition-shadow"
+                className="mt-3 w-full px-3 py-2 text-sm rounded-lg bg-primary text-primary-foreground font-medium disabled:opacity-50 hover:bg-primary/90 transition-all"
               >
                 {bulkMutation.isPending ? "Adding..." : `Add ${bulkLines.length} Keys`}
               </button>
@@ -455,7 +455,7 @@ function KeysSection({ providerId }: { providerId: string }) {
               {key.source === "connection" ? (
                 <Globe className="w-4 h-4 text-purple-400/70 shrink-0" />
               ) : (
-                <Key className="w-4 h-4 text-neon-cyan/50 shrink-0" />
+                <Key className="w-4 h-4 text-primary/70 shrink-0" />
               )}
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-medium flex items-center gap-2">
@@ -469,7 +469,7 @@ function KeysSection({ providerId }: { providerId: string }) {
                 <div className="font-mono text-xs text-muted-foreground truncate">{displayKey}</div>
               </div>
               {key.fail_count != null && key.fail_count > 0 && (
-                <span className="px-1.5 py-0.5 rounded text-[10px] bg-neon-magenta/10 text-neon-magenta border border-neon-magenta/20 font-mono" title={key.last_error || ""}>
+                <span className="px-1.5 py-0.5 rounded text-[10px] bg-destructive/10 text-destructive border border-destructive/20 font-mono" title={key.last_error || ""}>
                   {key.fail_count} fails{key.last_error ? `: ${parseKeyError(key.last_error)}` : ""}
                 </span>
               )}
@@ -485,11 +485,11 @@ function KeysSection({ providerId }: { providerId: string }) {
                 className="p-1 hover:bg-muted rounded text-muted-foreground hover:text-foreground"
                 title="Copy key"
               >
-                {copiedId === key.id ? <Check className="w-3.5 h-3.5 text-neon-green" /> : <Copy className="w-3.5 h-3.5" />}
+                {copiedId === key.id ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
               </button>
               <button
                 onClick={() => deleteKeyMutation.mutate(key.id)}
-                className="p-1 hover:bg-neon-magenta/10 rounded text-neon-magenta"
+                className="p-1 hover:bg-destructive/10 rounded text-destructive"
               >
                 <Trash2 className="w-3.5 h-3.5" />
               </button>
@@ -666,7 +666,7 @@ function ConnectionsSection({ providerId }: { providerId: string }) {
                 <span className="text-sm font-medium">{conn.name}</span>
                 {conn.fail_count != null && conn.fail_count > 0 && (
                   <span
-                    className="px-1.5 py-0.5 rounded text-[10px] bg-neon-magenta/10 text-neon-magenta border border-neon-magenta/20 font-medium"
+                    className="px-1.5 py-0.5 rounded text-[10px] bg-destructive/10 text-destructive border border-destructive/20 font-medium"
                     title={conn.last_error || undefined}
                   >
                     {conn.fail_count} fails{conn.last_error ? `: ${parseKeyError(conn.last_error)}` : ""}
@@ -688,22 +688,22 @@ function ConnectionsSection({ providerId }: { providerId: string }) {
       </div>
 
       {oauthFlow && (
-        <div className="p-4 rounded-lg border border-neon-cyan/20 bg-neon-cyan/5">
-          <div className="text-sm font-medium mb-2 text-neon-cyan">Authorize in browser</div>
+        <div className="p-4 rounded-lg border border-primary/20 bg-primary/5">
+          <div className="text-sm font-medium mb-2 text-primary">Authorize in browser</div>
           <div className="space-y-2">
             <div>
               <span className="text-xs text-muted-foreground">URL: </span>
-              <a href={oauthFlow.verification_uri_complete || oauthFlow.verification_uri} target="_blank" rel="noopener" className="text-sm text-neon-cyan hover:underline font-mono">
+              <a href={oauthFlow.verification_uri_complete || oauthFlow.verification_uri} target="_blank" rel="noopener" className="text-sm text-primary hover:underline font-mono">
                 {oauthFlow.verification_uri}
               </a>
             </div>
             <div>
               <span className="text-xs text-muted-foreground">Code: </span>
-              <span className="text-lg font-mono font-bold tracking-wider text-neon-cyan">{oauthFlow.user_code}</span>
+              <span className="text-lg font-mono font-bold tracking-wider text-primary">{oauthFlow.user_code}</span>
             </div>
             {polling && (
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <Loader2 className="w-3 h-3 animate-spin text-neon-cyan" />
+                <Loader2 className="w-3 h-3 animate-spin text-primary" />
                 Waiting for authorization...
               </div>
             )}
@@ -711,7 +711,7 @@ function ConnectionsSection({ providerId }: { providerId: string }) {
         </div>
       )}
 
-      {oauthError && <div className="text-xs text-neon-magenta">{oauthError}</div>}
+      {oauthError && <div className="text-xs text-destructive">{oauthError}</div>}
     </NeonCollapse>
   );
 }
@@ -771,15 +771,15 @@ function ModelsSection({ providerId }: { providerId: string }) {
     <NeonCollapse title="Models" icon={<Wand2 className="w-4 h-4" />} count={models.length} accentColor="green">
       <div className="flex items-center justify-between mb-3 mt-3">
         <span className="text-sm text-muted-foreground">
-          <span className="text-neon-green font-mono">{models.filter((m) => m.selected).length}</span> selected
+          <span className="text-emerald-500 font-mono">{models.filter((m) => m.selected).length}</span> selected
         </span>
         <div className="flex gap-2">
           <button
             onClick={() => detectMutation.mutate()}
             disabled={detecting}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-border hover:border-neon-green/40 hover:bg-neon-green/5 disabled:opacity-50 transition-all"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-border hover:border-emerald-500/40 hover:bg-emerald-500/5 disabled:opacity-50 transition-all"
           >
-            {detecting ? <Loader2 className="w-3.5 h-3.5 animate-spin text-neon-green" /> : <Wand2 className="w-3.5 h-3.5 text-neon-green" />}
+            {detecting ? <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-500" /> : <Wand2 className="w-3.5 h-3.5 text-emerald-500" />}
             Detect Models
           </button>
           {models.length > 0 && (
@@ -809,7 +809,7 @@ function ModelsSection({ providerId }: { providerId: string }) {
             </button>
             <button
               onClick={(e) => { e.stopPropagation(); removeMutation.mutate(model.name); }}
-              className="ml-0.5 hover:text-neon-magenta transition-colors"
+              className="ml-0.5 hover:text-destructive transition-colors"
               title="Remove model"
             >
               <X className="w-3 h-3" />
@@ -826,12 +826,12 @@ function ModelsSection({ providerId }: { providerId: string }) {
           value={newModel}
           onChange={(e) => setNewModel(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && newModel.trim()) addModelMutation.mutate(newModel.trim()); }}
-          className="flex-1 px-3 py-1.5 rounded-lg border border-input bg-background text-sm font-mono focus:outline-none focus:border-neon-cyan/50"
+          className="flex-1 px-3 py-1.5 rounded-lg border border-input bg-background text-sm font-mono focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:outline-none"
         />
         <button
           onClick={() => { if (newModel.trim()) addModelMutation.mutate(newModel.trim()); }}
           disabled={!newModel.trim() || addModelMutation.isPending}
-          className="inline-flex items-center gap-1 px-3 py-1.5 text-sm rounded-lg bg-primary text-primary-foreground font-medium disabled:opacity-40 disabled:bg-muted disabled:text-muted-foreground hover:shadow-[0_0_12px_rgba(0,240,255,0.2)] transition-all"
+          className="inline-flex items-center gap-1 px-3 py-1.5 text-sm rounded-lg bg-primary text-primary-foreground font-medium disabled:opacity-40 disabled:bg-muted disabled:text-muted-foreground hover:bg-primary/90 transition-all"
         >
           <Plus className="w-3.5 h-3.5" />
           Add
@@ -877,7 +877,7 @@ return (
 <select
 value={keyId ?? ""}
 onChange={(e) => setKeyId(e.target.value || undefined)}
-className="px-3 py-2 rounded-lg border border-input bg-background text-sm focus:outline-none focus:border-neon-amber/50"
+className="px-3 py-2 rounded-lg border border-input bg-background text-sm focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:outline-none"
 >
 <option value="">All Keys</option>
 {activeKeys.map((k) => <option key={k.id} value={k.id}>{k.name || k.key.slice(0, 12) + "..."}</option>)}
@@ -885,7 +885,7 @@ className="px-3 py-2 rounded-lg border border-input bg-background text-sm focus:
           <select
             value={model}
             onChange={(e) => setModel(e.target.value)}
-            className="px-3 py-2 rounded-lg border border-input bg-background text-sm focus:outline-none focus:border-neon-amber/50"
+            className="px-3 py-2 rounded-lg border border-input bg-background text-sm focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:outline-none"
           >
             <option value="">Select model...</option>
             {availableModels.map((m) => <option key={m.id} value={m.name}>{m.name}</option>)}
@@ -895,18 +895,18 @@ className="px-3 py-2 rounded-lg border border-input bg-background text-sm focus:
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
           rows={2}
-          className="w-full px-3 py-2 rounded-lg border border-input bg-background text-sm focus:outline-none focus:border-neon-amber/50"
+          className="w-full px-3 py-2 rounded-lg border border-input bg-background text-sm focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:outline-none"
         />
         <button
           onClick={() => testMutation.mutate()}
           disabled={testMutation.isPending || !model}
-          className="inline-flex items-center gap-1.5 px-4 py-2 text-sm rounded-lg bg-primary text-primary-foreground font-medium disabled:opacity-40 disabled:bg-muted disabled:text-muted-foreground hover:shadow-[0_0_12px_rgba(0,240,255,0.2)] transition-all"
+          className="inline-flex items-center gap-1.5 px-4 py-2 text-sm rounded-lg bg-primary text-primary-foreground font-medium disabled:opacity-40 disabled:bg-muted disabled:text-muted-foreground hover:bg-primary/90 transition-all"
         >
           {testMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />} Run Test
         </button>
 
         {error && (
-          <div className="p-3 rounded-lg text-sm bg-neon-magenta/10 border border-neon-magenta/20 text-neon-magenta">
+          <div className="p-3 rounded-lg text-sm bg-destructive/10 border border-destructive/20 text-destructive">
             <div className="whitespace-pre-wrap">{error}</div>
           </div>
         )}
@@ -917,16 +917,16 @@ className="px-3 py-2 rounded-lg border border-input bg-background text-sm focus:
             className={cn(
               "p-3 rounded-lg text-sm border",
               r.status >= 200 && r.status < 300
-                ? "bg-neon-green/5 border-neon-green/20"
-                : "bg-neon-magenta/5 border-neon-magenta/20"
+                ? "bg-emerald-500/5 border-emerald-500/20"
+                : "bg-destructive/5 border-destructive/20"
             )}
           >
             {r.key && <div className="text-xs font-medium text-muted-foreground mb-1 font-mono">{r.key}</div>}
             <div className="whitespace-pre-wrap">{r.res}</div>
             <div className="text-xs text-muted-foreground mt-1 font-mono">
-              <span className={r.status >= 200 && r.status < 300 ? "text-neon-green" : "text-neon-magenta"}>{r.status}</span>
+              <span className={r.status >= 200 && r.status < 300 ? "text-emerald-500" : "text-destructive"}>{r.status}</span>
               {" - "}
-              <span className="text-neon-amber">{r.latency_ms}ms</span>
+              <span className="text-amber-500">{r.latency_ms}ms</span>
             </div>
           </div>
         ))}

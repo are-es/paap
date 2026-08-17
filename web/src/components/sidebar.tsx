@@ -57,7 +57,7 @@ export function Sidebar() {
   return (
     <aside
       className={cn(
-        "flex flex-col shrink-0 h-screen transition-[width] duration-200 ease-in-out",
+        "flex flex-col shrink-0 h-screen",
         "border-r border-border bg-sidebar overflow-hidden",
         collapsed ? "w-16" : "w-56",
         "max-md:w-16 max-md:shrink"
@@ -85,19 +85,19 @@ export function Sidebar() {
               aria-current={active ? "page" : undefined}
               aria-label={label}
               className={cn(
-                "relative flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all duration-200",
-                "max-md:justify-center max-md:px-0",
+                "relative flex items-center rounded-lg text-sm transition-all duration-200 py-2",
+                collapsed ? "justify-center px-0" : "gap-3 px-3 max-md:justify-center max-md:px-0",
                 active
                   ? "bg-primary/10 text-primary font-medium"
                   : "text-muted-foreground hover:bg-secondary hover:text-foreground"
               )}
-              title={collapsed || typeof window !== "undefined" && window.innerWidth < 768 ? label : undefined}
+              title={collapsed || (typeof window !== "undefined" && window.innerWidth < 768) ? label : undefined}
             >
-              {active && (
+              {active && !collapsed && (
                 <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-4 rounded-r-full bg-primary max-md:hidden" />
               )}
               <Icon className="w-5 h-5 shrink-0" aria-hidden="true" />
-              <span className="whitespace-nowrap max-md:hidden">{label}</span>
+              {!collapsed && <span className="whitespace-nowrap max-md:hidden">{label}</span>}
             </Link>
           );
         })}
@@ -107,11 +107,12 @@ export function Sidebar() {
         <button
           onClick={toggle}
           className={cn(
-            "flex items-center gap-3 px-3 py-2 rounded-lg text-sm w-full transition-colors",
-            "max-md:justify-center max-md:px-0 max-md:min-h-[44px] max-md:min-w-[44px]",
+            "flex items-center rounded-lg text-sm w-full transition-colors py-2",
+            collapsed ? "justify-center px-0" : "gap-3 px-3 max-md:justify-center max-md:px-0",
+            "max-md:min-h-[44px] max-md:min-w-[44px]",
             "text-muted-foreground hover:bg-secondary hover:text-foreground"
           )}
-          title={collapsed || typeof window !== "undefined" && window.innerWidth < 768 ? (theme === "dark" ? "Light mode" : "Dark mode") : undefined}
+          title={collapsed || (typeof window !== "undefined" && window.innerWidth < 768) ? (theme === "dark" ? "Light mode" : "Dark mode") : undefined}
           aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
         >
           {theme === "dark" ? (
@@ -119,7 +120,6 @@ export function Sidebar() {
           ) : (
             <Moon className="w-5 h-5 shrink-0" />
           )}
-
         </button>
         <button
           onClick={toggleCollapsed}

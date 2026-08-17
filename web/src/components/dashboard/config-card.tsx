@@ -24,7 +24,7 @@ export function ConfigCard({ baseUrl, apiKey }: { baseUrl?: string; apiKey?: str
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-      <div className="rounded-xl border border-primary/15 bg-primary/[0.04] p-4">
+      <div className="rounded-xl border border-border bg-card p-4">
         <div className="flex items-center gap-2 mb-3">
           <Terminal className="w-3.5 h-3.5 text-muted-foreground" />
           <span className="text-xs text-muted-foreground">Base URL</span>
@@ -37,7 +37,7 @@ export function ConfigCard({ baseUrl, apiKey }: { baseUrl?: string; apiKey?: str
         </div>
       </div>
 
-      <div className="rounded-xl border border-primary/15 bg-primary/[0.04] p-4">
+      <div className="rounded-xl border border-border bg-card p-4">
         <div className="flex items-center gap-2 mb-3">
           <span className="text-xs text-muted-foreground">API Key</span>
         </div>

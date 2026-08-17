@@ -26,12 +26,16 @@ export default function ToolsPage() {
     <div className="p-6 md:p-8 min-h-full">
       <h1 className="font-heading text-2xl font-bold mb-7">Tools</h1>
 
-      {toolsQuery.isLoading ? (
+      {toolsQuery.isError ? (
+        <div className="rounded-lg border border-destructive/20 bg-destructive/5 p-4 text-sm text-destructive">
+          Failed to load tools: {(toolsQuery.error as Error)?.message || "Unknown error"}
+        </div>
+      ) : toolsQuery.isLoading ? (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-4">
           {Array.from({ length: 3 }).map((_, i) => (
             <div
               key={i}
-              className="h-32 rounded-xl border border-primary/15 bg-primary/[0.04] animate-pulse"
+              className="h-32 rounded-xl border border-border bg-muted/30 animate-pulse"
             />
           ))}
         </div>
@@ -41,7 +45,7 @@ export default function ToolsPage() {
           <Link
             href="/tools/vision"
             className={cn(
-              "group relative flex flex-col gap-3 p-4 rounded-lg border border-primary/15 bg-primary/[0.04]",
+              "group relative flex flex-col gap-3 p-4 rounded-xl border border-border bg-card",
               "cursor-pointer transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40"
             )}
           >
@@ -63,7 +67,7 @@ export default function ToolsPage() {
           <Link
             href="/tools/mcp"
             className={cn(
-              "group relative flex flex-col gap-3 p-4 rounded-lg border border-primary/15 bg-primary/[0.04]",
+              "group relative flex flex-col gap-3 p-4 rounded-xl border border-border bg-card",
               "cursor-pointer transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40"
             )}
           >

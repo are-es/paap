@@ -1,4 +1,4 @@
-// Provider logo mapping — maps builtin_id or name to actual asset path
+// Provider logo mapping: maps builtin_id or name to actual asset path
 const PROVIDER_LOGOS: Record<string, string> = {
   xiaomi: "/assets/xiaomi-mimo.png",
   meta: "/assets/meta.svg",

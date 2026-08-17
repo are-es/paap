@@ -219,7 +219,7 @@ export default function MCPToolsPage() {
               </div>
               <span className="text-sm font-medium">{t("mcp_image_gen")}</span>
             </div>
-            <span className={cn("text-[10px] px-1.5 py-0.5 rounded", imageGenModel ? "bg-neon-green/10 text-neon-green" : "bg-muted text-muted-foreground")}>
+            <span className={cn("text-[10px] px-1.5 py-0.5 rounded", imageGenModel ? "bg-emerald-500/10 text-emerald-500" : "bg-muted text-muted-foreground")}>
               {imageGenModel ? t("status_on") : t("status_off")}
             </span>
           </div>
@@ -243,12 +243,12 @@ export default function MCPToolsPage() {
         <div className="border border-border rounded-xl bg-card p-4">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-neon-green/10 flex items-center justify-center">
-                <Volume2 className="w-4 h-4 text-neon-green" />
+              <div className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center">
+                <Volume2 className="w-4 h-4 text-emerald-500" />
               </div>
               <span className="text-sm font-medium">{t("mcp_tts")}</span>
             </div>
-            <span className={cn("text-[10px] px-1.5 py-0.5 rounded", ttsModel ? "bg-neon-green/10 text-neon-green" : "bg-muted text-muted-foreground")}>
+            <span className={cn("text-[10px] px-1.5 py-0.5 rounded", ttsModel ? "bg-emerald-500/10 text-emerald-500" : "bg-muted text-muted-foreground")}>
               {ttsModel ? t("status_on") : t("status_off")}
             </span>
           </div>
@@ -277,7 +277,7 @@ export default function MCPToolsPage() {
                 </div>
                 <span className="text-sm font-medium">Web Search</span>
               </div>
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-neon-green/10 text-neon-green">
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-500">
                 Configure →
               </span>
             </div>
@@ -297,7 +297,7 @@ export default function MCPToolsPage() {
               </div>
               <span className="text-sm font-medium">Vision Analysis</span>
             </div>
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-neon-green/10 text-neon-green">
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-500">
               Active
             </span>
           </div>

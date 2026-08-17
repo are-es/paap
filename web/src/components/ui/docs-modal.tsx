@@ -37,7 +37,7 @@ function CodeBlock({ code, language }: { code: string; language?: string }) {
         className="absolute top-2 right-2 p-1.5 rounded-md bg-background border border-input opacity-0 group-hover:opacity-100 transition-opacity"
         title="Copy"
       >
-        {copied ? <Check className="w-3 h-3 text-neon-green" /> : <Copy className="w-3 h-3 text-muted-foreground" />}
+        {copied ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3 text-muted-foreground" />}
       </button>
     </div>
   );

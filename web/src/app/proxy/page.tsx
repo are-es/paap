@@ -135,17 +135,17 @@ export default function ProxyPage() {
       </div>
 
       {/* PROXY TABLE - fixed height, scrollable */}
-      <div className="bg-primary/[0.04] border border-primary/15 rounded-lg overflow-hidden flex-1 min-h-0">
-        <div className="overflow-y-auto" style={{ height: "calc(100vh - 220px)" }}>
+      <div className="bg-card border border-border rounded-lg p-3 overflow-hidden flex-1 min-h-0">
+        <div className="overflow-y-auto rounded-md" style={{ height: "calc(100vh - 240px)" }}>
           <table className="w-full text-xs">
             <thead className="sticky top-0 z-10 bg-card/95 backdrop-blur-sm">
               <tr className="border-b border-border">
-                <th className="px-3 py-2 text-left font-medium text-muted-foreground">IP</th>
-                <th className="px-3 py-2 text-left font-medium text-muted-foreground">Type</th>
-                <th className="px-3 py-2 text-left font-medium text-muted-foreground">Country</th>
-                <th className="px-3 py-2 text-right font-medium text-muted-foreground">Latency</th>
-                <th className="px-3 py-2 text-center font-medium text-muted-foreground">Status</th>
-                <th className="px-3 py-2 text-right font-medium text-muted-foreground"></th>
+                <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">IP</th>
+                <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">Type</th>
+                <th className="px-4 py-2.5 text-left font-medium text-muted-foreground">Country</th>
+                <th className="px-4 py-2.5 text-right font-medium text-muted-foreground">Latency</th>
+                <th className="px-4 py-2.5 text-center font-medium text-muted-foreground">Status</th>
+                <th className="px-4 py-2.5 text-right font-medium text-muted-foreground"></th>
               </tr>
             </thead>
             <tbody>
@@ -158,10 +158,10 @@ export default function ProxyPage() {
               )}
               {proxies.map((proxy) => (
                 <tr key={proxy.id} className="border-b border-border/30 hover:bg-muted/30 transition-colors">
-                  <td className="px-3 py-1.5 font-mono">{proxy.address}:{proxy.port}</td>
-                  <td className="px-3 py-1.5 text-muted-foreground uppercase">{proxy.type}</td>
-                  <td className="px-3 py-1.5 text-muted-foreground">{proxy.country ?? "-"}</td>
-                  <td className="px-3 py-1.5 text-right font-mono">
+                  <td className="px-4 py-2 font-mono">{proxy.address}:{proxy.port}</td>
+                  <td className="px-4 py-2 text-muted-foreground uppercase">{proxy.type}</td>
+                  <td className="px-4 py-2 text-muted-foreground">{proxy.country ?? "-"}</td>
+                  <td className="px-4 py-2 text-right font-mono">
                     {proxy.latency_ms != null ? (
                       <span className={cn(
                         proxy.latency_ms < 200 ? "text-green-600" :
@@ -172,7 +172,7 @@ export default function ProxyPage() {
                       </span>
                     ) : "-"}
                   </td>
-                  <td className="px-3 py-1.5 text-center">
+                  <td className="px-4 py-2 text-center">
                     <span className={cn(
                       "inline-flex items-center gap-1",
                       proxy.status === "active" ? "text-green-600" : "text-red-400"
@@ -184,7 +184,7 @@ export default function ProxyPage() {
                       {proxy.status === "active" ? "Online" : "Offline"}
                     </span>
                   </td>
-                  <td className="px-3 py-1.5 text-right">
+                  <td className="px-4 py-2 text-right">
                     <button
                       onClick={() => deleteMutation.mutate(proxy.id)}
                       className="p-1 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"

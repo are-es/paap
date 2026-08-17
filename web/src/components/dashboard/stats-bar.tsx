@@ -84,7 +84,7 @@ export function StatsBar() {
         return (
           <div
             key={stat.label}
-            className="rounded-xl border border-primary/15 bg-primary/[0.04] p-4 text-center"
+            className="rounded-xl border border-border bg-card p-4 text-center"
           >
             <div className="flex items-center justify-center mb-2">
               <Icon className="w-4 h-4 text-muted-foreground" />

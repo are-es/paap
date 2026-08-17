@@ -11,36 +11,71 @@ interface ProviderTopologyProps {
   providers: Provider[];
 }
 
-const NEON_CYAN = "#22d3ee";
-const GW_R = 48;
-const PROV_W = 110;
-const PROV_H = 40;
+const GW_R = 46;
+const PROV_W = 126;
+const PROV_H = 42;
 
 // ─── Provider Logo + Name Card ──────────────────────────────
-function ProviderCard({ logo, color, name, isActive }: { logo: string | null; color: string; name: string; isActive: boolean }) {
+function ProviderCard({
+  logo,
+  color,
+  name,
+  isActive,
+}: {
+  logo: string | null;
+  color: string;
+  name: string;
+  isActive: boolean;
+}) {
   const [imgError, setImgError] = useState(false);
   const showLogo = logo && !imgError;
+
   return (
     <div
       data-prov-card
-      className="w-[110px] h-[40px] rounded-[10px] flex items-center gap-2 px-2.5 transition-all"
+      className="relative w-[126px] h-[42px] rounded-[10px] flex items-center gap-2.5 px-2.5 select-none transition-all duration-150"
       style={{
-        background: "#0f0f1a",
-        border: `2px solid ${isActive ? color + "80" : color + "30"}`,
+        background: "var(--card, #0c0e18)",
+        border: `1.5px solid ${isActive ? color : "var(--border, rgba(255,255,255,0.09))"}`,
         boxShadow: isActive
-          ? `0 0 14px ${color}40`
-          : "0 2px 8px rgba(0,0,0,0.2)",
+          ? `0 0 20px ${color}45, 0 0 6px ${color}80, 0 2px 8px rgba(0,0,0,0.4)`
+          : "0 2px 8px rgba(0,0,0,0.25)",
         transformOrigin: "center center",
       }}
     >
       {showLogo ? (
-        <Image src={logo} alt="" width={24} height={24} className="rounded-md object-contain flex-shrink-0" unoptimized onError={() => setImgError(true)} />
+        <Image
+          src={logo}
+          alt=""
+          width={22}
+          height={22}
+          className="rounded-md object-contain shrink-0"
+          unoptimized
+          onError={() => setImgError(true)}
+        />
       ) : (
-        <div className="w-6 h-6 rounded-md flex-shrink-0" style={{ background: color + "20" }}>
-          <span className="flex items-center justify-center w-full h-full text-[10px] font-bold" style={{ color }}>{name.slice(0, 2).toUpperCase()}</span>
+        <div
+          className="w-5 h-5 rounded-md shrink-0 flex items-center justify-center font-mono text-[9px] font-black text-white shadow-sm"
+          style={{ background: color }}
+        >
+          {name.slice(0, 2).toUpperCase()}
         </div>
       )}
-      <span className="text-[10px] font-medium text-[#d4d4d8] whitespace-nowrap overflow-hidden text-ellipsis">{name}</span>
+
+      <div className="flex flex-col min-w-0 flex-1 justify-center">
+        <span className="text-[11px] font-semibold text-foreground truncate leading-tight">
+          {name}
+        </span>
+      </div>
+
+      {/* ECG Status Dot */}
+      <span
+        className="w-1.5 h-1.5 rounded-full shrink-0"
+        style={{
+          background: isActive ? color : "var(--muted-foreground, #52525b)",
+          boxShadow: isActive ? `0 0 8px ${color}` : "none",
+        }}
+      />
     </div>
   );
 }
@@ -50,60 +85,47 @@ function providerColor(provider: Provider): string {
   if (name.includes("google")) return "#4285f4";
   if (name.includes("xiaomi") || name.includes("mimo")) return "#ff6900";
   if (name.includes("kimchi")) return "#e74c3c";
-  if (name.includes("meta")) return "#0668e1";
+  if (name.includes("meta") || name.includes("llama")) return "#0668e1";
   if (name.includes("openrouter")) return "#6366f1";
-  if (name.includes("grok")) return "#f59e0b";
+  if (name.includes("grok") || name.includes("xai")) return "#f59e0b";
   if (name.includes("anigravity")) return "#f59e0b";
   if (name.includes("ollama")) return "#10b981";
   if (name.includes("deepseek")) return "#0ea5e9";
   if (name.includes("cloudflare")) return "#f48120";
   if (name.includes("runapi")) return "#8b5cf6";
+  if (name.includes("anthropic")) return "#d97706";
+  if (name.includes("openai")) return "#10a37f";
+  if (name.includes("mistral")) return "#f97316";
+  if (name.includes("together")) return "#ec4899";
+  if (name.includes("perplexity")) return "#06b6d4";
   return "#71717a";
 }
 
-interface Pos { x: number; y: number }
-
-const LS_KEY = "paap-topo-positions";
-
-// Border intersection: line from center → target hits card border
-function borderPoint(cx: number, cy: number, hw: number, hh: number, tx: number, ty: number) {
-  const dx = tx - cx, dy = ty - cy;
-  if (dx === 0 && dy === 0) return { x: cx, y: cy + hh };
-  const adx = Math.abs(dx), ady = Math.abs(dy);
-  if (adx * hh > ady * hw) {
-    const sign = dx > 0 ? 1 : -1;
-    return { x: cx + sign * hw, y: cy + dy * hw / adx };
-  }
-  const sign = dy > 0 ? 1 : -1;
-  return { x: cx + dx * hh / ady, y: cy + sign * hh };
+interface Pos {
+  x: number;
+  y: number;
 }
 
-// Curved path: S-curve, arc, or wave
-function curvePath(x1: number, y1: number, x2: number, y2: number, style: number, curveFactor = 0.18) {
-  const ex = x2 - x1, ey = y2 - y1;
-  const dist = Math.sqrt(ex * ex + ey * ey);
-  const nx = -ey / (dist || 1), ny = ex / (dist || 1);
-  const curve = dist * curveFactor;
-  const side = style % 2 === 0 ? 1 : -1;
+// Clinical Cardiac Gaussian Deflection (P-Q-R-S-T)
+function getEcgDeflection(u: number): number {
+  if (u < 0 || u > 1) return 0;
 
-  if (style === 0) {
-    const cp1x = x1 + ex * 0.3 + nx * curve * side;
-    const cp1y = y1 + ey * 0.3 + ny * curve * side;
-    const cp2x = x1 + ex * 0.7 - nx * curve * side;
-    const cp2y = y1 + ey * 0.7 - ny * curve * side;
-    return `M ${x1} ${y1} C ${cp1x} ${cp1y} ${cp2x} ${cp2y} ${x2} ${y2}`;
-  }
-  if (style === 1) {
-    const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
-    const cpx = mx + nx * curve * 1.4 * side;
-    const cpy = my + ny * curve * 1.4 * side;
-    return `M ${x1} ${y1} Q ${cpx} ${cpy} ${x2} ${y2}`;
-  }
-  const cp1x = x1 + ex * 0.25 + nx * curve * 0.6 * side;
-  const cp1y = y1 + ey * 0.25 + ny * curve * 0.6 * side;
-  const cp2x = x1 + ex * 0.6 + nx * curve * 0.3 * side;
-  const cp2y = y1 + ey * 0.6 + ny * curve * 0.3 * side;
-  return `M ${x1} ${y1} C ${cp1x} ${cp1y} ${cp2x} ${cp2y} ${x2} ${y2}`;
+  // P wave (center 0.16, width 0.04, amp +6px)
+  const p = 6 * Math.exp(-Math.pow((u - 0.16) / 0.04, 2));
+
+  // Q dip (center 0.38, width 0.018, amp -8px)
+  const q = -8 * Math.exp(-Math.pow((u - 0.38) / 0.018, 2));
+
+  // R spike (center 0.46, width 0.016, amp +38px) -> Sharp cardiac spike!
+  const r = 38 * Math.exp(-Math.pow((u - 0.46) / 0.016, 2));
+
+  // S dip (center 0.53, width 0.02, amp -14px)
+  const s = -14 * Math.exp(-Math.pow((u - 0.53) / 0.02, 2));
+
+  // T wave (center 0.76, width 0.08, amp +12px) -> Broad cardiac repolarization
+  const t = 12 * Math.exp(-Math.pow((u - 0.76) / 0.08, 2));
+
+  return p + q + r + s + t;
 }
 
 // ─── Main Component ─────────────────────────────────────────
@@ -113,17 +135,8 @@ export function ProviderTopology({ providers }: ProviderTopologyProps) {
   const [activeProviders, setActiveProviders] = useState<Set<string>>(new Set());
   const [activeModels, setActiveModels] = useState<Set<string>>(new Set());
   const [tooltip, setTooltip] = useState<{ name: string; info: string; x: number; y: number } | null>(null);
-  const [dims, setDims] = useState({ w: 700, h: 400 });
+  const [dims, setDims] = useState({ w: 800, h: 480 });
   const animRaf = useRef<number | null>(null);
-
-  const [positions, setPositions] = useState<Record<string, Pos>>(() => {
-    try {
-      const raw = localStorage.getItem(LS_KEY);
-      return raw ? JSON.parse(raw) : {};
-    } catch { return {}; }
-  });
-  const dragging = useRef<string | null>(null);
-  const dragOffset = useRef({ x: 0, y: 0 });
 
   const allModelsQuery = useQuery({
     queryKey: ["all-models-topology"],
@@ -163,7 +176,10 @@ export function ProviderTopology({ providers }: ProviderTopologyProps) {
         if (recentProviders.size > 0 || recentModels.size > 0) {
           setActiveProviders(recentProviders);
           setActiveModels(recentModels);
-          setTimeout(() => { setActiveProviders(new Set()); setActiveModels(new Set()); }, 5000);
+          setTimeout(() => {
+            setActiveProviders(new Set());
+            setActiveModels(new Set());
+          }, 5000);
         }
       } catch {}
     };
@@ -178,82 +194,182 @@ export function ProviderTopology({ providers }: ProviderTopologyProps) {
     if (!el) return;
     const ro = new ResizeObserver((entries) => {
       const { width, height } = entries[0].contentRect;
-      setDims({ w: width, h: Math.max(350, height) });
+      setDims({ w: width, h: Math.max(380, height) });
     });
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
 
-  // ─── JS Animation Loop (single raf, dots + card pulse) ─────
+  const onlineProviders = providers.filter((p) => p.status !== "offline");
+  const cx = dims.w / 2;
+  const cy = dims.h / 2;
+  const hasActive = activeProviders.size > 0;
+
+  // ─── FIXED DUAL-WING SYMMETRICAL LAYOUT ───────────────────
+  const wingOffsetX = Math.min(dims.w * 0.36, 360);
+  const wingSpreadY = Math.min(dims.h * 0.42, 240);
+
+  const getPos = useCallback(
+    (key: string): Pos => {
+      if (key === "gateway") return { x: cx, y: cy };
+
+      const provIdx = onlineProviders.findIndex((p) => `prov-${p.id}` === key);
+      if (provIdx < 0) return { x: cx, y: cy };
+
+      const total = onlineProviders.length;
+      const half = Math.ceil(total / 2);
+      const isLeft = provIdx < half;
+      const idxInWing = isLeft ? provIdx : provIdx - half;
+      const countInWing = isLeft ? half : total - half;
+
+      const step = countInWing > 1 ? idxInWing / (countInWing - 1) - 0.5 : 0;
+      const curve = Math.cos(step * Math.PI) * 40;
+
+      return {
+        x: isLeft ? cx - wingOffsetX - curve : cx + wingOffsetX + curve,
+        y: cy + step * wingSpreadY * 2,
+      };
+    },
+    [cx, cy, wingOffsetX, wingSpreadY, onlineProviders]
+  );
+
+  const gwPos = { x: cx, y: cy };
+
+  // ─── S-Curve & Edge Calculation ───────────────────────────
+  const getBezierEndpoints = useCallback((pvX: number, pvY: number, isLeft: boolean) => {
+    const angle = Math.atan2(pvY - cy, pvX - cx);
+    const x1 = cx + Math.cos(angle) * GW_R;
+    const y1 = cy + Math.sin(angle) * GW_R;
+
+    // Connect cleanly to inner vertical side facing Gateway
+    const x2 = isLeft ? pvX + PROV_W / 2 : pvX - PROV_W / 2;
+    const y2 = pvY;
+
+    const dx = x2 - x1;
+    const cp1x = x1 + dx * 0.45;
+    const cp1y = y1;
+    const cp2x = x2 - dx * 0.35;
+    const cp2y = y2;
+
+    return { x1, y1, cp1x, cp1y, cp2x, cp2y, x2, y2 };
+  }, [cx, cy]);
+
+  // Generate Single Morphing Path (Flatline if idle, ECG pulse if active)
+  const generatePath = useCallback((pts: ReturnType<typeof getBezierEndpoints>, cardiacPhase: number, isActive: boolean, isLeft: boolean) => {
+    const segs = 140;
+    let pathStr = "";
+
+    const isBeating = isActive && cardiacPhase >= 0.15 && cardiacPhase <= 0.75;
+
+    if (!isBeating) {
+      for (let i = 0; i <= segs; i++) {
+        const s = i / segs;
+        const u = 1 - s;
+        const bx = u * u * u * pts.x1 + 3 * u * u * s * pts.cp1x + 3 * u * s * s * pts.cp2x + s * s * s * pts.x2;
+        const by = u * u * u * pts.y1 + 3 * u * u * s * pts.cp1y + 3 * u * s * s * pts.cp2y + s * s * s * pts.y2;
+        if (i === 0) pathStr += `M ${bx} ${by}`;
+        else pathStr += ` L ${bx} ${by}`;
+      }
+      return pathStr;
+    }
+
+    const beatProgress = (cardiacPhase - 0.15) / 0.60;
+    const pulseWidth = 0.45;
+    const pulseStart = beatProgress - pulseWidth / 2;
+    const beatAmplitude = Math.sin(Math.PI * beatProgress);
+
+    for (let i = 0; i <= segs; i++) {
+      const s = i / segs;
+      const u = 1 - s;
+
+      const bx = u * u * u * pts.x1 + 3 * u * u * s * pts.cp1x + 3 * u * s * s * pts.cp2x + s * s * s * pts.x2;
+      const by = u * u * u * pts.y1 + 3 * u * u * s * pts.cp1y + 3 * u * s * s * pts.cp2y + s * s * s * pts.y2;
+
+      const tx = 3 * u * u * (pts.cp1x - pts.x1) + 6 * u * s * (pts.cp2x - pts.cp1x) + 3 * s * s * (pts.x2 - pts.cp2x);
+      const ty = 3 * u * u * (pts.cp1y - pts.y1) + 6 * u * s * (pts.cp2y - pts.cp1y) + 3 * s * s * (pts.y2 - pts.cp2y);
+      const tLen = Math.sqrt(tx * tx + ty * ty) || 1;
+
+      const nx = -ty / tLen;
+      const ny = tx / tLen;
+
+      const sideDir = isLeft ? -1 : 1;
+      const localU = (s - pulseStart) / pulseWidth;
+      const rawDeflection = getEcgDeflection(localU);
+      const deflection = rawDeflection * beatAmplitude * sideDir;
+
+      const px = bx + nx * deflection;
+      const py = by + ny * deflection;
+
+      if (i === 0) pathStr += `M ${px} ${py}`;
+      else pathStr += ` L ${px} ${py}`;
+    }
+
+    return pathStr;
+  }, []);
+
+  // ─── 60fps Rhythmic ECG Cardiac Render Loop ───────────────
   useEffect(() => {
-    const CYCLE = 1800; // 1.8s per cycle
-    const DOT1_END = 0.40;
-    const DOT2_START = 0.50;
-    const DOT2_END = 0.90;
+    const cycleMs = 850; // ~70 BPM natural cardiac cycle
 
     function tick() {
       const svg = svgRef.current;
       const container = containerRef.current;
-      if (!svg || !container) { animRaf.current = requestAnimationFrame(tick); return; }
+      if (!svg || !container) {
+        animRaf.current = requestAnimationFrame(tick);
+        return;
+      }
 
-      const t = (Date.now() % CYCLE) / CYCLE;
+      const now = Date.now();
+      const cardiacPhase = (now % cycleMs) / cycleMs;
 
-      // Find all active path groups
-      const groups = svg.querySelectorAll("[data-active-group]");
-      groups.forEach((g) => {
-        const provId = g.getAttribute("data-prov-id");
-        const pathEl = g.querySelector("path[data-edge]") as SVGPathElement | null;
-        if (!pathEl) return;
+      // Gateway beat contraction
+      const gwCircleEl = container.querySelector("[data-gw-circle]") as HTMLElement | null;
+      if (gwCircleEl) {
+        if (hasActive && cardiacPhase >= 0.18 && cardiacPhase <= 0.38) {
+          const beatNorm = (cardiacPhase - 0.18) / 0.20;
+          const scale = 1 + Math.sin(Math.PI * beatNorm) * 0.07;
+          gwCircleEl.style.transform = `scale(${scale})`;
+          gwCircleEl.style.boxShadow = `0 0 36px rgba(16,185,129,0.7), 0 0 16px rgba(56,189,248,0.8)`;
+        } else {
+          gwCircleEl.style.transform = "scale(1)";
+          gwCircleEl.style.boxShadow = hasActive
+            ? "0 0 24px rgba(16,185,129,0.25)"
+            : "0 2px 10px rgba(0,0,0,0.3)";
+        }
+      }
 
-        const totalLen = pathEl.getTotalLength();
-        const d1 = g.querySelector("[data-dot1]") as SVGCircleElement | null;
-        const c1 = g.querySelector("[data-dot1-core]") as SVGCircleElement | null;
-        const d2 = g.querySelector("[data-dot2]") as SVGCircleElement | null;
-        const c2 = g.querySelector("[data-dot2-core]") as SVGCircleElement | null;
+      // Update SVG path geometries
+      onlineProviders.forEach((prov, provIdx) => {
+        const half = Math.ceil(onlineProviders.length / 2);
+        const isLeft = provIdx < half;
+        const provPos = getPos(`prov-${prov.id}`);
+        const isActive = activeProviders.has(prov.name);
+        const color = providerColor(prov);
 
-        // Dot 1: gw → provider
-        if (d1 && c1) {
-          if (t < DOT1_END) {
-            const progress = t / DOT1_END;
-            const pt = pathEl.getPointAtLength(progress * totalLen);
-            d1.setAttribute("cx", String(pt.x));
-            d1.setAttribute("cy", String(pt.y));
-            c1.setAttribute("cx", String(pt.x));
-            c1.setAttribute("cy", String(pt.y));
-            d1.setAttribute("opacity", "0.9");
-            c1.setAttribute("opacity", "0.7");
-          } else {
-            d1.setAttribute("opacity", "0");
-            c1.setAttribute("opacity", "0");
-          }
+        const pts = getBezierEndpoints(provPos.x, provPos.y, isLeft);
+        const d = generatePath(pts, cardiacPhase, isActive, isLeft);
+
+        const pathEl = svg.querySelector(`path[data-edge-path="${prov.id}"]`) as SVGPathElement | null;
+        const glowEl = svg.querySelector(`path[data-edge-glow="${prov.id}"]`) as SVGPathElement | null;
+        const coreEl = svg.querySelector(`path[data-edge-core="${prov.id}"]`) as SVGPathElement | null;
+
+        if (pathEl) pathEl.setAttribute("d", d);
+        if (glowEl) {
+          glowEl.setAttribute("d", d);
+          glowEl.setAttribute("opacity", isActive ? "0.3" : "0");
+        }
+        if (coreEl) {
+          coreEl.setAttribute("d", d);
+          coreEl.setAttribute("opacity", isActive ? "0.95" : "0");
         }
 
-        // Dot 2: gw → provider (second wave)
-        if (d2 && c2) {
-          if (t >= DOT2_START && t < DOT2_END) {
-            const progress = (t - DOT2_START) / (DOT2_END - DOT2_START);
-            const pt = pathEl.getPointAtLength(progress * totalLen);
-            d2.setAttribute("cx", String(pt.x));
-            d2.setAttribute("cy", String(pt.y));
-            c2.setAttribute("cx", String(pt.x));
-            c2.setAttribute("cy", String(pt.y));
-            d2.setAttribute("opacity", "0.75");
-            c2.setAttribute("opacity", "0.5");
-          } else {
-            d2.setAttribute("opacity", "0");
-            c2.setAttribute("opacity", "0");
-          }
-        }
-
-        // Card pulse when dot arrives
-        const cardEl = container.querySelector(`[data-prov-id="${provId}"] [data-prov-card]`) as HTMLElement | null;
-        if (cardEl) {
-          const pulse1 = t >= 0.37 && t < 0.44;
-          const pulse2 = t >= 0.48 && t < 0.55;
-          if (pulse1) {
-            cardEl.style.transform = `scale(${1 + 0.08 * Math.sin((t - 0.37) / 0.07 * Math.PI)})`;
-          } else if (pulse2) {
-            cardEl.style.transform = `scale(${1 + 0.06 * Math.sin((t - 0.48) / 0.07 * Math.PI)})`;
+        // Active provider card pulse
+        const cardEl = container.querySelector(`[data-prov-id="${prov.id}"] [data-prov-card]`) as HTMLElement | null;
+        if (cardEl && isActive) {
+          if (cardiacPhase >= 0.45 && cardiacPhase <= 0.70) {
+            const beatNorm = (cardiacPhase - 0.45) / 0.25;
+            const scale = 1 + Math.sin(Math.PI * beatNorm) * 0.04;
+            cardEl.style.transform = `scale(${scale})`;
           } else {
             cardEl.style.transform = "scale(1)";
           }
@@ -264,197 +380,163 @@ export function ProviderTopology({ providers }: ProviderTopologyProps) {
     }
 
     animRaf.current = requestAnimationFrame(tick);
-    return () => { if (animRaf.current) cancelAnimationFrame(animRaf.current); };
-  }, []); // runs once — reads DOM each frame
-
-  const onlineProviders = providers.filter((p) => p.status !== "offline");
-  const cx = dims.w / 2;
-  const cy = dims.h / 2;
-  const hasActive = activeProviders.size > 0;
-
-  // ─── DUAL CLUSTER LAYOUT ──────────────────────────────────
-  const clusterOffset = Math.min(dims.w * 0.28, 260);
-  const clusterRadius = Math.min(dims.h * 0.32, 160);
-
-  const defaultPos = useCallback((key: string): Pos => {
-    if (key === "gateway") return { x: cx, y: cy };
-
-    const provIdx = onlineProviders.findIndex((p) => `prov-${p.id}` === key);
-    if (provIdx < 0) return { x: cx, y: cy };
-
-    const total = onlineProviders.length;
-    const mid = Math.ceil(total / 2);
-    const isLeft = provIdx < mid;
-    const clusterCx = isLeft ? cx - clusterOffset : cx + clusterOffset;
-    const idx = isLeft ? provIdx : provIdx - mid;
-    const count = isLeft ? mid : total - mid;
-
-    const angle = (idx / Math.max(count - 1, 1)) * Math.PI * 2 - Math.PI / 2;
-    return {
-      x: clusterCx + Math.cos(angle) * clusterRadius,
-      y: cy + Math.sin(angle) * clusterRadius,
+    return () => {
+      if (animRaf.current) cancelAnimationFrame(animRaf.current);
     };
-  }, [cx, cy, clusterOffset, clusterRadius, onlineProviders]);
-
-  const getPos = useCallback((key: string): Pos => {
-    const raw = positions[key] ?? defaultPos(key);
-    const pad = 10;
-    const hw = key === "gateway" ? GW_R : PROV_W / 2;
-    const hh = key === "gateway" ? GW_R : PROV_H / 2;
-    return {
-      x: Math.max(pad + hw, Math.min(dims.w - pad - hw, raw.x)),
-      y: Math.max(pad + hh, Math.min(dims.h - pad - hh, raw.y)),
-    };
-  }, [positions, defaultPos, dims.w, dims.h]);
-
-  const handleMouseDown = useCallback((e: React.MouseEvent, key: string) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const pos = getPos(key);
-    dragging.current = key;
-    dragOffset.current = { x: e.clientX - pos.x, y: e.clientY - pos.y };
-  }, [getPos]);
-
-  const handleMouseMove = useCallback((e: React.MouseEvent) => {
-    if (!dragging.current || !containerRef.current) return;
-    const rect = containerRef.current.getBoundingClientRect();
-    const x = e.clientX - dragOffset.current.x;
-    const y = e.clientY - dragOffset.current.y;
-    setPositions((prev) => ({
-      ...prev,
-      [dragging.current!]: {
-        x: Math.max(20, Math.min(rect.width - 20, x)),
-        y: Math.max(20, Math.min(rect.height - 20, y)),
-      },
-    }));
-  }, []);
-
-  const handleMouseUp = useCallback(() => {
-    dragging.current = null;
-    try { localStorage.setItem(LS_KEY, JSON.stringify(positions)); } catch {}
-  }, [positions]);
-
-  const gwPos = getPos("gateway");
+  }, [hasActive, onlineProviders, getPos, getBezierEndpoints, generatePath, activeProviders]);
 
   return (
     <section className="mb-7" aria-label="Live Activity">
       <div className="flex items-center justify-between mb-4">
         <h2 className="font-heading text-lg font-bold flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-neon-cyan animate-pulse" />
-          Live Activity
+          <span className={`w-2 h-2 rounded-full ${hasActive ? "bg-emerald-400 animate-pulse" : "bg-zinc-600"}`} />
+          Live Activity Topology
         </h2>
       </div>
 
       <div
         ref={containerRef}
-        className="rounded-2xl border border-border relative select-none overflow-hidden"
+        className="rounded-2xl border border-border relative select-none overflow-hidden shadow-sm"
         style={{
-          background: "var(--background, #08080f)",
-          backgroundImage: "radial-gradient(circle, var(--border, rgba(255,255,255,0.025)) 1px, transparent 1px)",
-          backgroundSize: "18px 18px",
-          cursor: dragging.current ? "grabbing" : "default",
-          minHeight: 350,
+          background: "var(--card, #090a10)",
+          backgroundImage:
+            "radial-gradient(circle, var(--border, rgba(255,255,255,0.035)) 1px, transparent 1px)",
+          backgroundSize: "22px 22px",
+          minHeight: 380,
           height: "calc(100vh - 380px)",
-          maxHeight: 700,
+          maxHeight: 720,
         }}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
       >
-        {/* SVG edges layer */}
-        <svg ref={svgRef} className="absolute inset-0 w-full h-full pointer-events-none z-[4]" style={{ overflow: "visible" }}>
-          {/* Gateway → Provider edges */}
+        {/* SVG Cable Layer (Single Path Morphing) */}
+        <svg
+          ref={svgRef}
+          className="absolute inset-0 w-full h-full pointer-events-none z-[4]"
+          style={{ overflow: "visible" }}
+        >
           {onlineProviders.map((prov, provIdx) => {
+            const half = Math.ceil(onlineProviders.length / 2);
+            const isLeft = provIdx < half;
             const provPos = getPos(`prov-${prov.id}`);
             const isActive = activeProviders.has(prov.name);
             const color = providerColor(prov);
-
-            const gwEdge = borderPoint(gwPos.x, gwPos.y, GW_R, GW_R, provPos.x, provPos.y);
-            const pvEdge = borderPoint(provPos.x, provPos.y, PROV_W / 2, PROV_H / 2, gwPos.x, gwPos.y);
-            const d = curvePath(gwEdge.x, gwEdge.y, pvEdge.x, pvEdge.y, provIdx % 3);
+            const pts = getBezierEndpoints(provPos.x, provPos.y, isLeft);
 
             return (
-              <g key={`edge-${prov.id}`} data-active-group={isActive ? "1" : ""} data-prov-id={prov.id}>
-                {/* Idle line (ALWAYS visible) */}
+              <g key={`edge-${prov.id}`} data-prov-id={prov.id}>
+                {/* 1. Outer Glow Layer (Active only) */}
                 <path
-                  data-edge={isActive ? "active" : "idle"}
-                  d={d}
+                  data-edge-glow={prov.id}
                   fill="none"
-                  stroke={isActive ? color : "#b0b8c8"}
-                  strokeWidth={isActive ? "2" : "1.2"}
-                  opacity={isActive ? 0.35 : 0.5}
-                  strokeDasharray="8 4"
+                  stroke={color}
+                  strokeWidth="6"
                   strokeLinecap="round"
-                  style={isActive ? { filter: `drop-shadow(0 0 3px ${color})` } : undefined}
+                  opacity={isActive ? 0.3 : 0}
+                  style={{ filter: "blur(4px)" }}
                 />
-                {/* Dots (only for active — JS drives visibility) */}
-                {isActive && (
-                  <>
-                    <circle data-dot1 r="4.5" fill={color} opacity="0" style={{ filter: `drop-shadow(0 0 5px ${color}) drop-shadow(0 0 10px ${color})` }} />
-                    <circle data-dot1-core r="1.8" fill="#fff" opacity="0" />
-                    <circle data-dot2 r="3.5" fill={color} opacity="0" style={{ filter: `drop-shadow(0 0 4px ${color}) drop-shadow(0 0 8px ${color})` }} />
-                    <circle data-dot2-core r="1.2" fill="#fff" opacity="0" />
-                  </>
-                )}
+
+                {/* 2. Main Cable Trace (Morphs from Flatline to ECG Wave) */}
+                <path
+                  data-edge-path={prov.id}
+                  fill="none"
+                  stroke={isActive ? color : "var(--border, #25293d)"}
+                  strokeWidth={isActive ? "2.6" : "1.8"}
+                  strokeLinecap="round"
+                  opacity={isActive ? 0.95 : 0.85}
+                  style={isActive ? { filter: `drop-shadow(0 0 6px ${color})` } : undefined}
+                />
+
+                {/* 3. White Superconducting Core (Active only) */}
+                <path
+                  data-edge-core={prov.id}
+                  fill="none"
+                  stroke="#ffffff"
+                  strokeWidth="1.1"
+                  strokeLinecap="round"
+                  opacity={isActive ? 0.95 : 0}
+                />
+
+                {/* Port Anchors */}
+                <circle
+                  cx={pts.x1}
+                  cy={pts.y1}
+                  r={isActive ? "3.5" : "2.5"}
+                  fill={isActive ? color : "var(--border, #3f4561)"}
+                  stroke="var(--background, #07080d)"
+                  strokeWidth="1"
+                />
+                <circle
+                  cx={pts.x2}
+                  cy={pts.y2}
+                  r={isActive ? "3.5" : "2.5"}
+                  fill={isActive ? color : "var(--border, #3f4561)"}
+                  stroke="var(--background, #07080d)"
+                  strokeWidth="1"
+                />
               </g>
             );
           })}
         </svg>
 
-        {/* PAAP Gateway Node — Big Circle */}
+        {/* PAAP Gateway Node: Center Ring */}
         <div
-          className="absolute z-10"
+          className="absolute z-10 -translate-x-1/2 -translate-y-1/2 pointer-events-none"
           style={{
-            top: gwPos.y - GW_R,
-            left: gwPos.x - GW_R,
+            top: gwPos.y,
+            left: gwPos.x,
             width: GW_R * 2,
             height: GW_R * 2,
-            cursor: dragging.current === "gateway" ? "grabbing" : "grab",
           }}
-          onMouseDown={(e) => handleMouseDown(e, "gateway")}
-          onMouseEnter={(e) => !dragging.current && setTooltip({ name: "PAAP Gateway", info: "Pangkalan API — drag to move", x: e.clientX, y: e.clientY })}
-          onMouseLeave={() => setTooltip(null)}
         >
           <div
-            className="w-full h-full rounded-full flex items-center justify-center overflow-hidden"
+            data-gw-circle
+            className="w-full h-full rounded-full flex flex-col items-center justify-center relative overflow-hidden transition-all duration-150"
             style={{
-              background: "var(--background, #0f0f1a)",
-              border: `2px solid ${hasActive ? "rgba(34,211,238,0.5)" : "rgba(34,211,238,0.25)"}`,
+              background: "var(--card, #0d101a)",
+              border: `2px solid ${hasActive ? "rgba(16,185,129,0.6)" : "var(--border, rgba(255,255,255,0.15))"}`,
               boxShadow: hasActive
-                ? "0 0 28px rgba(34,211,238,0.3), 0 2px 10px rgba(0,0,0,0.4)"
-                : "0 0 16px rgba(34,211,238,0.1), 0 2px 8px rgba(0,0,0,0.4)",
-              animation: hasActive ? "gwHeartbeat 0.7s ease-in-out infinite alternate" : "none",
+                ? "0 0 28px rgba(16,185,129,0.3)"
+                : "0 2px 10px rgba(0,0,0,0.3)",
             }}
           >
-            <Image src="/assets/logo.svg" alt="PAAP" width={56} height={56} className="object-contain" unoptimized />
+            <Image
+              src="/assets/logo.svg"
+              alt="PAAP"
+              width={50}
+              height={50}
+              className="object-contain shrink-0"
+              unoptimized
+            />
           </div>
         </div>
 
-        {/* Provider Nodes — Logo + Name */}
-        {onlineProviders.map((prov) => {
-          const pos = getPos(`prov-${prov.id}`);
+        {/* Provider Nodes */}
+        {onlineProviders.map((prov, provIdx) => {
+          const provPos = getPos(`prov-${prov.id}`);
           const isActive = activeProviders.has(prov.name);
           const color = providerColor(prov);
           const logo = getProviderLogo(prov);
           const models = modelsByProvider[String(prov.id)] ?? [];
           const activeModelCount = models.filter((m) => activeModels.has(m.model_id)).length;
+
           return (
             <div
               key={prov.id}
               data-prov-id={prov.id}
-              className="absolute z-10"
+              className="absolute z-10 -translate-x-1/2 -translate-y-1/2"
               style={{
-                top: pos.y - PROV_H / 2,
-                left: pos.x - PROV_W / 2,
-                cursor: dragging.current === `prov-${prov.id}` ? "grabbing" : "grab",
+                top: provPos.y,
+                left: provPos.x,
               }}
-              onMouseDown={(e) => handleMouseDown(e, `prov-${prov.id}`)}
-              onMouseEnter={(e) => !dragging.current && setTooltip({
-                name: prov.name,
-                info: `${prov.key_count ?? 0} keys · ${models.length} models${activeModelCount > 0 ? ` · ${activeModelCount} active` : ""} · ${prov.status}`,
-                x: e.clientX,
-                y: e.clientY,
-              })}
+              onMouseEnter={(e) =>
+                setTooltip({
+                  name: prov.name,
+                  info: `${prov.key_count ?? 0} keys · ${models.length} models${
+                    activeModelCount > 0 ? ` · ${activeModelCount} active` : ""
+                  } · ${prov.status}`,
+                  x: e.clientX,
+                  y: e.clientY,
+                })
+              }
               onMouseLeave={() => setTooltip(null)}
             >
               <ProviderCard logo={logo} color={color} name={prov.name} isActive={isActive} />
@@ -462,7 +544,7 @@ export function ProviderTopology({ providers }: ProviderTopologyProps) {
           );
         })}
 
-        {/* Empty state */}
+        {/* Empty State */}
         {onlineProviders.length === 0 && (
           <div className="absolute inset-0 flex items-center justify-center">
             <p className="text-sm text-muted-foreground opacity-60">No online providers</p>
@@ -476,23 +558,16 @@ export function ProviderTopology({ providers }: ProviderTopologyProps) {
             style={{
               left: tooltip.x + 14,
               top: tooltip.y - 12,
-              background: "var(--background, rgba(15, 16, 28, 0.95))",
-              borderColor: "var(--border, rgba(255,255,255,0.08))",
+              background: "var(--card, rgba(15, 16, 28, 0.95))",
+              borderColor: "var(--border, rgba(255,255,255,0.1))",
               backdropFilter: "blur(12px)",
             }}
           >
-            <div className="font-semibold">{tooltip.name}</div>
+            <div className="font-semibold text-foreground">{tooltip.name}</div>
             <div className="text-muted-foreground mt-0.5">{tooltip.info}</div>
           </div>
         )}
       </div>
-
-      <style jsx global>{`
-        @keyframes gwHeartbeat {
-          0% { box-shadow: 0 0 20px rgba(34,211,238,0.25), 0 2px 8px rgba(0,0,0,0.4); }
-          100% { box-shadow: 0 0 32px rgba(34,211,238,0.5), 0 2px 8px rgba(0,0,0,0.4); }
-        }
-      `}</style>
     </section>
   );
 }
