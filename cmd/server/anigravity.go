@@ -81,8 +81,8 @@ func getThoughtSignature(funcName, toolCallID string, msg, tm map[string]interfa
 	return latestTs
 }
 
-// anigravityRequest translates OpenAI format to Google Gemini format for Anigravity
 func anigravityRequest(w http.ResponseWriter, r *http.Request, model string, rawBody map[string]interface{}, accessToken string, isStream bool, providerID, providerName, keyID, keyName string) {
+	startTime := time.Now()
 	messages, _ := rawBody["messages"].([]interface{})
 	var contents []map[string]interface{}
 	var systemInstruction string
@@ -373,10 +373,13 @@ func anigravityRequest(w http.ResponseWriter, r *http.Request, model string, raw
 				retryResp, retryErr := client.Do(retryReq)
 				if retryErr == nil && retryResp.StatusCode == 200 {
 					defer retryResp.Body.Close()
+					var retryEmail string
+					db.DB.QueryRow("SELECT COALESCE(email, name, '') FROM provider_connections WHERE id=?", connID).Scan(&retryEmail)
 					if isStream {
-						handleAnigravityStreaming(w, retryResp)
+						handleAnigravityStreaming(w, retryResp, providerID, providerName, model, connID, retryEmail, startTime)
 					} else {
-						handleAnigravityNonStreaming(w, retryResp)
+						latencyMs := time.Since(startTime).Milliseconds()
+						handleAnigravityNonStreaming(w, retryResp, providerID, providerName, model, connID, retryEmail, latencyMs)
 					}
 					return
 				}
@@ -391,9 +394,10 @@ func anigravityRequest(w http.ResponseWriter, r *http.Request, model string, raw
 	if resp.StatusCode == 200 {
 		autoDisableKey(keyID, keyName, 200, "")
 		if isStream {
-			handleAnigravityStreaming(w, resp)
+			handleAnigravityStreaming(w, resp, providerID, providerName, model, keyID, keyName, startTime)
 		} else {
-			handleAnigravityNonStreaming(w, resp)
+			latencyMs := time.Since(startTime).Milliseconds()
+			handleAnigravityNonStreaming(w, resp, providerID, providerName, model, keyID, keyName, latencyMs)
 		}
 		return
 	}
@@ -412,7 +416,9 @@ func anigravityRequest(w http.ResponseWriter, r *http.Request, model string, raw
 	for {
 		nextID, nextName, nextTok, nextRef, nextExp, fErr := getNextActiveConnectionExcluding(providerID, tried)
 		if fErr != nil {
-			// No more active connections — return error
+			// No more active connections — log failure and return error
+			latencyMs := time.Since(startTime).Milliseconds()
+			logProxyRequest(providerID, providerName, model, keyID, keyName, "", "", resp.StatusCode, 0, 0, latencyMs, errBodyStr, nil)
 			writeError(w, resp.StatusCode, fmt.Sprintf("anigravity error %d: %s (all accounts exhausted)", resp.StatusCode, errBodyStr))
 			return
 		}
@@ -441,9 +447,10 @@ func anigravityRequest(w http.ResponseWriter, r *http.Request, model string, raw
 			defer resp2.Body.Close()
 			autoDisableKey(nextID, nextName, 200, "")
 			if isStream {
-				handleAnigravityStreaming(w, resp2)
+				handleAnigravityStreaming(w, resp2, providerID, providerName, model, nextID, nextName, startTime)
 			} else {
-				handleAnigravityNonStreaming(w, resp2)
+				latencyMs := time.Since(startTime).Milliseconds()
+				handleAnigravityNonStreaming(w, resp2, providerID, providerName, model, nextID, nextName, latencyMs)
 			}
 			return
 		}
@@ -713,8 +720,8 @@ type geminiResponse struct {
 	} `json:"usageMetadata"`
 }
 
-// handleAnigravityNonStreaming converts Gemini response to OpenAI format
-func handleAnigravityNonStreaming(w http.ResponseWriter, resp *http.Response) {
+// handleAnigravityNonStreaming converts Gemini response to OpenAI format and logs it
+func handleAnigravityNonStreaming(w http.ResponseWriter, resp *http.Response, providerID, providerName, modelID, keyID, keyName string, latencyMs int64) {
 	body, _ := io.ReadAll(resp.Body)
 
 	var wrapper struct {
@@ -747,6 +754,8 @@ func handleAnigravityNonStreaming(w http.ResponseWriter, resp *http.Response) {
 			} else if part.Text != "" {
 				content += part.Text
 			}
+
+			// Function calls → tool_calls
 			if part.FunctionCall != nil {
 				sig := part.ThoughtSignature
 				if sig == "" {
@@ -782,7 +791,7 @@ func handleAnigravityNonStreaming(w http.ResponseWriter, resp *http.Response) {
 		"id":      fmt.Sprintf("anigravity-%d", time.Now().UnixMilli()),
 		"object":  "chat.completion",
 		"created": time.Now().Unix(),
-		"model":   "anigravity",
+		"model":   modelID,
 	}
 
 	msg := map[string]interface{}{
@@ -827,23 +836,28 @@ func handleAnigravityNonStreaming(w http.ResponseWriter, resp *http.Response) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(openaiResp)
 
-	// Log the request
-	var logConnID, logConnName string
-	db.DB.QueryRow("SELECT id, COALESCE(email, name, '') FROM provider_connections WHERE provider_id='builtin-anigravity' AND is_active=1 LIMIT 1").Scan(&logConnID, &logConnName)
-	if logConnName == "" {
-		logConnName = "anigravity-connection"
-	}
+	// Log the request accurately with actual connection email/name and model
 	promptTokens, completionTokens := 0, 0
 	if geminiResp.UsageMetadata != nil {
 		promptTokens = geminiResp.UsageMetadata.PromptTokenCount
 		completionTokens = geminiResp.UsageMetadata.CandidatesTokenCount
 	}
-	logProxyRequest("builtin-anigravity", "Anigravity CLI", "anigravity", logConnID, logConnName, "", "",
-		200, promptTokens, completionTokens, 0, "", nil)
+	logProxyRequest(providerID, providerName, modelID, keyID, keyName, "", "",
+		200, promptTokens, completionTokens, latencyMs, "", nil)
+	TrafficLog(TrafficEntry{
+		Model:        modelID,
+		Provider:     providerName,
+		StatusCode:   200,
+		LatencyMs:    latencyMs,
+		CompressMode: "off",
+		IsStream:     false,
+		TokensIn:     promptTokens,
+		TokensOut:    completionTokens,
+	})
 }
 
-// handleAnigravityStreaming converts Gemini SSE to OpenAI SSE format
-func handleAnigravityStreaming(w http.ResponseWriter, resp *http.Response) {
+// handleAnigravityStreaming converts Gemini SSE to OpenAI SSE format and logs it
+func handleAnigravityStreaming(w http.ResponseWriter, resp *http.Response, providerID, providerName, modelID, keyID, keyName string, startTime time.Time) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -1016,7 +1030,7 @@ func handleAnigravityStreaming(w http.ResponseWriter, resp *http.Response) {
 				"id":      fmt.Sprintf("anigravity-%d", time.Now().UnixMilli()),
 				"object":  "chat.completion.chunk",
 				"created": time.Now().Unix(),
-				"model":   "anigravity",
+				"model":   modelID,
 				"choices": []map[string]interface{}{
 					{
 						"index":         0,
@@ -1047,6 +1061,26 @@ func handleAnigravityStreaming(w http.ResponseWriter, resp *http.Response) {
 
 	fmt.Fprintf(w, "data: [DONE]\n\n")
 	flusher.Flush()
+
+	// Log the streaming request
+	promptTokens, completionTokens := 0, 0
+	if lastUsage != nil {
+		promptTokens = lastUsage.PromptTokenCount
+		completionTokens = lastUsage.CandidatesTokenCount
+	}
+	latencyMs := time.Since(startTime).Milliseconds()
+	logProxyRequest(providerID, providerName, modelID, keyID, keyName, "", "",
+		200, promptTokens, completionTokens, latencyMs, "", nil)
+	TrafficLog(TrafficEntry{
+		Model:        modelID,
+		Provider:     providerName,
+		StatusCode:   200,
+		LatencyMs:    latencyMs,
+		CompressMode: "off",
+		IsStream:     true,
+		TokensIn:     promptTokens,
+		TokensOut:    completionTokens,
+	})
 }
 
 // mapGeminiFinishReason maps Gemini finish reasons to OpenAI format
