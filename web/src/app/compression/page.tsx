@@ -193,22 +193,32 @@ export default function CompressionPage() {
           const totalAfter = s.total_after || 0;
           const pct = Math.round(s.saved_percent || 0);
           return (
-            <div className="grid grid-cols-3 gap-3">
-              <div className="bg-card border border-border rounded-xl p-4 text-center">
-                <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Before</p>
-                <p className="font-mono text-xl font-bold text-foreground">{fmtTokens(totalOrig)}</p>
-                <p className="text-[10px] text-muted-foreground">tokens</p>
+            <div className="flex flex-col gap-1.5">
+              <div className="grid grid-cols-3 gap-3">
+                <div className="bg-card border border-border rounded-xl p-4 text-center">
+                  <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Before</p>
+                  <p className="font-mono text-xl font-bold text-foreground">{fmtTokens(totalOrig)}</p>
+                  <p className="text-[10px] text-muted-foreground">tokens</p>
+                </div>
+                <div className="bg-card border border-border rounded-xl p-4 text-center">
+                  <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">After</p>
+                  <p className="font-mono text-xl font-bold text-foreground">{fmtTokens(totalAfter)}</p>
+                  <p className="text-[10px] text-muted-foreground">tokens</p>
+                </div>
+                <div className="bg-emerald-500/[0.06] border border-emerald-500/20 rounded-xl p-4 text-center">
+                  <p className="text-[10px] font-semibold text-emerald-600 uppercase tracking-wider mb-1">Saved</p>
+                  <p className="font-mono text-xl font-bold text-emerald-600">{fmtTokens(totalSaved)}</p>
+                  <p className="text-[10px] text-emerald-600">{pct}%</p>
+                </div>
               </div>
-              <div className="bg-card border border-border rounded-xl p-4 text-center">
-                <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">After</p>
-                <p className="font-mono text-xl font-bold text-foreground">{fmtTokens(totalAfter)}</p>
-                <p className="text-[10px] text-muted-foreground">tokens</p>
-              </div>
-              <div className="bg-emerald-500/[0.06] border border-emerald-500/20 rounded-xl p-4 text-center">
-                <p className="text-[10px] font-semibold text-emerald-600 uppercase tracking-wider mb-1">Saved</p>
-                <p className="font-mono text-xl font-bold text-emerald-600">{fmtTokens(totalSaved)}</p>
-                <p className="text-[10px] text-emerald-600">{pct}%</p>
-              </div>
+              {/*
+                Compression only measures byte sizes, so these token figures are
+                derived from bytes rather than tokenized. Labelled so they are not
+                mistaken for provider-reported usage.
+              */}
+              <p className="text-[10px] text-muted-foreground text-center">
+                Token counts are byte-derived estimates, not provider-reported usage.
+              </p>
             </div>
           );
         })()}

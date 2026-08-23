@@ -7,8 +7,47 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 )
+
+// CleanToolIDForAnthropic sanitizes a tool call ID for Anthropic API compatibility.
+// Anthropic requires tool IDs to match ^[a-zA-Z0-9_-]{1,64}$.
+// Gemini/Anigravity embeds thought signatures in format: call_<ts>_<idx>___ts___<base64_sig>
+// This strips the ___ts___ suffix, removes invalid chars, and clamps to 64 chars.
+func CleanToolIDForAnthropic(id string) string {
+	if id == "" {
+		return "tool_" + genShortID()
+	}
+
+	// Strip ___ts___ thought signature suffix (Gemini/Anigravity)
+	if idx := strings.Index(id, "___ts___"); idx != -1 {
+		id = id[:idx]
+	}
+
+	// Remove any non-alphanumeric chars except _ and -
+	re := regexp.MustCompile(`[^a-zA-Z0-9_-]`)
+	id = re.ReplaceAllString(id, "")
+
+	// If empty after cleaning, generate a short ID
+	if id == "" {
+		return "tool_" + genShortID()
+	}
+
+	// Clamp to 64 chars
+	if len(id) > 64 {
+		id = id[:64]
+	}
+
+	return id
+}
+
+// genShortID generates a short alphanumeric ID for fallback tool IDs.
+func genShortID() string {
+	b := make([]byte, 8)
+	rand.Read(b)
+	return hex.EncodeToString(b)
+}
 
 // Format represents an API format type
 type Format string
@@ -81,6 +120,9 @@ func AnthropicToOpenAIRequest(body map[string]interface{}) (map[string]interface
 	}
 	if topP, ok := body["top_p"].(float64); ok {
 		result["top_p"] = topP
+	}
+	if topK, ok := body["top_k"].(float64); ok {
+		result["top_k"] = int(topK)
 	}
 	if stream, ok := body["stream"].(bool); ok {
 		result["stream"] = stream
@@ -235,9 +277,9 @@ func convertAnthropicUserMessage(msg map[string]interface{}, content interface{}
 				}
 
 				toolMsg := map[string]interface{}{
-					"role":       "tool",
+					"role":         "tool",
 					"tool_call_id": toolCallID,
-					"content":    toolContent,
+					"content":      toolContent,
 				}
 				if isError {
 					toolMsg["content"] = "[ERROR] " + toolContent
@@ -513,18 +555,18 @@ func OpenAIToAnthropicResponse(openaiResp map[string]interface{}) map[string]int
 					}
 				}
 
-					// Reasoning / thinking summary (OpenAI-style reasoning content)
-					if reasoning, ok := message["reasoning"].(string); ok && reasoning != "" {
-						contentBlocks = append(contentBlocks, map[string]interface{}{
-							"type": "thinking",
-							"thinking": reasoning,
-						})
-					}
+				// Reasoning / thinking summary (OpenAI-style reasoning content)
+				if reasoning, ok := message["reasoning"].(string); ok && reasoning != "" {
+					contentBlocks = append(contentBlocks, map[string]interface{}{
+						"type":     "thinking",
+						"thinking": reasoning,
+					})
+				}
 
-					if len(contentBlocks) == 0 {
-						contentBlocks = []interface{}{}
-					}
-					result["content"] = contentBlocks
+				if len(contentBlocks) == 0 {
+					contentBlocks = []interface{}{}
+				}
+				result["content"] = contentBlocks
 
 				// Stop reason
 				finishReason, _ := choice["finish_reason"].(string)
@@ -569,6 +611,209 @@ func genID() string {
 	b := make([]byte, 16)
 	rand.Read(b)
 	return "msg_" + hex.EncodeToString(b)
+}
+
+// OpenAIToAnthropicMessages converts OpenAI-format messages to Anthropic format.
+// This handles:
+//   - role:"assistant" with tool_calls → content blocks with tool_use
+//   - role:"tool" → role:"user" with tool_result content blocks
+//   - Consecutive role:"tool" messages merged into single role:"user" turn
+//   - Consecutive same-role messages merged per Anthropic requirements
+//   - Tool call IDs sanitized via CleanToolIDForAnthropic
+func OpenAIToAnthropicMessages(openaiMessages []interface{}) []map[string]interface{} {
+	if len(openaiMessages) == 0 {
+		return nil
+	}
+
+	var result []map[string]interface{}
+
+	for _, m := range openaiMessages {
+		msg, ok := m.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		role, _ := msg["role"].(string)
+
+		switch role {
+		case "system":
+			// System messages are handled separately by the caller
+			continue
+
+		case "assistant":
+			anthMsg := convertOpenAIAssistantToAnthropic(msg)
+			result = appendOrMerge(result, anthMsg)
+
+		case "tool":
+			// OpenAI role:"tool" → Anthropic role:"user" with tool_result blocks
+			toolResult := convertOpenAIToolResultToAnthropic(msg)
+			result = appendOrMerge(result, toolResult)
+
+		case "user":
+			content, _ := msg["content"]
+			anthMsg := map[string]interface{}{
+				"role":    "user",
+				"content": content,
+			}
+			// Preserve cache_control if present
+			if cc, ok := msg["cache_control"]; ok {
+				anthMsg["cache_control"] = cc
+			}
+			result = appendOrMerge(result, anthMsg)
+
+		default:
+			// Pass through unknown roles
+			result = appendOrMerge(result, msg)
+		}
+	}
+
+	return result
+}
+
+// convertOpenAIAssistantToAnthropic converts an OpenAI assistant message to Anthropic format.
+// If the message has tool_calls, they become tool_use content blocks.
+func convertOpenAIAssistantToAnthropic(msg map[string]interface{}) map[string]interface{} {
+	anthMsg := map[string]interface{}{
+		"role": "assistant",
+	}
+
+	toolCalls, hasToolCalls := msg["tool_calls"].([]interface{})
+	content, _ := msg["content"].(string)
+
+	if !hasToolCalls || len(toolCalls) == 0 {
+		// No tool calls — simple text content
+		anthMsg["content"] = content
+		return anthMsg
+	}
+
+	// Build content blocks array
+	var blocks []interface{}
+
+	// Add text block if content exists
+	if content != "" {
+		blocks = append(blocks, map[string]interface{}{
+			"type": "text",
+			"text": content,
+		})
+	}
+
+	// Convert each tool_call to tool_use block
+	for _, tc := range toolCalls {
+		tcMap, ok := tc.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		fn, ok := tcMap["function"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		toolID, _ := tcMap["id"].(string)
+		toolName, _ := fn["name"].(string)
+		argsStr, _ := fn["arguments"].(string)
+
+		// Parse arguments JSON string into map
+		var input map[string]interface{}
+		if argsStr != "" {
+			json.Unmarshal([]byte(argsStr), &input)
+		}
+		if input == nil {
+			input = map[string]interface{}{}
+		}
+
+		blocks = append(blocks, map[string]interface{}{
+			"type":  "tool_use",
+			"id":    CleanToolIDForAnthropic(toolID),
+			"name":  toolName,
+			"input": input,
+		})
+	}
+
+	if len(blocks) == 0 {
+		anthMsg["content"] = nil
+	} else {
+		anthMsg["content"] = blocks
+	}
+
+	return anthMsg
+}
+
+// convertOpenAIToolResultToAnthropic converts an OpenAI role:"tool" message
+// to Anthropic role:"user" with tool_result content block.
+func convertOpenAIToolResultToAnthropic(msg map[string]interface{}) map[string]interface{} {
+	toolCallID, _ := msg["tool_call_id"].(string)
+	content, _ := msg["content"].(string)
+
+	return map[string]interface{}{
+		"role": "user",
+		"content": []interface{}{
+			map[string]interface{}{
+				"type":        "tool_result",
+				"tool_use_id": CleanToolIDForAnthropic(toolCallID),
+				"content":     content,
+			},
+		},
+	}
+}
+
+// appendOrMerge appends a message to the result slice, merging with the last message
+// if they have the same role (Anthropic requires strict user/assistant alternation).
+// Consecutive "user" messages get their content blocks merged.
+func appendOrMerge(result []map[string]interface{}, msg map[string]interface{}) []map[string]interface{} {
+	if len(result) == 0 {
+		return append(result, msg)
+	}
+
+	last := result[len(result)-1]
+	lastRole, _ := last["role"].(string)
+	msgRole, _ := msg["role"].(string)
+
+	if lastRole != msgRole {
+		return append(result, msg)
+	}
+
+	// Same role — merge content blocks
+	lastContent := normalizeToBlocks(last["content"])
+	msgContent := normalizeToBlocks(msg["content"])
+
+	merged := append(lastContent, msgContent...)
+	result[len(result)-1] = map[string]interface{}{
+		"role":    msgRole,
+		"content": merged,
+	}
+
+	return result
+}
+
+// normalizeToBlocks converts content to a slice of content blocks.
+// String content becomes [{"type":"text","text":s}].
+// Slice content is returned as-is.
+// Nil/empty becomes empty slice.
+func normalizeToBlocks(content interface{}) []interface{} {
+	if content == nil {
+		return nil
+	}
+
+	switch c := content.(type) {
+	case string:
+		if c == "" {
+			return nil
+		}
+		return []interface{}{
+			map[string]interface{}{
+				"type": "text",
+				"text": c,
+			},
+		}
+	case []interface{}:
+		return c
+	default:
+		return []interface{}{
+			map[string]interface{}{
+				"type": "text",
+				"text": fmt.Sprintf("%v", c),
+			},
+		}
+	}
 }
 
 // AnthropicToGeminiRequest converts an Anthropic messages request to Gemini format

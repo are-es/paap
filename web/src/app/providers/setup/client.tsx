@@ -120,6 +120,31 @@ export function ProviderSetupClient() {
               }}
             />
           </label>
+          {/*
+            Billing mode decides whether requests through this provider are
+            charged per token at all. OAuth/CLI session providers (Anigravity,
+            Codex) are subscription-billed, so per-token cost must be 0 — pricing
+            them per token is what inflated historical spend.
+          */}
+          <label className="flex items-center gap-2">
+            <span className="text-[11px] text-muted-foreground font-medium">Billing</span>
+            <select
+              className="text-[11px] font-mono bg-muted/50 border border-border rounded px-2 py-1 text-foreground cursor-pointer"
+              value={provider?.billing_mode ?? "per_token"}
+              onChange={(e) => {
+                api.updateProvider(providerId, { billing_mode: e.target.value })
+                  .then(() => {
+                    queryClient.invalidateQueries({ queryKey: ["provider", providerId] });
+                    queryClient.invalidateQueries({ queryKey: ["providers"] });
+                  });
+              }}
+              title="per_token: charged per token. subscription: OAuth/CLI session, no per-token charge. free: no charge."
+            >
+              <option value="per_token">per token</option>
+              <option value="subscription">subscription</option>
+              <option value="free">free</option>
+            </select>
+          </label>
         </div>
       </div>
 

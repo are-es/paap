@@ -386,11 +386,16 @@ func handleCodexProxy(w http.ResponseWriter, r *http.Request, providerID, keyVal
 		writeError(w, 400, "invalid request body")
 		return
 	}
-	handleCodexProxyBody(w, r, rawBody, keyValue, baseURL, "", "builtin-openai-codex", "OpenAI Codex", "", "")
+	clientKey := ""
+	if k := r.Context().Value("gateway_key_name"); k != nil {
+		clientKey, _ = k.(string)
+	}
+	reqDump := BeginRequestDump(r.Method, r.URL.Path, clientKey, rawBody)
+	handleCodexProxyBody(w, r, rawBody, keyValue, baseURL, "", "builtin-openai-codex", "OpenAI Codex", "", "", reqDump)
 }
 
 // handleCodexProxyBody forwards a request body already parsed by the main router.
-func handleCodexProxyBody(w http.ResponseWriter, r *http.Request, rawBody map[string]interface{}, keyValue, baseURL, accountID, providerID, providerName, keyID, keyName string) {
+func handleCodexProxyBody(w http.ResponseWriter, r *http.Request, rawBody map[string]interface{}, keyValue, baseURL, accountID, providerID, providerName, keyID, keyName string, reqDump *RequestDump) {
 	startTime := time.Now()
 	messages, _ := rawBody["messages"].([]interface{})
 	if len(messages) == 0 {
@@ -406,12 +411,15 @@ func handleCodexProxyBody(w http.ResponseWriter, r *http.Request, rawBody map[st
 		writeError(w, 400, "failed to translate request: "+err.Error())
 		return
 	}
+	// Apply client sampling params (OpenAI-native passthrough)
+	applyClientSampling(rawBody, reqBody, codexSamplingMappings)
 	bodyBytes, err := json.Marshal(reqBody)
 	if err != nil {
 		writeError(w, 500, "failed to marshal request body")
 		return
 	}
 	upstreamURL := strings.TrimRight(baseURL, "/") + "/responses"
+	reqDump.SetUpstream(providerName, upstreamURL, reqBody)
 	req, err := http.NewRequest("POST", upstreamURL, bytes.NewReader(bodyBytes))
 	if err != nil {
 		writeError(w, 500, "failed to create upstream request")
@@ -444,13 +452,15 @@ func handleCodexProxyBody(w http.ResponseWriter, r *http.Request, rawBody map[st
 		return
 	}
 	if isStream {
-		tIn, tOut := handleCodexStreamingResponse(w, resp, model)
+		counts := handleCodexStreamingResponse(w, resp, model)
 		latencyMs := time.Since(startTime).Milliseconds()
-		logProxyRequest(providerID, providerName, model, keyID, keyName, "", "", 200, tIn, tOut, latencyMs, "", nil)
+		logProxyRequestSplit(providerID, providerName, model, keyID, keyName, "", "", 200, counts, latencyMs, "", nil, "", "", 0, 0)
+		reqDump.Finish(200, latencyMs, counts.TotalIn(), counts.TotalOut(), nil)
 	} else {
-		tIn, tOut := handleCodexNonStreamingResponse(w, resp, model)
+		counts := handleCodexNonStreamingResponse(w, resp, model)
 		latencyMs := time.Since(startTime).Milliseconds()
-		logProxyRequest(providerID, providerName, model, keyID, keyName, "", "", 200, tIn, tOut, latencyMs, "", nil)
+		logProxyRequestSplit(providerID, providerName, model, keyID, keyName, "", "", 200, counts, latencyMs, "", nil, "", "", 0, 0)
+		reqDump.Finish(200, latencyMs, counts.TotalIn(), counts.TotalOut(), nil)
 	}
 }
 
@@ -475,6 +485,8 @@ func handleCodexProxyWithUpstream(w http.ResponseWriter, r *http.Request, provid
 		writeError(w, 400, "failed to translate request: "+err.Error())
 		return
 	}
+	// Apply client sampling params (OpenAI-native passthrough)
+	applyClientSampling(rawBody, reqBody, codexSamplingMappings)
 	bodyBytes, err := json.Marshal(reqBody)
 	if err != nil {
 		writeError(w, 500, "failed to marshal request body")
@@ -515,12 +527,14 @@ func handleCodexProxyWithUpstream(w http.ResponseWriter, r *http.Request, provid
 	}
 }
 
-func handleCodexNonStreamingResponse(w http.ResponseWriter, resp *http.Response, model string) (int, int) {
+// handleCodexNonStreamingResponse collects the Responses-API SSE stream and
+// emits one OpenAI chat completion. Returns the token breakdown for logging.
+func handleCodexNonStreamingResponse(w http.ResponseWriter, resp *http.Response, model string) tokenCounts {
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 256*1024), 256*1024)
 	var outputText strings.Builder
 	var reasoningText strings.Builder
-	var totalInputTokens, totalOutputTokens int
+	var counts tokenCounts
 	var toolCalls []interface{}
 	fcName := ""
 	fcArgs := ""
@@ -572,12 +586,11 @@ func handleCodexNonStreamingResponse(w http.ResponseWriter, resp *http.Response,
 		case "response.completed", "response.incomplete":
 			if respData, ok := event["response"].(map[string]interface{}); ok {
 				if usage, ok := respData["usage"].(map[string]interface{}); ok {
-					if v, ok := usage["input_tokens"].(float64); ok {
-						totalInputTokens = int(v)
-					}
-					if v, ok := usage["output_tokens"].(float64); ok {
-						totalOutputTokens = int(v)
-					}
+					// Responses API reports cached prompt tokens in
+					// input_tokens_details.cached_tokens and reasoning tokens
+					// in output_tokens_details.reasoning_tokens; extractUsage
+					// splits both out.
+					extractUsage(usage, &counts)
 				}
 				if evtType == "response.incomplete" {
 					responseIncompleted = true
@@ -598,6 +611,10 @@ func handleCodexNonStreamingResponse(w http.ResponseWriter, resp *http.Response,
 	} else if len(toolCalls) > 0 {
 		finishReason = "tool_calls"
 	}
+	// Client-facing usage keeps the flat OpenAI shape: prompt_tokens is the
+	// whole context window, completion_tokens includes reasoning.
+	totalInputTokens := counts.TotalIn()
+	totalOutputTokens := counts.TotalOut()
 	usage := map[string]interface{}{
 		"prompt_tokens":     totalInputTokens,
 		"completion_tokens": totalOutputTokens,
@@ -630,7 +647,7 @@ func handleCodexNonStreamingResponse(w http.ResponseWriter, resp *http.Response,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(chatResp)
-	return totalInputTokens, totalOutputTokens
+	return counts
 }
 
 // SSE chunk helpers — avoids Go composite literal type inference issues
@@ -668,7 +685,9 @@ func makeChatChunkDeltaWithUsage(chatID, model string, delta map[string]interfac
 	}
 }
 
-func handleCodexStreamingResponse(w http.ResponseWriter, resp *http.Response, model string) (int, int) {
+// handleCodexStreamingResponse translates the Responses-API SSE stream into
+// OpenAI chat chunks. Returns the token breakdown for logging.
+func handleCodexStreamingResponse(w http.ResponseWriter, resp *http.Response, model string) tokenCounts {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -678,7 +697,7 @@ func handleCodexStreamingResponse(w http.ResponseWriter, resp *http.Response, mo
 	scanner.Buffer(make([]byte, 256*1024), 256*1024)
 	chatID := fmt.Sprintf("chatcmpl-%d", time.Now().UnixNano())
 	roleSent := false
-	var totalInputTokens, totalOutputTokens int
+	var counts tokenCounts
 	fcName := ""
 	fcItemID := ""
 	fcCallID := ""
@@ -819,12 +838,10 @@ func handleCodexStreamingResponse(w http.ResponseWriter, resp *http.Response, mo
 		case "response.completed", "response.incomplete":
 			if resp, ok := event["response"].(map[string]interface{}); ok {
 				if usage, ok := resp["usage"].(map[string]interface{}); ok {
-					if v, ok := usage["input_tokens"].(float64); ok {
-						totalInputTokens = int(v)
-					}
-					if v, ok := usage["output_tokens"].(float64); ok {
-						totalOutputTokens = int(v)
-					}
+					// Same split as the non-streaming path: cached prompt
+					// tokens and reasoning tokens are pulled out of the
+					// Responses-API details objects.
+					extractUsage(usage, &counts)
 				}
 			}
 			finishReason := "stop"
@@ -842,6 +859,9 @@ func handleCodexStreamingResponse(w http.ResponseWriter, resp *http.Response, mo
 			if sawToolCall && finishReason == "stop" {
 				finishReason = "tool_calls"
 			}
+			// Client-facing usage stays flat OpenAI-shaped.
+			totalInputTokens := counts.TotalIn()
+			totalOutputTokens := counts.TotalOut()
 			sendCodexSSE(w, makeChatChunkDeltaWithUsage(chatID, model, map[string]interface{}{}, finishReason, map[string]interface{}{
 				"prompt_tokens":     totalInputTokens,
 				"completion_tokens": totalOutputTokens,
@@ -853,7 +873,7 @@ func handleCodexStreamingResponse(w http.ResponseWriter, resp *http.Response, mo
 			}
 		}
 	}
-	return totalInputTokens, totalOutputTokens
+	return counts
 }
 
 func sendCodexSSE(w http.ResponseWriter, data interface{}, flusher http.Flusher, canFlush bool) {

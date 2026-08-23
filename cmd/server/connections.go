@@ -137,12 +137,15 @@ func connectionToggle(w http.ResponseWriter, r *http.Request, providerID, connID
 		newVal = 0
 	}
 	db.DB.Exec("UPDATE provider_connections SET is_active=?, updated_at=? WHERE id=? AND provider_id=?", newVal, time.Now().Unix(), connID, providerID)
+	if newVal == 1 {
+		db.DB.Exec("UPDATE provider_connections SET fail_count=0, last_error='', test_status='connected' WHERE id=? AND provider_id=?", connID, providerID)
+	}
 	writeJSON(w, map[string]interface{}{"id": connID, "is_active": newVal == 1})
 }
 
 // connectionEnableAll activates all connections for a provider
 func connectionEnableAll(w http.ResponseWriter, r *http.Request, providerID string) {
-	result, err := db.DB.Exec("UPDATE provider_connections SET is_active=1, updated_at=? WHERE provider_id=? AND is_active=0", time.Now().Unix(), providerID)
+	result, err := db.DB.Exec("UPDATE provider_connections SET is_active=1, fail_count=0, last_error='', test_status='connected', updated_at=? WHERE provider_id=? AND is_active=0", time.Now().Unix(), providerID)
 	if err != nil {
 		writeError(w, 500, err.Error())
 		return

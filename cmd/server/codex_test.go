@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -1330,3 +1331,37 @@ func TestHandleCodexStreaming_NonFunctionOutputItemDoneBeforeToolCall(t *testing
 		t.Errorf("finish_reason = %q, want 'tool_calls'", finReason)
 	}
 }
+
+func TestCodexSampling_NoTemperatureForwarded(t *testing.T) {
+	var receivedBody map[string]interface{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&receivedBody)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		w.Write([]byte(`{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+	}))
+	defer srv.Close()
+
+	body := map[string]interface{}{
+		"model":       "gpt-5.6-luna",
+		"temperature": 0.7,
+		"top_p":       0.9,
+		"messages": []interface{}{
+			map[string]interface{}{"role": "user", "content": "hi"},
+		},
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handleCodexProxyWithUpstream(w, req, "builtin-openai-codex", "fake-token", srv.URL+"/responses")
+
+	if _, hasTemp := receivedBody["temperature"]; hasTemp {
+		t.Errorf("expected 'temperature' to NOT be forwarded to Codex upstream, but found: %v", receivedBody["temperature"])
+	}
+	if topP, ok := receivedBody["top_p"].(float64); !ok || topP != 0.9 {
+		t.Errorf("expected top_p to be forwarded, got: %v", receivedBody["top_p"])
+	}
+}
+

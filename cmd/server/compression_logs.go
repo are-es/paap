@@ -21,6 +21,20 @@ type compressionLogEntry struct {
 	OriginalTokens   int     `json:"original_tokens"`
 	CompressedTokens int     `json:"compressed_tokens"`
 	SavedTokens      int     `json:"saved_tokens"`
+	// Estimated marks the token figures as byte-derived heuristics rather than
+	// provider-reported counts, so the dashboard can label them honestly.
+	Estimated bool `json:"estimated"`
+}
+
+// estimateTokensFromBytes converts a stored byte size to an approximate token
+// count. Only the byte size survives in compression_logs, so the original text
+// cannot be re-tokenized; this uses the ASCII ratio and is always reported with
+// Estimated=true.
+func estimateTokensFromBytes(n int) int {
+	if n <= 0 {
+		return 0
+	}
+	return n / 4
 }
 
 // compressionLogsHandler handles GET /api/compression/logs.
@@ -102,9 +116,13 @@ func compressionLogsHandler(w http.ResponseWriter, r *http.Request) {
 		e.OriginalSize = origBytes
 		e.CompressedSize = newBytes
 		e.SavedPercent = savedPct
-		e.OriginalTokens = origBytes / 4
-		e.CompressedTokens = newBytes / 4
+		// Token figures here are byte-derived estimates: only the compressed
+		// byte sizes were measured, the original text is no longer available to
+		// re-tokenize. Estimated=true tells the dashboard to label them.
+		e.OriginalTokens = estimateTokensFromBytes(origBytes)
+		e.CompressedTokens = estimateTokensFromBytes(newBytes)
 		e.SavedTokens = e.OriginalTokens - e.CompressedTokens
+		e.Estimated = true
 
 		entries = append(entries, e)
 	}

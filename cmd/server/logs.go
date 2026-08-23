@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/dolvin/paap/internal/db"
@@ -117,7 +116,10 @@ func logList(w http.ResponseWriter, r *http.Request) {
 		tokens_in, tokens_out, latency_ms, cost_usd,
 		COALESCE(compression_ratio,0), COALESCE(skills_used,'[]'),
 		COALESCE(error,''), COALESCE(proxy_used,''),
-		COALESCE(tool_used,''), COALESCE(original_model,'')
+		COALESCE(tool_used,''), COALESCE(original_model,''),
+		COALESCE(tokens_in_fresh,0), COALESCE(tokens_cache_read,0),
+		COALESCE(tokens_cache_write,0), COALESCE(tokens_reasoning,0),
+		COALESCE(tokens_estimated,0), COALESCE(pricing_source,'')
 		FROM logs` + where + " ORDER BY timestamp DESC LIMIT ? OFFSET ?"
 	args = append(args, perPage, offset)
 
@@ -137,11 +139,16 @@ func logList(w http.ResponseWriter, r *http.Request) {
 		var toolUsed, originalModel string
 		var statusCode *int
 		var cost, compRatio float64
+		var tokensInFresh, tokensCacheRead, tokensCacheWrite, tokensReasoning int
+		var tokensEstimated int
+		var pricingSource string
 
 		rows.Scan(&id, &ts, &providerID, &providerName, &modelID, &keyID, &keyName,
 			&groupName, &framework, &statusCode, &raceStatus, &raceID,
 			&tokensIn, &tokensOut, &latency, &cost, &compRatio, &skillsUsed,
-			&errMsg, &proxyUsed, &toolUsed, &originalModel)
+			&errMsg, &proxyUsed, &toolUsed, &originalModel,
+			&tokensInFresh, &tokensCacheRead, &tokensCacheWrite, &tokensReasoning,
+			&tokensEstimated, &pricingSource)
 
 		list = append(list, map[string]interface{}{
 			"id": id, "timestamp": ts,
@@ -154,6 +161,16 @@ func logList(w http.ResponseWriter, r *http.Request) {
 			"compression_ratio": compRatio, "skills_used": skillsUsed,
 			"error": errMsg, "proxy_used": proxyUsed,
 			"tool_used": toolUsed, "original_model": originalModel,
+			// Token split: tokens_in is the context-window sum of the three input
+			// figures. Billing uses the split, which is priced at different rates.
+			"tokens_in_fresh":    tokensInFresh,
+			"tokens_cache_read":  tokensCacheRead,
+			"tokens_cache_write": tokensCacheWrite,
+			"tokens_reasoning":   tokensReasoning,
+			"tokens_estimated":   tokensEstimated == 1,
+			// pricing_source: exact|base|global|prefix|free|subscription|missing|legacy.
+			// 'missing' means no price row matched — cost_usd is 0, not a guess.
+			"pricing_source": pricingSource,
 		})
 	}
 	if list == nil {
@@ -453,120 +470,75 @@ func logExport(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(list)
 }
 
-// ── Model pricing (per 1M tokens) ───────────────────────────
-// Pricing loaded from model_pricing table at startup + cached.
-// Fallback hardcoded entries for models not in DB.
-
-var modelPricingDB map[string][2]float64
-var modelPricingOnce sync.Once
-
-func loadModelPricingFromDB() {
-	modelPricingOnce.Do(func() {
-		modelPricingDB = map[string][2]float64{}
-		rows, err := db.DB.Query("SELECT model_id, input_per_1m, output_per_1m FROM model_pricing")
-		if err != nil {
-			log.Printf("[PAAP] Failed to load model_pricing: %v", err)
-			return
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var id string
-			var inp, outp float64
-			rows.Scan(&id, &inp, &outp)
-			modelPricingDB[strings.ToLower(id)] = [2]float64{inp, outp}
-		}
-		log.Printf("[PAAP] Loaded %d model pricing entries from DB", len(modelPricingDB))
-	})
-}
-
-// Fallback pricing for models not in DB
-var modelPricingFallback = map[string][2]float64{
-	"mimo-v2.5":                  {0.14, 0.28},
-	"mimo-v2.5-pro":              {0.435, 0.87},
-	"deepseek-v4-flash":          {0.14, 0.28},
-	"deepseek-v4-pro":            {0.435, 0.87},
-	"minimax-m3":                 {0.51, 2.04},
-	"gemini-2.5-flash":           {0.15, 0.60},
-	"gemini-2.5-pro":             {1.25, 10.00},
-	"muse-spark-1.1":             {1.25, 4.25},
-	"deepseek/deepseek-v4-flash": {0.098, 0.196},
-	"deepseek/deepseek-v4-pro":   {0.435, 0.87},
-	"moonshotai/kimi-k2.6":       {0.61, 3.07},
-	"z-ai/glm-5.1":               {0.88, 2.80},
-	"deepseek/deepseek-v3.1":     {0.19, 0.71},
-	"deepseek/deepseek-v3.2":     {0.217, 0.326},
-	"minimax/minimax-m2.5":       {0.14, 0.81},
-	"qwen/qwen3.5-397b-a17b":     {0.40, 2.65},
-	"z-ai/glm-5":                 {0.48, 1.54},
-	"z-ai/glm-5.2":               {1.26, 3.96},
-}
-
-const defaultInputPer1M = 1.0
-const defaultOutputPer1M = 3.0
-
-func calculateCost(modelID string, tokensIn, tokensOut int) float64 {
-	loadModelPricingFromDB()
-	lower := strings.ToLower(modelID)
-
-	// 1) Exact match in DB
-	if pricing, ok := modelPricingDB[lower]; ok {
-		return (float64(tokensIn)/1_000_000)*pricing[0] + (float64(tokensOut)/1_000_000)*pricing[1]
-	}
-
-	// 2) Exact match in fallback
-	if pricing, ok := modelPricingFallback[modelID]; ok {
-		return (float64(tokensIn)/1_000_000)*pricing[0] + (float64(tokensOut)/1_000_000)*pricing[1]
-	}
-
-	// 3) Fuzzy match in DB — strip provider prefix, try base name
-	if parts := strings.SplitN(modelID, "/", 2); len(parts) == 2 {
-		baseName := strings.ToLower(parts[1])
-		if pricing, ok := modelPricingDB[baseName]; ok {
-			return (float64(tokensIn)/1_000_000)*pricing[0] + (float64(tokensOut)/1_000_000)*pricing[1]
-		}
-		// Also try full provider/model in DB
-		if pricing, ok := modelPricingDB[lower]; ok {
-			return (float64(tokensIn)/1_000_000)*pricing[0] + (float64(tokensOut)/1_000_000)*pricing[1]
-		}
-	}
-
-	// 4) Fuzzy match in DB — substring match
-	for dbID, pricing := range modelPricingDB {
-		if strings.Contains(lower, dbID) || strings.Contains(dbID, lower) {
-			return (float64(tokensIn)/1_000_000)*pricing[0] + (float64(tokensOut)/1_000_000)*pricing[1]
-		}
-	}
-
-	// 5) Free models
-	if strings.HasSuffix(modelID, ":free") || strings.HasPrefix(modelID, "@cf/") {
-		return 0
-	}
-
-	// 6) Default rate
-	return (float64(tokensIn)/1_000_000)*defaultInputPer1M + (float64(tokensOut)/1_000_000)*defaultOutputPer1M
-}
+// ── Model pricing ───────────────────────────────────────────
+// Pricing resolution lives in pricing.go: resolvePricing / calculateCost.
+// The old provider-blind lookup with a fabricated $1/$3 default rate was
+// removed — see .ares/token-billing/prd.md defects 1, 2 and 4.
 
 // ── Log writer — inserts log + updates usage_stats + cost_summary
 
+// logProxyRequest is the legacy call shape: a bare in/out token pair with no
+// cache or reasoning breakdown. Everything lands in InFresh.
 func logProxyRequest(providerID, providerName, modelID, keyID, keyName, groupName, proxyUsed string, statusCode, tokensIn, tokensOut int, latencyMs int64, errMsg string, responseBody []byte) {
-	logProxyRequestWithTool(providerID, providerName, modelID, keyID, keyName, groupName, proxyUsed, statusCode, tokensIn, tokensOut, latencyMs, errMsg, responseBody, "", "", 0, 0)
+	logProxyRequestSplit(providerID, providerName, modelID, keyID, keyName, groupName, proxyUsed,
+		statusCode, simpleTokens(tokensIn, tokensOut), latencyMs, errMsg, responseBody, "", "", 0, 0)
 }
 
+// logProxyRequestWithTool is the legacy tool-aware call shape.
 func logProxyRequestWithTool(providerID, providerName, modelID, keyID, keyName, groupName, proxyUsed string, statusCode, tokensIn, tokensOut int, latencyMs int64, errMsg string, responseBody []byte, toolUsed, originalModel string, tokensBefore, tokensSaved int) {
-	cost := calculateCost(modelID, tokensIn, tokensOut)
+	logProxyRequestSplit(providerID, providerName, modelID, keyID, keyName, groupName, proxyUsed,
+		statusCode, simpleTokens(tokensIn, tokensOut), latencyMs, errMsg, responseBody,
+		toolUsed, originalModel, tokensBefore, tokensSaved)
+}
 
-	// Log to file for debugging
-	LogResponse(statusCode, latencyMs, tokensIn, tokensOut, providerName, keyName, "", errMsg, 0, responseBody)
+// logProxyRequestSplit is the real writer. It takes the full token breakdown so
+// cache reads and reasoning tokens are priced at their own rates instead of
+// being folded into the input rate.
+//
+// tokens_in is stored as t.TotalIn() (the context-window figure the dashboard
+// and clients expect); billing uses the split columns.
+func logProxyRequestSplit(providerID, providerName, modelID, keyID, keyName, groupName, proxyUsed string,
+	statusCode int, t tokenCounts, latencyMs int64, errMsg string, responseBody []byte,
+	toolUsed, originalModel string, tokensBefore, tokensSaved int) {
 
-	// Insert into logs
-	// tokens_before = total original tokens (what provider got + what we saved)
-	tokensBefore = tokensIn + tokensSaved
-	_, err := db.DB.Exec(`INSERT INTO logs
-		(provider_id, provider_name, model_id, key_id, key_name, group_name, framework, status_code, tokens_in, tokens_out, latency_ms, cost_usd, error, proxy_used, tool_used, original_model, tokens_before, tokens_saved)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		providerID, providerName, modelID, keyID, keyName, groupName, "openai", statusCode, tokensIn, tokensOut, latencyMs, cost, errMsg, proxyUsed, toolUsed, originalModel, tokensBefore, tokensSaved)
+	cost, pricingSource := calculateCost(providerID, modelID, t)
+	tokensIn := t.TotalIn()
+	tokensOut := t.TotalOut()
+
+	estimated := 0
+	if t.Estimated {
+		estimated = 1
+	}
+	unpriced := 0
+	if pricingSource == pricingSourceMissing {
+		unpriced = 1
+	}
+
+	// tokens_before is the caller's measured pre-compression size. It is NOT
+	// derived from tokensIn: the provider's prompt_tokens includes tools, system
+	// scaffolding and template overhead that compression never saw, so the two
+	// are not comparable quantities.
+	res, err := db.DB.Exec(`INSERT INTO logs
+		(provider_id, provider_name, model_id, key_id, key_name, group_name, framework, status_code,
+		 tokens_in, tokens_out, latency_ms, cost_usd, error, proxy_used, tool_used, original_model,
+		 tokens_before, tokens_saved,
+		 tokens_in_fresh, tokens_cache_read, tokens_cache_write, tokens_reasoning,
+		 tokens_estimated, pricing_source)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		providerID, providerName, modelID, keyID, keyName, groupName, "openai", statusCode,
+		tokensIn, tokensOut, latencyMs, cost, errMsg, proxyUsed, toolUsed, originalModel,
+		tokensBefore, tokensSaved,
+		t.InFresh, t.CacheRead, t.CacheWrite, t.Reasoning,
+		estimated, pricingSource)
 	if err != nil {
 		log.Printf("Failed to log request: %v", err)
+	} else {
+		// Push the row to any live dashboard. Non-blocking: a stalled subscriber
+		// drops rows rather than delaying this proxied request.
+		id, _ := res.LastInsertId()
+		publishLogRow(id, providerID, providerName, modelID, keyID, keyName,
+			groupName, proxyUsed, statusCode, t, latencyMs, cost, errMsg,
+			toolUsed, originalModel, pricingSource, t.Estimated)
 	}
 
 	// Auto-clear: keep only newest 500 logs (cost_summary untouched)
@@ -587,8 +559,10 @@ func logProxyRequestWithTool(providerID, providerName, modelID, keyID, keyName, 
 		isError = 1
 	}
 	today := time.Now().UTC().Format("2006-01-02")
-	db.DB.Exec(`INSERT INTO usage_stats (date, provider_id, provider_name, model_id, request_count, success_count, error_count, tokens_in, tokens_out, total_cost_usd, avg_latency_ms)
-		VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
+	db.DB.Exec(`INSERT INTO usage_stats (date, provider_id, provider_name, model_id, request_count,
+			success_count, error_count, tokens_in, tokens_out, total_cost_usd, avg_latency_ms,
+			tokens_in_fresh, tokens_cache_read, tokens_cache_write, tokens_reasoning, unpriced_req_count)
+		VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(date, provider_id, model_id) DO UPDATE SET
 			request_count = request_count + 1,
 			success_count = success_count + excluded.success_count,
@@ -596,8 +570,14 @@ func logProxyRequestWithTool(providerID, providerName, modelID, keyID, keyName, 
 			tokens_in = tokens_in + excluded.tokens_in,
 			tokens_out = tokens_out + excluded.tokens_out,
 			total_cost_usd = total_cost_usd + excluded.total_cost_usd,
+			tokens_in_fresh = tokens_in_fresh + excluded.tokens_in_fresh,
+			tokens_cache_read = tokens_cache_read + excluded.tokens_cache_read,
+			tokens_cache_write = tokens_cache_write + excluded.tokens_cache_write,
+			tokens_reasoning = tokens_reasoning + excluded.tokens_reasoning,
+			unpriced_req_count = unpriced_req_count + excluded.unpriced_req_count,
 			avg_latency_ms = (avg_latency_ms * request_count + excluded.avg_latency_ms) / (request_count + 1)`,
-		today, providerID, providerName, modelID, isSuccess, isError, tokensIn, tokensOut, cost, latencyMs)
+		today, providerID, providerName, modelID, isSuccess, isError, tokensIn, tokensOut, cost, latencyMs,
+		t.InFresh, t.CacheRead, t.CacheWrite, t.Reasoning, unpriced)
 
 	// Update cost_summary (survives log clear — separate from logs table)
 	tx, txErr := db.DB.Begin()
@@ -613,13 +593,24 @@ func logProxyRequestWithTool(providerID, providerName, modelID, keyID, keyName, 
 			req_count = req_count + 1,
 			total_cost_usd = total_cost_usd + ?,
 			total_tokens_in = total_tokens_in + ?,
-			total_tokens_out = total_tokens_out + ?
+			total_tokens_out = total_tokens_out + ?,
+			total_tokens_in_fresh = total_tokens_in_fresh + ?,
+			total_tokens_cache_read = total_tokens_cache_read + ?,
+			total_tokens_cache_write = total_tokens_cache_write + ?,
+			total_tokens_reasoning = total_tokens_reasoning + ?,
+			unpriced_req_count = unpriced_req_count + ?
 			WHERE date = ? AND provider_id = ? AND model_id = ?`,
-			cost, tokensIn, tokensOut, today, providerID, modelID)
+			cost, tokensIn, tokensOut,
+			t.InFresh, t.CacheRead, t.CacheWrite, t.Reasoning, unpriced,
+			today, providerID, modelID)
 	} else {
-		tx.Exec(`INSERT INTO cost_summary (id, date, provider_id, provider_name, model_id, req_count, total_cost_usd, total_tokens_in, total_tokens_out)
-			VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)`,
-			genID(), today, providerID, providerName, modelID, cost, tokensIn, tokensOut)
+		tx.Exec(`INSERT INTO cost_summary (id, date, provider_id, provider_name, model_id, req_count,
+				total_cost_usd, total_tokens_in, total_tokens_out,
+				total_tokens_in_fresh, total_tokens_cache_read, total_tokens_cache_write,
+				total_tokens_reasoning, unpriced_req_count)
+			VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			genID(), today, providerID, providerName, modelID, cost, tokensIn, tokensOut,
+			t.InFresh, t.CacheRead, t.CacheWrite, t.Reasoning, unpriced)
 	}
 	if err := tx.Commit(); err != nil {
 		log.Printf("Failed to update cost_summary: %v", err)
@@ -634,10 +625,11 @@ func logRaceTask(raceID, groupName string, totalModels, totalTasks int, provider
 	if status == "winner" || status == "completed" {
 		statusCode = 200
 	}
+	raceCost, racePricingSource := calculateCost(provider, model, simpleTokens(tokensIn, tokensOut))
 	_, dbErr := db.DB.Exec(`INSERT INTO logs
-		(provider_id, provider_name, model_id, key_id, key_name, group_name, framework, status_code, race_status, race_id, tokens_in, tokens_out, latency_ms, cost_usd, error, proxy_used)
-		VALUES (?, ?, ?, '', ?, ?, 'race', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		provider, provider, model, keyName, groupName, statusCode, status, raceID, tokensIn, tokensOut, latencyMs, calculateCost(model, tokensIn, tokensOut), errMsg, proxyUsed)
+		(provider_id, provider_name, model_id, key_id, key_name, group_name, framework, status_code, race_status, race_id, tokens_in, tokens_out, latency_ms, cost_usd, error, proxy_used, tokens_in_fresh, pricing_source)
+		VALUES (?, ?, ?, '', ?, ?, 'race', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		provider, provider, model, keyName, groupName, statusCode, status, raceID, tokensIn, tokensOut, latencyMs, raceCost, errMsg, proxyUsed, tokensIn, racePricingSource)
 	if dbErr != nil {
 		log.Printf("Failed to log race task: %v", dbErr)
 	}

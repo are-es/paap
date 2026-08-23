@@ -520,7 +520,7 @@ func handleGroupRaceKeys(w http.ResponseWriter, r *http.Request, modelName, grou
 			var proxyUsed string
 			if proxyURL := getProviderProxy(t.providerID); proxyURL != "" {
 				proxyUsed = proxyURL
-				if transport, perr := makeProxyTransport(proxyURL); perr == nil {
+				if transport, perr := cachedProxyTransport(proxyURL); perr == nil {
 					client.Transport = transport
 				}
 			}
@@ -679,7 +679,7 @@ func handleGroupRoundRobinModel(w http.ResponseWriter, r *http.Request, groupNam
 		var proxyUsed string
 		if proxyURL := getProviderProxy(selected.providerID); proxyURL != "" {
 			proxyUsed = proxyURL
-			if transport, perr := makeProxyTransport(proxyURL); perr == nil {
+			if transport, perr := cachedProxyTransport(proxyURL); perr == nil {
 				client.Transport = transport
 			}
 		}
@@ -695,9 +695,14 @@ func handleGroupRoundRobinModel(w http.ResponseWriter, r *http.Request, groupNam
 
 		// Success — return response
 		if resp.StatusCode == 200 {
-			var tokensIn, tokensOut int
-			parseUsageJSON(respBody, &tokensIn, &tokensOut)
-			logProxyRequest(selected.providerID, selected.providerName, selected.modelID, keyID, keyName, groupName, proxyUsed, 200, tokensIn, tokensOut, latencyMs, "", nil)
+			// Keep the cached/reasoning split so cache reads are not billed at the
+			// full input rate.
+			var tc tokenCounts
+			parseUsageJSONSplit(respBody, &tc)
+			if tc.IsEmpty() {
+				parseUsageSSESplit(respBody, &tc)
+			}
+			logProxyRequestSplit(selected.providerID, selected.providerName, selected.modelID, keyID, keyName, groupName, proxyUsed, 200, tc, latencyMs, "", nil, "", "", 0, 0)
 			w.Header().Set("Content-Type", "application/json")
 			w.Write(respBody)
 			return
@@ -786,7 +791,7 @@ func handleGroupFailFirst(w http.ResponseWriter, r *http.Request, groupName stri
 		var proxyUsed string
 		if proxyURL := getProviderProxy(rt.providerID); proxyURL != "" {
 			proxyUsed = proxyURL
-			if transport, perr := makeProxyTransport(proxyURL); perr == nil {
+			if transport, perr := cachedProxyTransport(proxyURL); perr == nil {
 				client.Transport = transport
 			}
 		}
@@ -801,9 +806,14 @@ func handleGroupFailFirst(w http.ResponseWriter, r *http.Request, groupName stri
 		if resp.StatusCode == 200 {
 			respBody, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
-			var tokensIn, tokensOut int
-			parseUsageJSON(respBody, &tokensIn, &tokensOut)
-			logProxyRequest(rt.providerID, rt.providerName, rt.modelID, keyID, keyName, groupName, proxyUsed, 200, tokensIn, tokensOut, latencyMs, "", nil)
+			// Keep the cached/reasoning split so cache reads are not billed at the
+			// full input rate.
+			var tc tokenCounts
+			parseUsageJSONSplit(respBody, &tc)
+			if tc.IsEmpty() {
+				parseUsageSSESplit(respBody, &tc)
+			}
+			logProxyRequestSplit(rt.providerID, rt.providerName, rt.modelID, keyID, keyName, groupName, proxyUsed, 200, tc, latencyMs, "", nil, "", "", 0, 0)
 			log.Printf("[PAAP] Fail First '%s': success with %s/%s (%dms)", groupName, rt.providerName, rt.modelID, latencyMs)
 			w.Header().Set("Content-Type", "application/json")
 			w.Write(respBody)
@@ -930,7 +940,7 @@ func handleGroupRRRaceKeys(w http.ResponseWriter, r *http.Request, groupName str
 			var proxyUsed string
 			if proxyURL := getProviderProxy(selected.providerID); proxyURL != "" {
 				proxyUsed = proxyURL
-				if transport, perr := makeProxyTransport(proxyURL); perr == nil {
+				if transport, perr := cachedProxyTransport(proxyURL); perr == nil {
 					client.Transport = transport
 				}
 			}

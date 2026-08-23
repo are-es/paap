@@ -16,6 +16,7 @@ import (
 
 	"github.com/dolvin/paap/cmd/server/compression"
 	"github.com/dolvin/paap/internal/db"
+	"github.com/dolvin/paap/internal/translator"
 )
 
 // ── Round-robin counters for each provider ─────────────────
@@ -206,6 +207,7 @@ func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 // Main chat completions handler
 func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
+		LogEarlyError(r.Method, r.URL.Path, 405, 0, "method not allowed")
 		writeError(w, 405, "method not allowed")
 		return
 	}
@@ -217,6 +219,7 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 	// (tools, tool_choice, response_format, reasoning_effort, etc.)
 	var rawBody map[string]interface{}
 	if err := parseBody(r, &rawBody); err != nil {
+		LogEarlyError(r.Method, r.URL.Path, 400, time.Since(startTime).Milliseconds(), "invalid JSON request body")
 		writeError(w, 400, "invalid JSON request body")
 		return
 	}
@@ -226,16 +229,17 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 	isStream, _ := rawBody["stream"].(bool)
 
 	if modelName == "" || len(messages) == 0 {
+		LogEarlyError(r.Method, r.URL.Path, 400, time.Since(startTime).Milliseconds(), "model and messages are required")
 		writeError(w, 400, "model and messages are required")
 		return
 	}
 
-	// Log incoming request to file
+	// Begin per-request dump
 	clientKey := ""
 	if k := r.Context().Value("gateway_key_name"); k != nil {
 		clientKey, _ = k.(string)
 	}
-	LogRequest(r.Method, r.URL.Path, clientKey, rawBody)
+	reqDump := BeginRequestDump(r.Method, r.URL.Path, clientKey, rawBody)
 
 	// max_tokens: pass through from client, don't override
 
@@ -289,8 +293,10 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 					logCompressionEvent("tool", compressLevel.String(), r.OriginalSize, r.CompressedSize)
 				}
 			}
-			compressionTokensBefore = totalOrigBytes / 4
-			compressionTokensSaved = totalSavedBytes / 4
+			// Compression savings are byte-derived estimates, not measured token
+			// counts. They are stored separately from provider-reported usage.
+			compressionTokensBefore = estimateTokensFromBytes(totalOrigBytes)
+			compressionTokensSaved = estimateTokensFromBytes(totalSavedBytes)
 			addCompressionStats(int64(compressionTokensBefore), int64(compressionTokensSaved))
 			log.Printf("[compression] COMPRESSED level=%s msgs=%d orig=%d saved=%d ratio=%.1f%%",
 				compressLevel.String(), len(msgMaps), totalOrigBytes, totalSavedBytes,
@@ -373,6 +379,7 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 		// Direct model routing
 		providerID, providerName, baseURL, modelID, keyID, keyName, keyValue, keyAccountID, err = routeByModel(modelName)
 		if err != nil {
+			reqDump.FinishError(400, time.Since(startTime).Milliseconds(), fmt.Sprintf("model routing error: %v", err))
 			writeError(w, 400, fmt.Sprintf("model routing error: %v", err))
 			return
 		}
@@ -451,19 +458,20 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 
 	bodyBytes, err := json.Marshal(upstreamBody)
 	if err != nil {
+		reqDump.FinishError(500, time.Since(startTime).Milliseconds(), "failed to marshal request body")
 		writeError(w, 500, "failed to marshal request body")
 		return
 	}
 
 	// ── Anigravity: use Google Gemini format ──
 	if providerID == "builtin-anigravity" {
-		anigravityRequest(w, r, modelID, rawBody, keyValue, isStream, providerID, providerName, keyID, keyName)
+		anigravityRequest(w, r, modelID, rawBody, keyValue, isStream, providerID, providerName, keyID, keyName, reqDump)
 		return
 	}
 
 	// ── OpenAI Codex: translate Chat Completions → Responses API ──
 	if providerID == "builtin-openai-codex" {
-		handleCodexProxyBody(w, r, rawBody, keyValue, baseURL, keyAccountID, providerID, providerName, keyID, keyName)
+		handleCodexProxyBody(w, r, rawBody, keyValue, baseURL, keyAccountID, providerID, providerName, keyID, keyName, reqDump)
 		return
 	}
 
@@ -472,14 +480,16 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 	var supAnthRouting int
 	db.DB.QueryRow("SELECT COALESCE(supports_anthropic,0) FROM providers WHERE id=?", providerID).Scan(&supAnthRouting)
 	if supAnthRouting == 1 {
-		handleAnthropicNativeFromOpenAI(w, r, rawBody, providerID, providerName, baseURL, modelID, keyID, keyName, keyValue, keyAccountID, isStream, startTime)
+		handleAnthropicNativeFromOpenAI(w, r, rawBody, providerID, providerName, baseURL, modelID, keyID, keyName, keyValue, keyAccountID, isStream, startTime, reqDump)
 		return
 	}
 
 	upstreamURL := resolveUpstreamURL(baseURL, keyAccountID)
+	reqDump.SetUpstream(providerName, upstreamURL, upstreamBody)
 
 	req, err := http.NewRequest("POST", upstreamURL, bytes.NewReader(bodyBytes))
 	if err != nil {
+		reqDump.FinishError(500, time.Since(startTime).Milliseconds(), "failed to create upstream request")
 		writeError(w, 500, "failed to create upstream request")
 		return
 	}
@@ -508,7 +518,7 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 	var proxyUsed string
 	if proxyURL := getProviderProxy(providerID); proxyURL != "" {
 		proxyUsed = proxyURL
-		if transport, err := makeProxyTransport(proxyURL); err == nil {
+		if transport, err := cachedProxyTransport(proxyURL); err == nil {
 			proxyClient := *sharedHTTPClient
 			proxyClient.Transport = transport
 			client = &proxyClient
@@ -540,6 +550,7 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 		for {
 			nextKeyID, nextKeyName, nextKeyValue, _, ferr := getNextActiveKeyExcluding(providerID, tried)
 			if ferr != nil {
+				reqDump.FinishError(504, time.Since(startTime).Milliseconds(), fmt.Sprintf("upstream timeout: %v", err))
 				writeError(w, 504, fmt.Sprintf("upstream timeout: %v", err))
 				return
 			}
@@ -554,13 +565,15 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 			latencyMs2 := time.Since(startTime2).Milliseconds()
 			if err2 == nil && resp2.StatusCode == 200 {
 				if isStream {
-					tIn, tOut, streamBody := handleStreaming(w, resp2)
+					tc, streamBody := handleStreamingSplit(w, resp2)
 					resp2.Body.Close()
-					logProxyRequest(providerID, providerName, modelID, nextKeyID, nextKeyName, groupName, proxyUsed, 200, tIn, tOut, latencyMs2, "", streamBody)
+					logProxyRequestSplit(providerID, providerName, modelID, nextKeyID, nextKeyName, groupName, proxyUsed, 200, tc, latencyMs2, "", streamBody, "", "", 0, 0)
 				} else {
 					bodyBytes3, _ := io.ReadAll(resp2.Body)
 					resp2.Body.Close()
-					logProxyRequest(providerID, providerName, modelID, nextKeyID, nextKeyName, groupName, proxyUsed, 200, 0, 0, latencyMs2, "", bodyBytes3)
+					var tc tokenCounts
+					parseUsageJSONSplit(bodyBytes3, &tc)
+					logProxyRequestSplit(providerID, providerName, modelID, nextKeyID, nextKeyName, groupName, proxyUsed, 200, tc, latencyMs2, "", bodyBytes3, "", "", 0, 0)
 					w.Header().Set("Content-Type", "application/json")
 					w.Write(bodyBytes3)
 				}
@@ -598,6 +611,7 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 				// No more active keys — return last error
 				logProxyRequest(providerID, providerName, modelID, keyID, keyName, groupName, proxyUsed, resp.StatusCode, 0, 0, latencyMs, "all keys exhausted", nil)
 				w.Header().Set("Content-Type", "application/json")
+				reqDump.FinishError(resp.StatusCode, time.Since(startTime).Milliseconds(), fmt.Sprintf("all keys exhausted for provider %s", providerName))
 				writeError(w, resp.StatusCode, fmt.Sprintf("all keys exhausted for provider %s", providerName))
 				return
 			}
@@ -618,18 +632,18 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 			if resp2.StatusCode == 200 {
 				// Success!
 				if isStream {
-					tIn, tOut, streamBody := handleStreaming(w, resp2)
+					tc, streamBody := handleStreamingSplit(w, resp2)
 					resp2.Body.Close()
-					logProxyRequest(providerID, providerName, modelID, nextKeyID, nextKeyName, groupName, proxyUsed, 200, tIn, tOut, latencyMs, "", streamBody)
-					TrafficLog(TrafficEntry{Model: modelID, Provider: providerName, StatusCode: 200, LatencyMs: latencyMs, CompressMode: compressLevel.String(), PAAPOverheadMs: paapOverheadMs, TTFBMs: ttfbMs, IsStream: true, TokensIn: tIn, TokensOut: tOut})
+					logProxyRequestSplit(providerID, providerName, modelID, nextKeyID, nextKeyName, groupName, proxyUsed, 200, tc, latencyMs, "", streamBody, "", "", 0, 0)
+					TrafficLog(TrafficEntry{Model: modelID, Provider: providerName, StatusCode: 200, LatencyMs: latencyMs, CompressMode: compressLevel.String(), PAAPOverheadMs: paapOverheadMs, TTFBMs: ttfbMs, IsStream: true, TokensIn: tc.TotalIn(), TokensOut: tc.TotalOut()})
 				} else {
 					// Parse tokens from non-streaming response
 					bodyBytes2, _ := io.ReadAll(resp2.Body)
 					resp2.Body.Close()
-					var tokensIn, tokensOut int
-					parseUsageJSON(bodyBytes2, &tokensIn, &tokensOut)
-					logProxyRequest(providerID, providerName, modelID, nextKeyID, nextKeyName, groupName, proxyUsed, 200, tokensIn, tokensOut, latencyMs, "", bodyBytes2)
-					TrafficLog(TrafficEntry{Model: modelID, Provider: providerName, StatusCode: 200, LatencyMs: latencyMs, CompressMode: compressLevel.String(), PAAPOverheadMs: paapOverheadMs, TTFBMs: ttfbMs, IsStream: false, TokensIn: tokensIn, TokensOut: tokensOut})
+					var tc tokenCounts
+					parseUsageJSONSplit(bodyBytes2, &tc)
+					logProxyRequestSplit(providerID, providerName, modelID, nextKeyID, nextKeyName, groupName, proxyUsed, 200, tc, latencyMs, "", bodyBytes2, "", "", 0, 0)
+					TrafficLog(TrafficEntry{Model: modelID, Provider: providerName, StatusCode: 200, LatencyMs: latencyMs, CompressMode: compressLevel.String(), PAAPOverheadMs: paapOverheadMs, TTFBMs: ttfbMs, IsStream: false, TokensIn: tc.TotalIn(), TokensOut: tc.TotalOut()})
 					w.Header().Set("Content-Type", "application/json")
 					w.Write(bodyBytes2)
 				}
@@ -647,25 +661,32 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Log the request — extract tokens from non-streaming response
-	var tokensIn, tokensOut int
+	// Log the request. Each branch computes its own tokenCounts so cache reads
+	// and reasoning tokens are priced at their own rates.
 	if isStream {
 		if isMerlin {
-			handleMerlinStreaming(w, resp, modelID)
-			logProxyRequestWithTool(providerID, providerName, modelID, keyID, keyName, groupName, proxyUsed, resp.StatusCode, 0, 0, latencyMs, "", nil, toolUsed, originalModel, compressionTokensBefore, compressionTokensSaved)
+			// Merlin reports no usage; counts are estimated from the request and
+			// the relayed output text and flagged with tokens_estimated=1.
+			mc := handleMerlinStreaming(w, resp, modelID, merlinEstimatedInput(upstreamBody))
+			logProxyRequestSplit(providerID, providerName, modelID, keyID, keyName, groupName, proxyUsed, resp.StatusCode, mc, latencyMs, "", nil, toolUsed, originalModel, compressionTokensBefore, compressionTokensSaved)
+			reqDump.Finish(resp.StatusCode, latencyMs, mc.TotalIn(), mc.TotalOut(), nil)
 		} else {
-			tIn, tOut, streamBody := handleStreaming(w, resp)
-			logProxyRequestWithTool(providerID, providerName, modelID, keyID, keyName, groupName, proxyUsed, resp.StatusCode, tIn, tOut, latencyMs, "", streamBody, toolUsed, originalModel, compressionTokensBefore, compressionTokensSaved)
+			tc, streamBody := handleStreamingSplit(w, resp)
+			logProxyRequestSplit(providerID, providerName, modelID, keyID, keyName, groupName, proxyUsed, resp.StatusCode, tc, latencyMs, "", streamBody, toolUsed, originalModel, compressionTokensBefore, compressionTokensSaved)
+			reqDump.Finish(resp.StatusCode, latencyMs, tc.TotalIn(), tc.TotalOut(), nil)
 		}
 	} else {
 		if isMerlin {
-			logProxyRequestWithTool(providerID, providerName, modelID, keyID, keyName, groupName, proxyUsed, resp.StatusCode, 0, 0, latencyMs, "", nil, toolUsed, originalModel, compressionTokensBefore, compressionTokensSaved)
-			handleMerlinNonStreaming(w, resp, modelID)
+			mc := handleMerlinNonStreaming(w, resp, modelID, merlinEstimatedInput(upstreamBody))
+			logProxyRequestSplit(providerID, providerName, modelID, keyID, keyName, groupName, proxyUsed, resp.StatusCode, mc, latencyMs, "", nil, toolUsed, originalModel, compressionTokensBefore, compressionTokensSaved)
+			reqDump.Finish(resp.StatusCode, latencyMs, mc.TotalIn(), mc.TotalOut(), nil)
 		} else {
 			bodyBytes2, _ := io.ReadAll(resp.Body)
-			// Parse usage from response
-			parseUsageJSON(bodyBytes2, &tokensIn, &tokensOut)
-			logProxyRequestWithTool(providerID, providerName, modelID, keyID, keyName, groupName, proxyUsed, resp.StatusCode, tokensIn, tokensOut, latencyMs, "", bodyBytes2, toolUsed, originalModel, compressionTokensBefore, compressionTokensSaved)
+			// Parse usage from response, keeping the cached/reasoning split
+			var tc tokenCounts
+			parseUsageJSONSplit(bodyBytes2, &tc)
+			logProxyRequestSplit(providerID, providerName, modelID, keyID, keyName, groupName, proxyUsed, resp.StatusCode, tc, latencyMs, "", bodyBytes2, toolUsed, originalModel, compressionTokensBefore, compressionTokensSaved)
+			reqDump.Finish(resp.StatusCode, latencyMs, tc.TotalIn(), tc.TotalOut(), nil)
 			// Add tool header in response if tool was used
 			if toolUsed != "" {
 				w.Header().Set("X-PAAP-Tool", toolUsed)
@@ -916,7 +937,7 @@ func handleGroupRaceAll(w http.ResponseWriter, r *http.Request, modelName, group
 			var raceProxyUsed string
 			if proxyURL := getProviderProxy(t.route.providerID); proxyURL != "" {
 				raceProxyUsed = proxyURL
-				if transport, perr := makeProxyTransport(proxyURL); perr == nil {
+				if transport, perr := cachedProxyTransport(proxyURL); perr == nil {
 					client.Transport = transport
 				}
 			}
@@ -1492,7 +1513,57 @@ func injectSystemPrompt(messages *[]map[string]interface{}, injectPrompt, inject
 }
 
 // getCustomHeaders returns custom headers for a provider from DB.
+// customHeaderCache caches decoded custom_headers per provider. Read on
+// every request; TTL mirrors the other hot-path caches.
+var (
+	customHdrMu       sync.RWMutex
+	customHdrCache    map[string]map[string]string
+	customHdrLoadedAt time.Time
+)
+
+const customHdrTTL = 30 * time.Second
+
+func loadCustomHeaders() map[string]map[string]string {
+	out := map[string]map[string]string{}
+	if db.DB == nil {
+		return out
+	}
+	rows, err := db.DB.Query("SELECT id, COALESCE(custom_headers,'{}') FROM providers")
+	if err != nil {
+		log.Printf("[PAAP] Failed to load custom headers: %v", err)
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, raw string
+		if err := rows.Scan(&id, &raw); err != nil {
+			continue
+		}
+		var headers map[string]string
+		if json.Unmarshal([]byte(raw), &headers) == nil && len(headers) > 0 {
+			out[id] = headers
+		}
+	}
+	customHdrMu.Lock()
+	customHdrCache = out
+	customHdrLoadedAt = time.Now()
+	customHdrMu.Unlock()
+	return out
+}
+
 func getCustomHeaders(providerID string) map[string]string {
+	customHdrMu.RLock()
+	cache := customHdrCache
+	fresh := cache != nil && time.Since(customHdrLoadedAt) < customHdrTTL
+	customHdrMu.RUnlock()
+
+	if !fresh {
+		cache = loadCustomHeaders()
+	}
+	if h, ok := cache[providerID]; ok {
+		return h
+	}
+	// New provider created after the last full load — read directly.
 	var raw string
 	err := db.DB.QueryRow("SELECT COALESCE(custom_headers,'{}') FROM providers WHERE id=?", providerID).Scan(&raw)
 	if err != nil || raw == "" || raw == "{}" {
@@ -1577,7 +1648,7 @@ func resolveCompressionLevel() compression.Level {
 func handleAnthropicNativeFromOpenAI(w http.ResponseWriter, r *http.Request,
 	rawBody map[string]interface{}, providerID, providerName, baseURL,
 	modelID, keyID, keyName, keyValue, keyAccountID string,
-	isStream bool, startTime time.Time) {
+	isStream bool, startTime time.Time, reqDump *RequestDump) {
 
 	log.Printf("[PAAP] [ANTH-TRANSLATE] Translating OpenAI→Anthropic for provider=%s model=%s stream=%v", providerID, modelID, isStream)
 	// Convert OpenAI messages to Anthropic format
@@ -1589,7 +1660,7 @@ func handleAnthropicNativeFromOpenAI(w http.ResponseWriter, r *http.Request,
 
 	// Extract system message
 	var systemMsg string
-	var anthropicMessages []map[string]interface{}
+	var openaiNonSystemMessages []interface{}
 	for _, m := range messages {
 		msg, ok := m.(map[string]interface{})
 		if !ok {
@@ -1603,16 +1674,11 @@ func handleAnthropicNativeFromOpenAI(w http.ResponseWriter, r *http.Request,
 			}
 			continue
 		}
-		anthMsg := map[string]interface{}{
-			"role":    role,
-			"content": content,
-		}
-		// Preserve cache_control markers from Hermes (for prompt caching)
-		if cc, ok := msg["cache_control"]; ok {
-			anthMsg["cache_control"] = cc
-		}
-		anthropicMessages = append(anthropicMessages, anthMsg)
+		openaiNonSystemMessages = append(openaiNonSystemMessages, msg)
 	}
+
+	// Use proper OpenAI→Anthropic message conversion (handles tool_calls, tool results, merging)
+	anthropicMessages := translator.OpenAIToAnthropicMessages(openaiNonSystemMessages)
 
 	// Build Anthropic request body
 	anthBody := map[string]interface{}{
@@ -1644,6 +1710,9 @@ func handleAnthropicNativeFromOpenAI(w http.ResponseWriter, r *http.Request,
 	}
 	if topP, ok := rawBody["top_p"].(float64); ok {
 		anthBody["top_p"] = topP
+	}
+	if topK, ok := rawBody["top_k"].(float64); ok {
+		anthBody["top_k"] = int(topK)
 	}
 	if stop, ok := rawBody["stop"]; ok {
 		anthBody["stop_sequences"] = stop
@@ -1697,6 +1766,7 @@ func handleAnthropicNativeFromOpenAI(w http.ResponseWriter, r *http.Request,
 	log.Printf("[PAAP] [ANTH-REQ] body_len=%d", len(bodyBytes))
 
 	upstreamURL := resolveAnthropicUpstreamURL(baseURL)
+	reqDump.SetUpstream(providerName, upstreamURL, anthBody)
 	req, err := http.NewRequest("POST", upstreamURL, bytes.NewReader(bodyBytes))
 	if err != nil {
 		writeError(w, 500, "failed to create Anthropic request")
@@ -1717,8 +1787,13 @@ func handleAnthropicNativeFromOpenAI(w http.ResponseWriter, r *http.Request,
 
 	client := sharedHTTPClient
 	if proxyURL := getProviderProxy(providerID); proxyURL != "" {
-		if transport, err := makeProxyTransport(proxyURL); err == nil {
-			client.Transport = transport
+		// Copy the client before touching Transport: assigning directly
+		// mutates the shared global and would pin every other provider's
+		// traffic to this proxy until restart.
+		if transport, err := cachedProxyTransport(proxyURL); err == nil {
+			proxyClient := *sharedHTTPClient
+			proxyClient.Transport = transport
+			client = &proxyClient
 		}
 	}
 
@@ -1731,8 +1806,12 @@ func handleAnthropicNativeFromOpenAI(w http.ResponseWriter, r *http.Request,
 	}
 	defer resp.Body.Close()
 
+	// Token accounting: Anthropic reports fresh input, cache reads and cache
+	// writes as separate figures with different prices (cache read 0.1x input,
+	// cache write 1.25x). tokensIn stays the context-window sum for logging and
+	// the client-facing prompt_tokens; billing uses the split via tokenCounts.
 	var tokensIn, tokensOut int64
-	var cacheReadTokens int64
+	var freshInTokens, cacheReadTokens, cacheWriteTokens int64
 
 	log.Printf("[PAAP] [ANTH-RESP] status=%d", resp.StatusCode)
 
@@ -1765,6 +1844,9 @@ func handleAnthropicNativeFromOpenAI(w http.ResponseWriter, r *http.Request,
 		currentToolArgs := ""
 		hasToolCalls := false
 		toolCallIndex := 0
+		// doneSent guards against emitting [DONE] twice when the upstream gateway
+		// adds its own sentinel (Anthropic's native API does not send one).
+		doneSent := false
 
 		for scanner.Scan() {
 			line := scanner.Text()
@@ -1773,12 +1855,16 @@ func handleAnthropicNativeFromOpenAI(w http.ResponseWriter, r *http.Request,
 			}
 			dataStr := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 			if dataStr == "[DONE]" {
-				fmt.Fprintf(w, "data: [DONE]\n\n")
-				if canFlush {
-					flusher.Flush()
+				// Forward the sentinel but do NOT log here: this branch used to
+				// call logProxyRequest and then fall through to the post-loop
+				// logger, writing the same request twice.
+				if !doneSent {
+					fmt.Fprintf(w, "data: [DONE]\n\n")
+					if canFlush {
+						flusher.Flush()
+					}
+					doneSent = true
 				}
-				logProxyRequest(providerID, providerName, modelID, keyID, keyName, "", "", 200, int(tokensIn), int(tokensOut), latencyMs, "", nil)
-				log.Printf("[PAAP] [ANTH-STREAM-DONE] provider=%s model=%s tokens_in=%d tokens_out=%d latency=%dms", providerName, modelID, tokensIn, tokensOut, latencyMs)
 				continue
 			}
 
@@ -1796,15 +1882,19 @@ func handleAnthropicNativeFromOpenAI(w http.ResponseWriter, r *http.Request,
 				if msg, ok := ev["message"].(map[string]interface{}); ok {
 					if u, ok := msg["usage"].(map[string]interface{}); ok {
 						log.Printf("[PAAP] [ANTH-USAGE] usage=%v", u)
-						// Include cached tokens in total for accurate context tracking
-						var inputTok, cachedTok float64
+						// input_tokens excludes cached tokens on Anthropic, so the
+						// three figures are additive.
 						if inp, ok := u["input_tokens"].(float64); ok {
-							inputTok = inp
+							freshInTokens = int64(inp)
 						}
 						if cached, ok := u["cache_read_input_tokens"].(float64); ok {
-							cachedTok = cached
+							cacheReadTokens = int64(cached)
 						}
-						tokensIn = int64(inputTok + cachedTok)
+						if written, ok := u["cache_creation_input_tokens"].(float64); ok {
+							cacheWriteTokens = int64(written)
+						}
+						// Context-window figure: everything the model saw.
+						tokensIn = freshInTokens + cacheReadTokens + cacheWriteTokens
 					}
 				}
 			case "message_delta":
@@ -1830,6 +1920,29 @@ func handleAnthropicNativeFromOpenAI(w http.ResponseWriter, r *http.Request,
 					t, _ := delta["type"].(string)
 					if t == "text_delta" && !isThinking {
 						content, _ = delta["text"].(string)
+					} else if t == "thinking_delta" {
+						if text, ok := delta["thinking"].(string); ok && text != "" {
+							thinkDelta := map[string]interface{}{"reasoning_content": text}
+							if !roleSent {
+								thinkDelta["role"] = "assistant"
+								roleSent = true
+							}
+							thinkChunk := map[string]interface{}{
+								"id":      chatID,
+								"object":  "chat.completion.chunk",
+								"created": time.Now().Unix(),
+								"model":   modelID,
+								"choices": []map[string]interface{}{{
+									"index": 0,
+									"delta": thinkDelta,
+								}},
+							}
+							b, _ := json.Marshal(thinkChunk)
+							fmt.Fprintf(w, "data: %s\n\n", b)
+							if canFlush {
+								flusher.Flush()
+							}
+						}
 					} else if t == "input_json_delta" {
 						if partial, ok := delta["partial_json"].(string); ok {
 							currentToolArgs += partial
@@ -1946,12 +2059,25 @@ func handleAnthropicNativeFromOpenAI(w http.ResponseWriter, r *http.Request,
 			}
 		}
 		// Send [DONE] sentinel for OpenAI streaming clients
-		fmt.Fprintf(w, "data: [DONE]\n\n")
-		if canFlush {
-			flusher.Flush()
+		if !doneSent {
+			fmt.Fprintf(w, "data: [DONE]\n\n")
+			if canFlush {
+				flusher.Flush()
+			}
+			doneSent = true
 		}
-		logProxyRequest(providerID, providerName, modelID, keyID, keyName, "", "", 200, int(tokensIn), int(tokensOut), latencyMs, "", nil)
-		log.Printf("[PAAP] [ANTH-STREAM-DONE] provider=%s model=%s tokens_in=%d tokens_out=%d latency=%dms", providerName, modelID, tokensIn, tokensOut, latencyMs)
+		// Single log write per request. Anthropic counts thinking tokens inside
+		// output_tokens, so Reasoning stays 0 here to avoid double counting.
+		logProxyRequestSplit(providerID, providerName, modelID, keyID, keyName, "", "", 200,
+			tokenCounts{
+				InFresh:    int(freshInTokens),
+				CacheRead:  int(cacheReadTokens),
+				CacheWrite: int(cacheWriteTokens),
+				Out:        int(tokensOut),
+			}, latencyMs, "", nil, "", "", 0, 0)
+		reqDump.Finish(200, latencyMs, int(tokensIn), int(tokensOut), nil)
+		log.Printf("[PAAP] [ANTH-STREAM-DONE] provider=%s model=%s tokens_in=%d (fresh=%d cache_read=%d cache_write=%d) tokens_out=%d latency=%dms",
+			providerName, modelID, tokensIn, freshInTokens, cacheReadTokens, cacheWriteTokens, tokensOut, latencyMs)
 		return
 	}
 
@@ -1998,14 +2124,29 @@ func handleAnthropicNativeFromOpenAI(w http.ResponseWriter, r *http.Request,
 
 	var usage map[string]interface{}
 	if u, ok := anthResp["usage"].(map[string]interface{}); ok {
-		usage = map[string]interface{}{
-			"prompt_tokens":     u["input_tokens"],
-			"completion_tokens": u["output_tokens"],
-			"total_tokens":      0,
+		// Anthropic reports input_tokens exclusive of cache reads/writes, each
+		// billed at a different rate. Capture the split for billing and keep
+		// prompt_tokens as the context-window sum for clients.
+		readFloat := func(key string) int64 {
+			if v, ok := u[key].(float64); ok {
+				return int64(v)
+			}
+			return 0
 		}
-		if inp, ok := u["input_tokens"].(float64); ok {
-			if out, ok2 := u["output_tokens"].(float64); ok2 {
-				usage["total_tokens"] = int(inp) + int(out)
+		freshInTokens = readFloat("input_tokens")
+		cacheReadTokens = readFloat("cache_read_input_tokens")
+		cacheWriteTokens = readFloat("cache_creation_input_tokens")
+		tokensOut = readFloat("output_tokens")
+		tokensIn = freshInTokens + cacheReadTokens + cacheWriteTokens
+
+		usage = map[string]interface{}{
+			"prompt_tokens":     tokensIn,
+			"completion_tokens": tokensOut,
+			"total_tokens":      tokensIn + tokensOut,
+		}
+		if cacheReadTokens > 0 {
+			usage["prompt_tokens_details"] = map[string]interface{}{
+				"cached_tokens": cacheReadTokens,
 			}
 		}
 	}
@@ -2034,7 +2175,14 @@ func handleAnthropicNativeFromOpenAI(w http.ResponseWriter, r *http.Request,
 		openaiResp["usage"] = usage
 	}
 
-	logProxyRequest(providerID, providerName, modelID, keyID, keyName, "", "", 200, int(tokensIn), int(tokensOut), latencyMs, "", nil)
+	logProxyRequestSplit(providerID, providerName, modelID, keyID, keyName, "", "", 200,
+		tokenCounts{
+			InFresh:    int(freshInTokens),
+			CacheRead:  int(cacheReadTokens),
+			CacheWrite: int(cacheWriteTokens),
+			Out:        int(tokensOut),
+		}, latencyMs, "", nil, "", "", 0, 0)
+	reqDump.Finish(200, latencyMs, int(tokensIn), int(tokensOut), usage)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(openaiResp)
 }

@@ -3,6 +3,8 @@ package db
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -241,10 +243,20 @@ func migrate() error {
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
+		// model_pricing is keyed on (provider_id, model_id). provider_id='' is the
+		// global fallback tier used when no provider-specific price exists.
+		// cache_read_per_1m / cache_write_per_1m are NULL when unknown; callers
+		// derive them from input_per_1m (see resolvePricing in cmd/server/logs.go).
 		`CREATE TABLE IF NOT EXISTS model_pricing (
-			model_id TEXT PRIMARY KEY,
+			provider_id TEXT NOT NULL DEFAULT '',
+			model_id TEXT NOT NULL,
 			input_per_1m REAL NOT NULL,
-			output_per_1m REAL NOT NULL
+			output_per_1m REAL NOT NULL,
+			cache_read_per_1m REAL,
+			cache_write_per_1m REAL,
+			source TEXT DEFAULT 'scraped',
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (provider_id, model_id)
 		)`,
 		`CREATE TABLE IF NOT EXISTS race_logs (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -309,6 +321,53 @@ func migrate() error {
 	DB.Exec("ALTER TABLE logs ADD COLUMN original_model TEXT DEFAULT ''")
 	DB.Exec("ALTER TABLE logs ADD COLUMN tokens_before INTEGER DEFAULT 0")
 	DB.Exec("ALTER TABLE logs ADD COLUMN tokens_saved INTEGER DEFAULT 0")
+
+	// === Token accounting & billing correctness (token-billing feature) ===
+	// tokens_in remains the context-window figure (fresh + cache_read + cache_write).
+	// Billing reads the split columns below, never tokens_in.
+	DB.Exec("ALTER TABLE logs ADD COLUMN tokens_in_fresh INTEGER DEFAULT 0")
+	DB.Exec("ALTER TABLE logs ADD COLUMN tokens_cache_read INTEGER DEFAULT 0")
+	DB.Exec("ALTER TABLE logs ADD COLUMN tokens_cache_write INTEGER DEFAULT 0")
+	DB.Exec("ALTER TABLE logs ADD COLUMN tokens_reasoning INTEGER DEFAULT 0")
+	// tokens_estimated=1 means the counts are heuristic, not provider-reported.
+	DB.Exec("ALTER TABLE logs ADD COLUMN tokens_estimated INTEGER DEFAULT 0")
+	// pricing_source: exact|base|global|prefix|free|subscription|missing|legacy
+	DB.Exec("ALTER TABLE logs ADD COLUMN pricing_source TEXT DEFAULT ''")
+
+	DB.Exec("ALTER TABLE usage_stats ADD COLUMN tokens_in_fresh INTEGER DEFAULT 0")
+	DB.Exec("ALTER TABLE usage_stats ADD COLUMN tokens_cache_read INTEGER DEFAULT 0")
+	DB.Exec("ALTER TABLE usage_stats ADD COLUMN tokens_cache_write INTEGER DEFAULT 0")
+	DB.Exec("ALTER TABLE usage_stats ADD COLUMN tokens_reasoning INTEGER DEFAULT 0")
+	DB.Exec("ALTER TABLE usage_stats ADD COLUMN unpriced_req_count INTEGER DEFAULT 0")
+
+	DB.Exec("ALTER TABLE cost_summary ADD COLUMN total_tokens_in_fresh INTEGER DEFAULT 0")
+	DB.Exec("ALTER TABLE cost_summary ADD COLUMN total_tokens_cache_read INTEGER DEFAULT 0")
+	DB.Exec("ALTER TABLE cost_summary ADD COLUMN total_tokens_cache_write INTEGER DEFAULT 0")
+	DB.Exec("ALTER TABLE cost_summary ADD COLUMN total_tokens_reasoning INTEGER DEFAULT 0")
+	DB.Exec("ALTER TABLE cost_summary ADD COLUMN unpriced_req_count INTEGER DEFAULT 0")
+
+	// billing_mode: per_token (metered API key) | subscription (OAuth/CLI session,
+	// no per-token charge) | free. subscription/free short-circuit cost to 0.
+	DB.Exec("ALTER TABLE providers ADD COLUMN billing_mode TEXT DEFAULT 'per_token'")
+	DB.Exec("UPDATE providers SET billing_mode='per_token' WHERE billing_mode IS NULL OR billing_mode=''")
+
+	// One-time default: providers that authenticate with an OAuth/CLI session
+	// rather than a metered API key are not billed per token. Guarded by a
+	// settings flag so an operator override is never re-applied on restart.
+	if getSettingRaw("billing_mode_seeded") != "1" {
+		DB.Exec(`UPDATE providers SET billing_mode='subscription'
+			WHERE builtin_id IN ('anigravity','openai-codex','grok-cli')`)
+		DB.Exec(`INSERT OR REPLACE INTO system_settings (key, value) VALUES ('billing_mode_seeded','1')`)
+		log.Printf("[PAAP] Seeded billing_mode=subscription for OAuth/CLI providers")
+	}
+
+	// Rows written before this migration used a fabricated default rate and a
+	// provider-blind price lookup. Mark them so corrected rows stay distinguishable.
+	DB.Exec("UPDATE logs SET pricing_source='legacy' WHERE pricing_source=''")
+
+	if err := migrateModelPricingKey(); err != nil {
+		return err
+	}
 
 	// === System settings defaults ===
 	DB.Exec(`INSERT OR IGNORE INTO system_settings (key, value) VALUES ('race_apikeys', '10')`)
@@ -416,4 +475,109 @@ func Close() {
 	if DB != nil {
 		DB.Close()
 	}
+}
+
+// getSettingRaw reads a system_settings value directly. Used by migrations that
+// must run exactly once; returns "" when the key is absent.
+func getSettingRaw(key string) string {
+	var v string
+	if err := DB.QueryRow("SELECT value FROM system_settings WHERE key=?", key).Scan(&v); err != nil {
+		return ""
+	}
+	return v
+}
+
+// migrateModelPricingKey rebuilds model_pricing when it still uses the legacy
+// single-column primary key (model_id). SQLite cannot ALTER a primary key, so the
+// table is recreated and rows are copied into the global fallback tier
+// (provider_id=”), preserving the pre-migration behaviour as a fallback rather
+// than discarding it.
+//
+// Idempotent: detects the new shape by looking for the provider_id column and
+// returns immediately once the migration has already run.
+func migrateModelPricingKey() error {
+	rows, err := DB.Query("PRAGMA table_info(model_pricing)")
+	if err != nil {
+		return err
+	}
+	cols := map[string]bool{}
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notNull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dflt, &pk); err != nil {
+			rows.Close()
+			return err
+		}
+		cols[name] = true
+	}
+	rows.Close()
+
+	// Fresh install already got the new schema from the CREATE TABLE above.
+	if cols["provider_id"] {
+		return nil
+	}
+
+	hasSource := cols["source"]
+	hasUpdatedAt := cols["updated_at"]
+
+	tx, err := DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`CREATE TABLE model_pricing_new (
+		provider_id TEXT NOT NULL DEFAULT '',
+		model_id TEXT NOT NULL,
+		input_per_1m REAL NOT NULL,
+		output_per_1m REAL NOT NULL,
+		cache_read_per_1m REAL,
+		cache_write_per_1m REAL,
+		source TEXT DEFAULT 'scraped',
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (provider_id, model_id)
+	)`); err != nil {
+		return err
+	}
+
+	srcExpr := "'scraped'"
+	if hasSource {
+		srcExpr = "COALESCE(source, 'scraped')"
+	}
+	updExpr := "CURRENT_TIMESTAMP"
+	if hasUpdatedAt {
+		updExpr = "COALESCE(updated_at, CURRENT_TIMESTAMP)"
+	}
+
+	copySQL := fmt.Sprintf(`INSERT INTO model_pricing_new
+		(provider_id, model_id, input_per_1m, output_per_1m, cache_read_per_1m, cache_write_per_1m, source, updated_at)
+		SELECT '', model_id, input_per_1m, output_per_1m, NULL, NULL, %s, %s FROM model_pricing`, srcExpr, updExpr)
+	if _, err := tx.Exec(copySQL); err != nil {
+		return err
+	}
+
+	var oldCount, newCount int
+	if err := tx.QueryRow("SELECT COUNT(*) FROM model_pricing").Scan(&oldCount); err != nil {
+		return err
+	}
+	if err := tx.QueryRow("SELECT COUNT(*) FROM model_pricing_new").Scan(&newCount); err != nil {
+		return err
+	}
+	if oldCount != newCount {
+		return fmt.Errorf("model_pricing migration row mismatch: old=%d new=%d", oldCount, newCount)
+	}
+
+	if _, err := tx.Exec("DROP TABLE model_pricing"); err != nil {
+		return err
+	}
+	if _, err := tx.Exec("ALTER TABLE model_pricing_new RENAME TO model_pricing"); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	log.Printf("[PAAP] model_pricing migrated to (provider_id, model_id) key: %d rows moved to global tier", newCount)
+	return nil
 }

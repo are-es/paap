@@ -13,22 +13,46 @@ var (
 	trafficLogFile *os.File
 	trafficLogger  *log.Logger
 	trafficOnce    sync.Once
+	trafficLogPath string
+	trafficMu      sync.Mutex
 )
+
+const trafficMaxSize = 1 * 1024 * 1024 // 1MB
 
 func initTrafficLogger() {
 	trafficOnce.Do(func() {
 		logDir := filepath.Join(dataDirPath(), "logs")
 		os.MkdirAll(logDir, 0755)
-		logPath := filepath.Join(logDir, "traffic.log")
-		f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-		if err != nil {
-			log.Printf("[PAAP] Failed to open traffic log: %v", err)
-			return
-		}
-		trafficLogFile = f
-		trafficLogger = log.New(f, "", 0)
-		log.Printf("[PAAP] Traffic logger started: %s", logPath)
+		trafficLogPath = filepath.Join(logDir, "traffic.log")
+		openTrafficLog()
 	})
+}
+
+func openTrafficLog() {
+	f, err := os.OpenFile(trafficLogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		log.Printf("[PAAP] Failed to open traffic log: %v", err)
+		return
+	}
+	trafficLogFile = f
+	trafficLogger = log.New(f, "", 0)
+	log.Printf("[PAAP] Traffic logger started: %s", trafficLogPath)
+}
+
+func rotateTrafficLog() {
+	if trafficLogFile == nil {
+		return
+	}
+	info, err := trafficLogFile.Stat()
+	if err != nil || info.Size() < trafficMaxSize {
+		return
+	}
+	trafficLogFile.Close()
+	backupPath := trafficLogPath + ".1"
+	os.Remove(backupPath) // ignore error if not exists
+	os.Rename(trafficLogPath, backupPath)
+	openTrafficLog()
+	log.Printf("[PAAP] Rotated traffic log (was %d bytes)", info.Size())
 }
 
 // TrafficLog logs a full request/response cycle with compression info
@@ -37,6 +61,10 @@ func TrafficLog(entry TrafficEntry) {
 	if trafficLogger == nil {
 		return
 	}
+
+	trafficMu.Lock()
+	defer trafficMu.Unlock()
+	rotateTrafficLog()
 
 	ts := time.Now().Format("2006-01-02 15:04:05.000")
 	line := fmt.Sprintf("[%s] model=%s provider=%s status=%d latency=%dms | req_raw=%d req_compressed=%d req_saved=%d (%.1f%%) | resp_raw=%d resp_compressed=%d resp_saved=%d (%.1f%%) | compress_mode=%s overhead=%dms ttfb=%dms | stream=%v tokens_in=%d tokens_out=%d",

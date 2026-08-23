@@ -15,6 +15,11 @@ export interface Provider {
   round_robin_enabled?: boolean;
   custom_headers?: string;
   icon?: string;
+  /**
+   * How this provider charges. "subscription" (OAuth/CLI session) and "free"
+   * force cost_usd to 0 — those requests are not billed per token.
+   */
+  billing_mode?: "per_token" | "subscription" | "free";
 }
 
 export interface ApiKeyItem {
@@ -113,6 +118,64 @@ export interface LogEntry {
   error?: string;
   tool_used?: string;
   original_model?: string;
+  /**
+   * Token split. tokens_in is the context-window sum of fresh + cache read +
+   * cache write; each component is billed at a different rate.
+   */
+  tokens_in_fresh?: number;
+  tokens_cache_read?: number;
+  tokens_cache_write?: number;
+  tokens_reasoning?: number;
+  /** true when counts are heuristic estimates, not provider-reported. */
+  tokens_estimated?: boolean;
+  /**
+   * How the price was resolved. "missing" means no price row matched, so
+   * cost_usd is 0 rather than a fabricated guess. "legacy" means the row predates
+   * the billing fix and has not been reconciled.
+   */
+  pricing_source?:
+    | "exact"
+    | "base"
+    | "global"
+    | "prefix"
+    | "free"
+    | "subscription"
+    | "missing"
+    | "legacy"
+    | "";
+}
+
+/**
+ * A single compression event. Token figures are byte-derived estimates
+ * (`estimated` is always true) — only the byte sizes were measured.
+ */
+export interface CompressionLogEntry {
+  timestamp: string;
+  content_type: string;
+  level: string;
+  original_size: number;
+  compressed_size: number;
+  saved_percent: number;
+  original_tokens: number;
+  compressed_tokens: number;
+  saved_tokens: number;
+  estimated: boolean;
+}
+
+/** Result of POST /api/logs/reconcile — recomputes legacy (pre-fix) cost rows. */
+export interface ReconcileResult {
+  dry_run: boolean;
+  backup_path?: string;
+  legacy_rows_found: number;
+  rows_repriced: number;
+  rows_zeroed: number;
+  rows_unchanged: number;
+  old_total_usd: number;
+  new_total_usd: number;
+  cost_summary_rebuilt: boolean;
+  cost_summary_note: string;
+  unrecoverable_usd: number;
+  by_source: Record<string, number>;
 }
 
 export interface CostSummary {
@@ -353,7 +416,7 @@ export const api = {
     const qs = new URLSearchParams();
     if (params?.limit) qs.set("limit", String(params.limit));
     if (params?.offset) qs.set("offset", String(params.offset));
-    return fetchApi<LogEntry[]>(`/api/compression/logs?${qs}`);
+    return fetchApi<CompressionLogEntry[]>(`/api/compression/logs?${qs}`);
   },
   getCompressionSummary: () => {
     return fetchApi<{
@@ -386,6 +449,16 @@ export const api = {
 
   clearLogs: () =>
     fetchApi<{ status: string; message: string }>("/api/logs", { method: "DELETE" }),
+
+  /**
+   * Recompute cost for rows written before the token-billing fix. Pass
+   * dryRun to preview the change without writing; a live run snapshots the
+   * database to .trash/ first.
+   */
+  reconcileCost: (dryRun = false) =>
+    fetchApi<ReconcileResult>(`/api/logs/reconcile${dryRun ? "?dry_run=1" : ""}`, {
+      method: "POST",
+    }),
 
   clearAll: () =>
     fetchApi<{ status: string; message: string }>("/api/clear-all", { method: "POST" }),

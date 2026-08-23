@@ -125,6 +125,8 @@ func main() {
 	}))
 	mux.HandleFunc("/api/logs/cost", logCostSummary)
 	mux.HandleFunc("/api/logs/export", logExport)
+	mux.HandleFunc("/api/logs/reconcile", reconcileCostHandler)
+	mux.HandleFunc("/api/logs/stream", logStreamHandler)
 	mux.HandleFunc("/api/proxies/test-all", proxyTestAll)
 
 	// ── Models (all models from all providers) ─────────────

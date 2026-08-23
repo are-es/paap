@@ -438,9 +438,15 @@ func mcpHandleAnalyzeImage(args json.RawMessage) interface{} {
 	visionModel := getSettingStrCached("vision_model", "")
 	if visionModel == "" {
 		var routeModel string
-		dbErr := db.DB.QueryRow("SELECT route_model FROM tools WHERE tool_type='vision' AND enabled=1 LIMIT 1").Scan(&routeModel)
-		if dbErr == nil {
-			visionModel = routeModel
+		dbErr := db.DB.QueryRow("SELECT route_model FROM tools WHERE type='vision' AND enabled=1 LIMIT 1").Scan(&routeModel)
+		if dbErr == nil && routeModel != "" {
+			// Handle JSON array of models (e.g. ["builtin-xiaomi/mimo-v2.5"])
+			var arr []string
+			if err := json.Unmarshal([]byte(routeModel), &arr); err == nil && len(arr) > 0 {
+				visionModel = arr[0]
+			} else {
+				visionModel = routeModel
+			}
 		}
 	}
 
@@ -470,6 +476,9 @@ func mcpHandleAnalyzeImage(args json.RawMessage) interface{} {
 		return mcpToolError("failed to create request: " + err.Error())
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if gwKey := getActiveGatewayKey(); gwKey != "" {
+		req.Header.Set("Authorization", "Bearer "+gwKey)
+	}
 
 	client := &http.Client{Timeout: 120_000_000_000}
 	resp, err := client.Do(req)

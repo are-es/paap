@@ -4,37 +4,102 @@ import (
 	"bufio"
 	"bytes"
 	"crypto/rand"
-	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dolvin/paap/internal/db"
+	"github.com/dolvin/paap/internal/tokens"
 )
 
 // ── Proxy helpers for provider ───────────────────────────
 
+// proxyConfigCache caches per-provider proxy assignment (proxy_id, group,
+// enabled flag). getProviderProxy runs 2-3 queries on every request; the
+// cached lookup keeps the hot path off SQLite. TTL mirrors billingModeCache.
+type providerProxyConfig struct {
+	proxyID     string
+	proxyGroup  string
+	proxyEnable int
+}
+
+var (
+	proxyCfgMu       sync.RWMutex
+	proxyCfgCache    map[string]providerProxyConfig
+	proxyCfgLoadedAt time.Time
+)
+
+const proxyCfgTTL = 30 * time.Second
+
+func invalidateProxyConfigCache() {
+	proxyCfgMu.Lock()
+	proxyCfgCache = nil
+	proxyCfgMu.Unlock()
+}
+
+func loadProxyConfigs() map[string]providerProxyConfig {
+	cfgs := map[string]providerProxyConfig{}
+	if db.DB == nil {
+		return cfgs
+	}
+	rows, err := db.DB.Query(`SELECT id, COALESCE(proxy_id,''), COALESCE(proxy_group_id,''),
+		COALESCE(proxy_enabled,0) FROM providers`)
+	if err != nil {
+		log.Printf("[PAAP] Failed to load provider proxy configs: %v", err)
+		return cfgs
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var c providerProxyConfig
+		if err := rows.Scan(&id, &c.proxyID, &c.proxyGroup, &c.proxyEnable); err != nil {
+			continue
+		}
+		cfgs[id] = c
+	}
+	proxyCfgMu.Lock()
+	proxyCfgCache = cfgs
+	proxyCfgLoadedAt = time.Now()
+	proxyCfgMu.Unlock()
+	return cfgs
+}
+
 func getProviderProxy(providerID string) string {
+	proxyCfgMu.RLock()
+	cache := proxyCfgCache
+	fresh := cache != nil && time.Since(proxyCfgLoadedAt) < proxyCfgTTL
+	proxyCfgMu.RUnlock()
+
+	if !fresh {
+		cache = loadProxyConfigs()
+	}
+
 	var proxyID, proxyGroupID string
 	var proxyEnabled int
-	db.DB.QueryRow(
-		"SELECT COALESCE(proxy_id,''), COALESCE(proxy_group_id,''), COALESCE(proxy_enabled,0) FROM providers WHERE id=?",
-		providerID,
-	).Scan(&proxyID, &proxyGroupID, &proxyEnabled)
+	if c, ok := cache[providerID]; ok {
+		proxyID, proxyGroupID, proxyEnabled = c.proxyID, c.proxyGroup, c.proxyEnable
+	} else {
+		// New provider created after the last full load — read directly.
+		db.DB.QueryRow(
+			"SELECT COALESCE(proxy_id,''), COALESCE(proxy_group_id,''), COALESCE(proxy_enabled,0) FROM providers WHERE id=?",
+			providerID,
+		).Scan(&proxyID, &proxyGroupID, &proxyEnabled)
+	}
 
-	// Check global proxy setting if per-provider not set
+	// Check global proxy setting if per-provider not set. Cached (5s TTL) —
+	// this runs on every proxied request.
 	if proxyEnabled == 0 {
-		var globalEnabled string
-		db.DB.QueryRow("SELECT value FROM system_settings WHERE key='proxy_enabled'").Scan(&globalEnabled)
-		if globalEnabled != "true" {
+		if getSettingStrCached("proxy_enabled", "false") != "true" {
 			return ""
 		}
 		// Global proxy is on — auto-pick fastest
@@ -156,7 +221,39 @@ func makeProxyTransport(proxyURL string) (*http.Transport, error) {
 	}
 	return &http.Transport{
 		Proxy: http.ProxyURL(u),
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 20,
+		IdleConnTimeout:     180 * time.Second,
+		DialContext: (&net.Dialer{
+			Timeout:   10 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		TLSHandshakeTimeout: 10 * time.Second,
 	}, nil
+}
+
+// proxyTransportCache keeps one pooled transport per proxy URL. Building a
+// fresh Transport per request throws away the connection pool and forces a new
+// TCP+TLS handshake on every call — the dominant PAAP-added latency on proxied
+// providers. Entries are never evicted; the set of distinct proxies is small.
+var (
+	proxyTransportMu    sync.Mutex
+	proxyTransportCache = map[string]*http.Transport{}
+)
+
+// cachedProxyTransport returns the shared transport for a proxy URL.
+func cachedProxyTransport(proxyURL string) (*http.Transport, error) {
+	proxyTransportMu.Lock()
+	defer proxyTransportMu.Unlock()
+	if t, ok := proxyTransportCache[proxyURL]; ok {
+		return t, nil
+	}
+	t, err := makeProxyTransport(proxyURL)
+	if err != nil {
+		return nil, err
+	}
+	proxyTransportCache[proxyURL] = t
+	return t, nil
 }
 
 // ── Providers CRUD ──────────────────────────────────────────
@@ -166,6 +263,7 @@ func providerList(w http.ResponseWriter, r *http.Request) {
 		COALESCE(p.proxy_id,''), COALESCE(p.proxy_enabled,0), p.created_at,
 		COALESCE(p.provider_type,'custom'), COALESCE(p.auth_type,'apikey'), COALESCE(p.builtin_id,''),
 		COALESCE(p.round_robin_enabled,0), COALESCE(p.supports_anthropic,0),
+		COALESCE(p.billing_mode,'per_token'),
 		(SELECT COUNT(*) FROM api_keys WHERE provider_id=p.id) +
 			CASE WHEN COALESCE(p.auth_type,'apikey')='connection' THEN (SELECT COUNT(*) FROM provider_connections WHERE provider_id=p.id) ELSE 0 END as total_keys,
 		(SELECT COUNT(*) FROM api_keys WHERE provider_id=p.id AND is_active=1) +
@@ -181,10 +279,11 @@ func providerList(w http.ResponseWriter, r *http.Request) {
 	var list []map[string]interface{}
 	for rows.Next() {
 		var id, name, baseURL, icon, proxyID, createdAt, providerType, authType, builtinID string
+		var billingMode string
 		var isActive, roundRobin, proxyEnabled, roundRobinEnabled, supportsAnthropic int
 		var totalKeys, activeKeys, modelCount int
 		rows.Scan(&id, &name, &baseURL, &icon, &isActive, &roundRobin, &proxyID, &proxyEnabled, &createdAt,
-			&providerType, &authType, &builtinID, &roundRobinEnabled, &supportsAnthropic,
+			&providerType, &authType, &builtinID, &roundRobinEnabled, &supportsAnthropic, &billingMode,
 			&totalKeys, &activeKeys, &modelCount)
 
 		list = append(list, map[string]interface{}{
@@ -196,6 +295,7 @@ func providerList(w http.ResponseWriter, r *http.Request) {
 			"builtin_id":          builtinID,
 			"round_robin_enabled": roundRobinEnabled == 1,
 			"supports_anthropic":  supportsAnthropic == 1,
+			"billing_mode":        billingMode,
 			"key_count":           totalKeys,
 			"active_key_count":    activeKeys,
 			"model_count":         modelCount,
@@ -333,7 +433,7 @@ func providerRoutes(w http.ResponseWriter, r *http.Request) {
 	// /api/providers/:id/keys/enable-all
 	if len(parts) == 3 && parts[1] == "keys" && parts[2] == "enable-all" {
 		if r.Method == "POST" {
-			result, err := db.DB.Exec("UPDATE api_keys SET is_active=1 WHERE provider_id=?", id)
+			result, err := db.DB.Exec("UPDATE api_keys SET is_active=1, fail_count=0, last_error='' WHERE provider_id=?", id)
 			if err != nil {
 				writeError(w, 500, err.Error())
 				return
@@ -535,14 +635,15 @@ func providerRoutes(w http.ResponseWriter, r *http.Request) {
 
 func providerGet(w http.ResponseWriter, r *http.Request, id string) {
 	var name, baseURL, icon, proxyID, createdAt, providerType, authType, builtinID, customHeaders string
+	var billingMode string
 	var isActive, roundRobin, proxyEnabled, roundRobinEnabled int
 	err := db.DB.QueryRow(
 		`SELECT name, base_url, icon, is_active, round_robin, COALESCE(proxy_id,''), COALESCE(proxy_enabled,0), created_at,
 		COALESCE(provider_type,'custom'), COALESCE(auth_type,'apikey'), COALESCE(builtin_id,''), COALESCE(round_robin_enabled,0),
-		COALESCE(custom_headers,'{}')
+		COALESCE(custom_headers,'{}'), COALESCE(billing_mode,'per_token')
 		FROM providers WHERE id=?`, id,
 	).Scan(&name, &baseURL, &icon, &isActive, &roundRobin, &proxyID, &proxyEnabled, &createdAt,
-		&providerType, &authType, &builtinID, &roundRobinEnabled, &customHeaders)
+		&providerType, &authType, &builtinID, &roundRobinEnabled, &customHeaders, &billingMode)
 	if err != nil {
 		writeError(w, 404, "provider not found")
 		return
@@ -571,6 +672,7 @@ func providerGet(w http.ResponseWriter, r *http.Request, id string) {
 		"builtin_id":          builtinID,
 		"round_robin_enabled": roundRobinEnabled == 1,
 		"custom_headers":      customHeaders,
+		"billing_mode":        billingMode,
 		"key_count":           totalKeys,
 		"active_key_count":    activeKeys,
 		"status": func() string {
@@ -590,6 +692,7 @@ func providerUpdate(w http.ResponseWriter, r *http.Request, id string) {
 		IsActive      *bool   `json:"is_active"`
 		RoundRobin    *bool   `json:"round_robin"`
 		CustomHeaders *string `json:"custom_headers"`
+		BillingMode   *string `json:"billing_mode"`
 	}
 	if err := parseBody(r, &body); err != nil {
 		writeError(w, 400, "invalid json")
@@ -630,6 +733,16 @@ func providerUpdate(w http.ResponseWriter, r *http.Request, id string) {
 		sets = append(sets, "custom_headers=?")
 		args = append(args, *body.CustomHeaders)
 	}
+	if body.BillingMode != nil {
+		switch *body.BillingMode {
+		case billingModePerToken, billingModeSubscription, billingModeFree:
+		default:
+			writeError(w, 400, "billing_mode must be per_token, subscription or free")
+			return
+		}
+		sets = append(sets, "billing_mode=?")
+		args = append(args, *body.BillingMode)
+	}
 	if len(sets) == 0 {
 		writeError(w, 400, "nothing to update")
 		return
@@ -643,6 +756,16 @@ func providerUpdate(w http.ResponseWriter, r *http.Request, id string) {
 	if err != nil {
 		writeError(w, 500, err.Error())
 		return
+	}
+	if body.BillingMode != nil {
+		// Billing mode is cached per provider and read on every logged request.
+		InvalidateBillingModeCache()
+	}
+	if body.CustomHeaders != nil {
+		// Custom headers are cached per provider and read on every request.
+		customHdrMu.Lock()
+		customHdrCache = nil
+		customHdrMu.Unlock()
 	}
 	providerGet(w, r, id)
 }
@@ -735,6 +858,8 @@ func providerPatchProxy(w http.ResponseWriter, r *http.Request, id string) {
 		writeError(w, 500, err.Error())
 		return
 	}
+	// Proxy config is cached per provider and read on every request.
+	invalidateProxyConfigCache()
 	providerGet(w, r, id)
 }
 
@@ -775,72 +900,252 @@ func providerTestPrompt(w http.ResponseWriter, r *http.Request, providerID strin
 	}
 
 	// Get keys: specific key_id or all active keys
-	// For connection-type providers, also check api_keys with key_type='oauth'
-	var rows *sql.Rows
-	if authType == "connection" && keyIDStr != "" {
-		// User selected a specific key — look it up directly (works for both apikey and oauth)
-		rows, err = db.DB.Query("SELECT id, name, key_encrypted, COALESCE(account_id,'') FROM api_keys WHERE id=? AND provider_id=?", keyIDStr, providerID)
-	} else if authType == "connection" {
-		// No specific key selected — get all active keys (including oauth-type)
-		rows, err = db.DB.Query("SELECT id, name, key_encrypted, COALESCE(account_id,'') FROM api_keys WHERE provider_id=? AND is_active=1", providerID)
-	} else if keyIDStr != "" {
-		rows, err = db.DB.Query("SELECT id, name, key_encrypted, COALESCE(account_id,'') FROM api_keys WHERE id=? AND provider_id=?", keyIDStr, providerID)
+	type testKey struct{ id, name, keyVal, accountID string }
+	var keys []testKey
+	if keyIDStr != "" {
+		var k testKey
+		scanErr := db.DB.QueryRow("SELECT id, name, key_encrypted, COALESCE(account_id,'') FROM api_keys WHERE id=? AND provider_id=?", keyIDStr, providerID).Scan(&k.id, &k.name, &k.keyVal, &k.accountID)
+		if scanErr == nil {
+			keys = append(keys, k)
+		}
 	} else {
-		rows, err = db.DB.Query("SELECT id, name, key_encrypted, COALESCE(account_id,'') FROM api_keys WHERE provider_id=? AND is_active=1", providerID)
-	}
-	if err != nil {
-		writeError(w, 500, err.Error())
-		return
-	}
-	if rows != nil {
-		defer rows.Close()
+		rows, qErr := db.DB.Query("SELECT id, name, key_encrypted, COALESCE(account_id,'') FROM api_keys WHERE provider_id=? AND is_active=1", providerID)
+		if qErr == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var k testKey
+				rows.Scan(&k.id, &k.name, &k.keyVal, &k.accountID)
+				keys = append(keys, k)
+			}
+		}
 	}
 
-	// Check if we got any keys, if not fallback to connections
+	// Fallback: if no api_keys found, try provider_connections (OAuth tokens)
+	if len(keys) == 0 {
+		var connQuery string
+		var connArgs []interface{}
+		if keyIDStr != "" {
+			connQuery = "SELECT id, COALESCE(name,''), COALESCE(email,''), COALESCE(access_token, COALESCE(api_key,'')), COALESCE(refresh_token,''), COALESCE(expires_at,0) FROM provider_connections WHERE id=? AND provider_id=? AND is_active=1"
+			connArgs = []interface{}{keyIDStr, providerID}
+		} else {
+			connQuery = "SELECT id, COALESCE(name,''), COALESCE(email,''), COALESCE(access_token, COALESCE(api_key,'')), COALESCE(refresh_token,''), COALESCE(expires_at,0) FROM provider_connections WHERE provider_id=? AND is_active=1 ORDER BY created_at ASC"
+			connArgs = []interface{}{providerID}
+		}
+		connRows, connErr := db.DB.Query(connQuery, connArgs...)
+		if connErr == nil {
+			defer connRows.Close()
+			for connRows.Next() {
+				var connID, connName, connEmail, connToken, connRefresh string
+				var connExpires int64
+				connRows.Scan(&connID, &connName, &connEmail, &connToken, &connRefresh, &connExpires)
+				if connToken == "" && connRefresh == "" {
+					continue
+				}
+				// Refresh token if expired
+				if isCodexOAuthProviderID(providerID) {
+					connToken = refreshCodexConnection(connID, connToken, connExpires)
+				} else if providerID == "builtin-anigravity" {
+					if refreshed, rErr := ensureAnigravityToken(connID, connToken, connRefresh, connExpires); rErr == nil && refreshed != "" {
+						connToken = refreshed
+					}
+				}
+				displayName := connName
+				if connEmail != "" {
+					displayName = connEmail
+				}
+				keys = append(keys, testKey{id: "conn:" + connID, name: displayName, keyVal: connToken, accountID: ""})
+			}
+		}
+	}
 
 	var results []map[string]interface{}
-	if rows != nil {
-		for rows.Next() {
-			var keyID, keyName, keyVal, accountID string
-			rows.Scan(&keyID, &keyName, &keyVal, &accountID)
+	for _, k := range keys {
+		keyID, keyName, keyVal, accountID := k.id, k.name, k.keyVal, k.accountID
 
-			// Auto-refresh OAuth key if expired
+		// Auto-refresh OAuth key if expired (api_keys only, connections already refreshed above)
+		if !strings.HasPrefix(keyID, "conn:") {
 			var keyType string
 			db.DB.QueryRow("SELECT COALESCE(key_type,'apikey') FROM api_keys WHERE id=?", keyID).Scan(&keyType)
 			if keyType == "oauth" {
 				var expiresAt string
 				db.DB.QueryRow("SELECT COALESCE(oauth_expires_at,'') FROM api_keys WHERE id=?", keyID).Scan(&expiresAt)
-				if refreshed, err := GetOAuthKeyValue(keyID, keyVal, expiresAt); err == nil {
+				if refreshed, refErr := GetOAuthKeyValue(keyID, keyVal, expiresAt); refErr == nil {
 					keyVal = refreshed
 				}
 			}
+		}
 
-			if isCodexOAuthProviderID(providerID) {
-				start := time.Now()
-				var provName string
-				db.DB.QueryRow("SELECT name FROM providers WHERE id=?", providerID).Scan(&provName)
-				recorder := httptest.NewRecorder()
-				handleCodexProxyBody(recorder, r, map[string]interface{}{
-					"model": body.ModelID,
-					"messages": []interface{}{
-						map[string]interface{}{"role": "user", "content": body.Prompt},
-					},
-					"stream": false,
-				}, keyVal, baseURL, accountID, providerID, provName, keyID, keyName)
+		if isCodexOAuthProviderID(providerID) {
+			start := time.Now()
+			var provName string
+			db.DB.QueryRow("SELECT name FROM providers WHERE id=?", providerID).Scan(&provName)
+			recorder := httptest.NewRecorder()
+			handleCodexProxyBody(recorder, r, map[string]interface{}{
+				"model": body.ModelID,
+				"messages": []interface{}{
+					map[string]interface{}{"role": "user", "content": body.Prompt},
+				},
+				"stream": false,
+			}, keyVal, baseURL, accountID, providerID, provName, keyID, keyName, nil)
 
-				raw := recorder.Body.String()
-				result := map[string]interface{}{
-					"key_id":     keyID,
-					"key_name":   keyName,
-					"latency_ms": time.Since(start).Milliseconds(),
-					"status":     recorder.Code,
+			raw := recorder.Body.String()
+			result := map[string]interface{}{
+				"key_id":     keyID,
+				"key_name":   keyName,
+				"latency_ms": time.Since(start).Milliseconds(),
+				"status":     recorder.Code,
+			}
+			var parsed map[string]interface{}
+			if json.Unmarshal(recorder.Body.Bytes(), &parsed) == nil {
+				if choices, ok := parsed["choices"].([]interface{}); ok && len(choices) > 0 {
+					if choice, ok := choices[0].(map[string]interface{}); ok {
+						if message, ok := choice["message"].(map[string]interface{}); ok {
+							result["content"] = message["content"]
+						}
+					}
 				}
+				if usage, ok := parsed["usage"].(map[string]interface{}); ok {
+					result["usage"] = usage
+				}
+			}
+			result["response"] = raw[:min(len(raw), 500)]
+			if recorder.Code != http.StatusOK {
+				autoDisableKey(keyID, keyName, recorder.Code, "")
+			}
+			results = append(results, result)
+			continue
+		}
+
+		// Check if provider supports Anthropic natively
+		var supAnth int
+		db.DB.QueryRow("SELECT COALESCE(supports_anthropic,0) FROM providers WHERE id=?", providerID).Scan(&supAnth)
+
+		start := time.Now()
+		upstreamURL := resolveUpstreamURL(baseURL, accountID)
+		if supAnth == 1 {
+			upstreamURL = resolveAnthropicUpstreamURL(baseURL)
+		}
+		isMerlin := strings.Contains(strings.ToLower(baseURL), "getmerlin")
+
+		var reqBody []byte
+		var useAnthropic bool
+		if isMerlin {
+			reqBody, _ = json.Marshal(convertToMerlinBody(map[string]interface{}{
+				"messages": []map[string]string{{"role": "user", "content": body.Prompt}},
+			}, body.ModelID))
+		} else if supAnth == 1 {
+			// Anthropic-native provider — use Anthropic format
+			useAnthropic = true
+			reqBody, _ = json.Marshal(map[string]interface{}{
+				"model":      body.ModelID,
+				"messages":   []map[string]interface{}{{"role": "user", "content": body.Prompt}},
+				"max_tokens": 1000,
+			})
+		} else {
+			reqBody, _ = json.Marshal(map[string]interface{}{
+				"model":      body.ModelID,
+				"messages":   []map[string]string{{"role": "user", "content": body.Prompt}},
+				"max_tokens": 1000,
+			})
+		}
+
+		req, _ := http.NewRequest("POST", upstreamURL, strings.NewReader(string(reqBody)))
+		req.Header.Set("Content-Type", "application/json")
+
+		if useAnthropic {
+			// Anthropic-native: x-api-key + User-Agent for Agent Router
+			req.Header.Set("x-api-key", keyVal)
+			req.Header.Set("anthropic-version", "2023-06-01")
+			if strings.Contains(strings.ToLower(baseURL), "agentrouter") {
+				req.Header.Set("User-Agent", "claude-cli/2.1.223 (external, Claude Code)")
+			}
+		} else {
+			req.Header.Set("Authorization", "Bearer "+keyVal)
+			if strings.Contains(baseURL, "kimchi") {
+				req.Header.Set("User-Agent", "kimchi/0.1.50")
+			}
+		}
+		if isMerlin {
+			req.Header.Set("x-merlin-version", "web-merlin")
+			req.Header.Set("x-request-timestamp", time.Now().Format("2006-01-02T15:04:05.000-07:00"))
+			req.Header.Set("Accept", "text/event-stream")
+		}
+
+		client := &http.Client{Timeout: 30 * time.Second}
+		proxyUsed := ""
+		if proxyURL := getProviderProxy(providerID); proxyURL != "" {
+			if transport, err := cachedProxyTransport(proxyURL); err == nil {
+				client.Transport = transport
+				proxyUsed = proxyURL
+			}
+		}
+		resp, err := client.Do(req)
+		latency := time.Since(start).Milliseconds()
+
+		result := map[string]interface{}{
+			"key_id":     keyID,
+			"key_name":   keyName,
+			"latency_ms": latency,
+			"proxy":      proxyUsed,
+		}
+		if err != nil {
+			result["error"] = err.Error()
+			result["status"] = 0
+		} else {
+			defer resp.Body.Close()
+			buf := new(strings.Builder)
+			io.Copy(buf, resp.Body)
+			raw := buf.String()
+			result["status"] = resp.StatusCode
+
+			if isMerlin {
+				// Parse Merlin SSE response
+				var textParts []string
+				currentEvent := ""
+				for _, line := range strings.Split(raw, "\n") {
+					line = strings.TrimSpace(line)
+					if strings.HasPrefix(line, "event:") {
+						currentEvent = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+						continue
+					}
+					if !strings.HasPrefix(line, "data:") || currentEvent != "message" {
+						continue
+					}
+					dataStr := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+					var data map[string]interface{}
+					if json.Unmarshal([]byte(dataStr), &data) == nil {
+						if msgData, ok := data["data"].(map[string]interface{}); ok {
+							if text, ok := msgData["text"].(string); ok && text != "" {
+								textParts = append(textParts, text)
+							}
+						}
+					}
+				}
+				result["content"] = strings.Join(textParts, "")
+				result["response"] = raw[:min(len(raw), 500)]
+			} else if useAnthropic {
+				// Parse Anthropic JSON response
 				var parsed map[string]interface{}
-				if json.Unmarshal(recorder.Body.Bytes(), &parsed) == nil {
+				if json.Unmarshal([]byte(raw), &parsed) == nil {
+					if content, ok := parsed["content"].([]interface{}); ok && len(content) > 0 {
+						if block, ok := content[0].(map[string]interface{}); ok {
+							result["content"] = block["text"]
+						}
+					}
+					if usage, ok := parsed["usage"].(map[string]interface{}); ok {
+						result["usage"] = usage
+					}
+				}
+				result["response"] = raw[:min(len(raw), 500)]
+			} else {
+				// Parse OpenAI JSON response
+				var parsed map[string]interface{}
+				if json.Unmarshal([]byte(raw), &parsed) == nil {
 					if choices, ok := parsed["choices"].([]interface{}); ok && len(choices) > 0 {
-						if choice, ok := choices[0].(map[string]interface{}); ok {
-							if message, ok := choice["message"].(map[string]interface{}); ok {
-								result["content"] = message["content"]
+						if msg, ok := choices[0].(map[string]interface{}); ok {
+							if m, ok := msg["message"].(map[string]interface{}); ok {
+								result["content"] = m["content"]
+								result["reasoning_content"] = m["reasoning_content"]
 							}
 						}
 					}
@@ -849,161 +1154,15 @@ func providerTestPrompt(w http.ResponseWriter, r *http.Request, providerID strin
 					}
 				}
 				result["response"] = raw[:min(len(raw), 500)]
-				if recorder.Code != http.StatusOK {
-					autoDisableKey(keyID, keyName, recorder.Code, "")
-				}
-				results = append(results, result)
-				continue
 			}
 
-			// Check if provider supports Anthropic natively
-			var supAnth int
-			db.DB.QueryRow("SELECT COALESCE(supports_anthropic,0) FROM providers WHERE id=?", providerID).Scan(&supAnth)
-
-			start := time.Now()
-			upstreamURL := resolveUpstreamURL(baseURL, accountID)
-			if supAnth == 1 {
-				upstreamURL = resolveAnthropicUpstreamURL(baseURL)
+			// Auto-disable key on auth failure or payment required
+			if resp.StatusCode != 200 {
+				autoDisableKey(keyID, keyName, resp.StatusCode, "")
 			}
-			isMerlin := strings.Contains(strings.ToLower(baseURL), "getmerlin")
-
-			var reqBody []byte
-			var useAnthropic bool
-			if isMerlin {
-				reqBody, _ = json.Marshal(convertToMerlinBody(map[string]interface{}{
-					"messages": []map[string]string{{"role": "user", "content": body.Prompt}},
-				}, body.ModelID))
-			} else if supAnth == 1 {
-				// Anthropic-native provider — use Anthropic format
-				useAnthropic = true
-				reqBody, _ = json.Marshal(map[string]interface{}{
-					"model":      body.ModelID,
-					"messages":   []map[string]interface{}{{"role": "user", "content": body.Prompt}},
-					"max_tokens": 1000,
-				})
-			} else {
-				reqBody, _ = json.Marshal(map[string]interface{}{
-					"model":      body.ModelID,
-					"messages":   []map[string]string{{"role": "user", "content": body.Prompt}},
-					"max_tokens": 1000,
-				})
-			}
-
-			req, _ := http.NewRequest("POST", upstreamURL, strings.NewReader(string(reqBody)))
-			req.Header.Set("Content-Type", "application/json")
-
-			if useAnthropic {
-				// Anthropic-native: x-api-key + User-Agent for Agent Router
-				req.Header.Set("x-api-key", keyVal)
-				req.Header.Set("anthropic-version", "2023-06-01")
-				if strings.Contains(strings.ToLower(baseURL), "agentrouter") {
-					req.Header.Set("User-Agent", "claude-cli/2.1.223 (external, Claude Code)")
-				}
-			} else {
-				req.Header.Set("Authorization", "Bearer "+keyVal)
-				if strings.Contains(baseURL, "kimchi") {
-					req.Header.Set("User-Agent", "kimchi/0.1.50")
-				}
-			}
-			if isMerlin {
-				req.Header.Set("x-merlin-version", "web-merlin")
-				req.Header.Set("x-request-timestamp", time.Now().Format("2006-01-02T15:04:05.000-07:00"))
-				req.Header.Set("Accept", "text/event-stream")
-			}
-
-			client := &http.Client{Timeout: 30 * time.Second}
-			proxyUsed := ""
-			if proxyURL := getProviderProxy(providerID); proxyURL != "" {
-				if transport, err := makeProxyTransport(proxyURL); err == nil {
-					client.Transport = transport
-					proxyUsed = proxyURL
-				}
-			}
-			resp, err := client.Do(req)
-			latency := time.Since(start).Milliseconds()
-
-			result := map[string]interface{}{
-				"key_id":     keyID,
-				"key_name":   keyName,
-				"latency_ms": latency,
-				"proxy":      proxyUsed,
-			}
-			if err != nil {
-				result["error"] = err.Error()
-				result["status"] = 0
-			} else {
-				defer resp.Body.Close()
-				buf := new(strings.Builder)
-				io.Copy(buf, resp.Body)
-				raw := buf.String()
-				result["status"] = resp.StatusCode
-
-				if isMerlin {
-					// Parse Merlin SSE response
-					var textParts []string
-					currentEvent := ""
-					for _, line := range strings.Split(raw, "\n") {
-						line = strings.TrimSpace(line)
-						if strings.HasPrefix(line, "event:") {
-							currentEvent = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
-							continue
-						}
-						if !strings.HasPrefix(line, "data:") || currentEvent != "message" {
-							continue
-						}
-						dataStr := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-						var data map[string]interface{}
-						if json.Unmarshal([]byte(dataStr), &data) == nil {
-							if msgData, ok := data["data"].(map[string]interface{}); ok {
-								if text, ok := msgData["text"].(string); ok && text != "" {
-									textParts = append(textParts, text)
-								}
-							}
-						}
-					}
-					result["content"] = strings.Join(textParts, "")
-					result["response"] = raw[:min(len(raw), 500)]
-				} else if useAnthropic {
-					// Parse Anthropic JSON response
-					var parsed map[string]interface{}
-					if json.Unmarshal([]byte(raw), &parsed) == nil {
-						if content, ok := parsed["content"].([]interface{}); ok && len(content) > 0 {
-							if block, ok := content[0].(map[string]interface{}); ok {
-								result["content"] = block["text"]
-							}
-						}
-						if usage, ok := parsed["usage"].(map[string]interface{}); ok {
-							result["usage"] = usage
-						}
-					}
-					result["response"] = raw[:min(len(raw), 500)]
-				} else {
-					// Parse OpenAI JSON response
-					var parsed map[string]interface{}
-					if json.Unmarshal([]byte(raw), &parsed) == nil {
-						if choices, ok := parsed["choices"].([]interface{}); ok && len(choices) > 0 {
-							if msg, ok := choices[0].(map[string]interface{}); ok {
-								if m, ok := msg["message"].(map[string]interface{}); ok {
-									result["content"] = m["content"]
-									result["reasoning_content"] = m["reasoning_content"]
-								}
-							}
-						}
-						if usage, ok := parsed["usage"].(map[string]interface{}); ok {
-							result["usage"] = usage
-						}
-					}
-					result["response"] = raw[:min(len(raw), 500)]
-				}
-
-				// Auto-disable key on auth failure or payment required
-				if resp.StatusCode != 200 {
-					autoDisableKey(keyID, keyName, resp.StatusCode, "")
-				}
-			}
-			results = append(results, result)
 		}
-	} // end if rows != nil
+		results = append(results, result)
+	}
 	if results == nil {
 		results = []map[string]interface{}{}
 	}
@@ -1042,86 +1201,12 @@ func providerTestPrompt(w http.ResponseWriter, r *http.Request, providerID strin
 	}
 
 	if len(formatted) == 0 {
-		// Fallback: check provider_connections for OAuth tokens
-		// If a specific connection was selected (key_id matches a connection), use that one
-		var connID, connEmail, connToken, connRefresh string
-		var connExpires int64
-		var connErr error
-		if keyIDStr != "" {
-			connErr = db.DB.QueryRow(`SELECT id, COALESCE(email,''), COALESCE(access_token, COALESCE(api_key,'')), COALESCE(refresh_token,''), COALESCE(expires_at,0)
-				FROM provider_connections WHERE id=? AND provider_id=? AND is_active=1`, keyIDStr, providerID).Scan(&connID, &connEmail, &connToken, &connRefresh, &connExpires)
-		} else {
-			connErr = db.DB.QueryRow(`SELECT id, COALESCE(email,''), COALESCE(access_token, COALESCE(api_key,'')), COALESCE(refresh_token,''), COALESCE(expires_at,0)
-				FROM provider_connections WHERE provider_id=? AND is_active=1 ORDER BY created_at DESC LIMIT 1`, providerID).Scan(&connID, &connEmail, &connToken, &connRefresh, &connExpires)
-		}
-		if connErr == nil && (connToken != "" || connRefresh != "") {
-			// Auto refresh if Anigravity
-			if providerID == "builtin-anigravity" {
-				if refreshed, rErr := ensureAnigravityToken(connID, connToken, connRefresh, connExpires); rErr == nil && refreshed != "" {
-					connToken = refreshed
-				}
-			}
-			// Use connection token to make request
-			startTime := time.Now()
-			reqBody := map[string]interface{}{
-				"model":    body.ModelID,
-				"messages": []map[string]interface{}{{"role": "user", "content": body.Prompt}},
-				"stream":   false,
-			}
-			bodyBytes, _ := json.Marshal(reqBody)
-
-			// Check if Anigravity (special handling)
-			if providerID == "builtin-anigravity" {
-				// Use Anigravity translator
-				content, latency, err := testAnigravityRequest(body.ModelID, body.Prompt, connToken)
-				if err != nil {
-					formatted = []map[string]interface{}{{"status": 500, "latency_ms": 0, "res": err.Error(), "key": connEmail}}
-				} else {
-					formatted = []map[string]interface{}{{"status": 200, "latency_ms": latency, "res": content, "key": connEmail}}
-				}
-			} else {
-				// Standard request with connection token
-				var reqURL string
-				db.DB.QueryRow("SELECT base_url FROM providers WHERE id=?", providerID).Scan(&reqURL)
-				reqURL = strings.TrimRight(reqURL, "/") + "/chat/completions"
-				req, _ := http.NewRequest("POST", reqURL, bytes.NewReader(bodyBytes))
-				req.Header.Set("Content-Type", "application/json")
-				req.Header.Set("Authorization", "Bearer "+connToken)
-				client := sharedHTTPClient
-				resp, err := client.Do(req)
-				latency := time.Since(startTime).Milliseconds()
-				if err != nil {
-					formatted = []map[string]interface{}{{"status": 502, "latency_ms": latency, "res": err.Error(), "key": connEmail}}
-				} else {
-					defer resp.Body.Close()
-					respBody, _ := io.ReadAll(resp.Body)
-					var parsed map[string]interface{}
-					json.Unmarshal(respBody, &parsed)
-					content := ""
-					if choices, ok := parsed["choices"].([]interface{}); ok && len(choices) > 0 {
-						if msg, ok := choices[0].(map[string]interface{}); ok {
-							if m, ok := msg["message"].(map[string]interface{}); ok {
-								content, _ = m["content"].(string)
-							}
-						}
-					}
-					if content == "" {
-						content = string(respBody)
-						if len(content) > 500 {
-							content = content[:500] + "..."
-						}
-					}
-					formatted = []map[string]interface{}{{"status": resp.StatusCode, "latency_ms": latency, "res": content, "key": connEmail}}
-				}
-			}
-		} else {
-			formatted = []map[string]interface{}{{
-				"status":     0,
-				"latency_ms": 0,
-				"res":        "No keys available",
-				"key":        "",
-			}}
-		}
+		formatted = []map[string]interface{}{{
+			"status":     0,
+			"latency_ms": 0,
+			"res":        "No keys available",
+			"key":        "",
+		}}
 	}
 
 	writeJSON(w, map[string]interface{}{
@@ -1173,38 +1258,76 @@ func providerTestPromptStream(w http.ResponseWriter, r *http.Request, providerID
 	var keys []keyInfo
 	if keyIDStr != "" {
 		var k keyInfo
-		err = db.DB.QueryRow("SELECT id, name, key_encrypted, COALESCE(account_id,'') FROM api_keys WHERE id=? AND provider_id=?", keyIDStr, providerID).Scan(&k.id, &k.name, &k.value, &k.accountID)
-		if err != nil {
-			writeError(w, 404, "key not found")
-			return
-		}
-		keys = append(keys, k)
-	} else {
-		rows, err := db.DB.Query("SELECT id, name, key_encrypted, COALESCE(account_id,'') FROM api_keys WHERE provider_id=? AND is_active=1", providerID)
-		if err != nil {
-			writeError(w, 500, err.Error())
-			return
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var k keyInfo
-			rows.Scan(&k.id, &k.name, &k.value, &k.accountID)
+		scanErr := db.DB.QueryRow("SELECT id, name, key_encrypted, COALESCE(account_id,'') FROM api_keys WHERE id=? AND provider_id=?", keyIDStr, providerID).Scan(&k.id, &k.name, &k.value, &k.accountID)
+		if scanErr == nil {
 			keys = append(keys, k)
 		}
+	} else {
+		rows, qErr := db.DB.Query("SELECT id, name, key_encrypted, COALESCE(account_id,'') FROM api_keys WHERE provider_id=? AND is_active=1", providerID)
+		if qErr == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var k keyInfo
+				rows.Scan(&k.id, &k.name, &k.value, &k.accountID)
+				keys = append(keys, k)
+			}
+		}
 	}
+
+	// Fallback: if no api_keys found, try provider_connections (OAuth tokens)
+	if len(keys) == 0 {
+		var connQuery string
+		var connArgs []interface{}
+		if keyIDStr != "" {
+			connQuery = "SELECT id, COALESCE(name,''), COALESCE(email,''), COALESCE(access_token, COALESCE(api_key,'')), COALESCE(refresh_token,''), COALESCE(expires_at,0) FROM provider_connections WHERE id=? AND provider_id=? AND is_active=1"
+			connArgs = []interface{}{keyIDStr, providerID}
+		} else {
+			connQuery = "SELECT id, COALESCE(name,''), COALESCE(email,''), COALESCE(access_token, COALESCE(api_key,'')), COALESCE(refresh_token,''), COALESCE(expires_at,0) FROM provider_connections WHERE provider_id=? AND is_active=1 ORDER BY created_at ASC"
+			connArgs = []interface{}{providerID}
+		}
+		connRows, connErr := db.DB.Query(connQuery, connArgs...)
+		if connErr == nil {
+			defer connRows.Close()
+			for connRows.Next() {
+				var connID, connName, connEmail, connToken, connRefresh string
+				var connExpires int64
+				connRows.Scan(&connID, &connName, &connEmail, &connToken, &connRefresh, &connExpires)
+				if connToken == "" && connRefresh == "" {
+					continue
+				}
+				// Refresh token if expired
+				if isCodexOAuthProviderID(providerID) {
+					connToken = refreshCodexConnection(connID, connToken, connExpires)
+				} else if providerID == "builtin-anigravity" {
+					if refreshed, rErr := ensureAnigravityToken(connID, connToken, connRefresh, connExpires); rErr == nil && refreshed != "" {
+						connToken = refreshed
+					}
+				}
+				displayName := connName
+				if connEmail != "" {
+					displayName = connEmail
+				}
+				keys = append(keys, keyInfo{id: "conn:" + connID, name: displayName, value: connToken, accountID: ""})
+			}
+		}
+	}
+
 	if len(keys) == 0 {
 		writeError(w, 400, "no active keys found")
 		return
 	}
 
-	// Auto-refresh OAuth keys if expired
+	// Auto-refresh OAuth keys if expired (api_keys only, connections already refreshed above)
 	for i := range keys {
+		if strings.HasPrefix(keys[i].id, "conn:") {
+			continue
+		}
 		var keyType string
 		db.DB.QueryRow("SELECT COALESCE(key_type,'apikey') FROM api_keys WHERE id=?", keys[i].id).Scan(&keyType)
 		if keyType == "oauth" {
 			var expiresAt string
 			db.DB.QueryRow("SELECT COALESCE(oauth_expires_at,'') FROM api_keys WHERE id=?", keys[i].id).Scan(&expiresAt)
-			if refreshed, err := GetOAuthKeyValue(keys[i].id, keys[i].value, expiresAt); err == nil {
+			if refreshed, refErr := GetOAuthKeyValue(keys[i].id, keys[i].value, expiresAt); refErr == nil {
 				keys[i].value = refreshed
 			}
 		}
@@ -1242,7 +1365,7 @@ func providerTestPromptStream(w http.ResponseWriter, r *http.Request, providerID
 		client := sharedHTTPClient
 		proxyUsed := ""
 		if proxyURL := getProviderProxy(providerID); proxyURL != "" {
-			if transport, perr := makeProxyTransport(proxyURL); perr == nil {
+			if transport, perr := cachedProxyTransport(proxyURL); perr == nil {
 				proxyClient := *sharedHTTPClient
 				proxyClient.Transport = transport
 				client = &proxyClient
@@ -1336,7 +1459,9 @@ func providerTestPromptStream(w http.ResponseWriter, r *http.Request, providerID
 
 		latency := time.Since(start).Milliseconds()
 		if totalTokens == 0 {
-			totalTokens = len(fullContent.String()) / 4
+			// Playground display only — the provider reported no usage, so fall
+			// back to an estimate rather than showing 0.
+			totalTokens = tokens.Estimate(fullContent.String())
 		}
 
 		// Send done for this key
@@ -1555,7 +1680,7 @@ func providerKeyTest(w http.ResponseWriter, r *http.Request, providerID, keyID s
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	if proxyURL := getProviderProxy(providerID); proxyURL != "" {
-		if transport, terr := makeProxyTransport(proxyURL); terr == nil {
+		if transport, terr := cachedProxyTransport(proxyURL); terr == nil {
 			client.Transport = transport
 		}
 	}
@@ -1972,7 +2097,7 @@ func providerModelTest(w http.ResponseWriter, r *http.Request, providerID, model
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	if proxyURL := getProviderProxy(providerID); proxyURL != "" {
-		if transport, err := makeProxyTransport(proxyURL); err == nil {
+		if transport, err := cachedProxyTransport(proxyURL); err == nil {
 			client.Transport = transport
 		}
 	}

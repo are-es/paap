@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -16,7 +17,7 @@ import (
 
 var (
 	tsCacheMu sync.RWMutex
-	tsCache   = make(map[string]string)
+	tsCache          = make(map[string]string)
 	latestTs  string = "ErIFCq8FARFNMg8p7FEUyMRblRrnnnf1ksKhFIEj28WB+p6bNvRS+Qdr/zpVq98S175EB3/nXBH3uxsMvZl+7sjmK8oPdZ7vdWJXA8U9XbFZjH6SSDVoMNZlvzbSIS2nqQLBsE8CgQIYW98T0Y81uJO9djeJhfEK8Hkr2gJOJ+BwXPbhvZP6mLkvMIv5OmLhCr5XTx5iVcOl4HNqOZ4c8Ps4ePy0M9hkYDcl3MBzW3SFPo4cAGtAVYlzAmN8rFQt17bCHFYKdJJo6HSvNcWJTTgEO5ljeetChe5sr7XDJLbdETz+6O4teuVjE+rFMGiwS4Y23uP6qCaZMo4v9cqT+rgB/UlBbexuMTf/ZxI4VpRsWMAnhf4M1sUd+PCQKAvujCmAnAgWYYKhIG8zq7820qn9662F1ZY4eXWwXPolQGlwgUCeuC/Zl+u5XT+gWse76sNg9ZoueKTcwDkHclUjxTGKj7er4CQcW0IFABHNPuSO5z0YPW6amD9b2hPK5cIMzb8HDUT3ThYQF29hnvtRlGaE2Fo2PGQmLk2+Lj3MCbdb47g0ySL9u5eDobHFIuCuylDwmQ2TUHKYaqYJumhSSrV6vmKoo2HGfCw9Fbn920uQfULwGp1RgHJsmK9bYqgw6MlXgSTdKaAEKEJI8a9cOU6/EmFUXl/s7eJD33OAm1Ow164a55iAXEwcBbTKWwqDmaciRvbCwNYNilTT86WI5qHckPKOMZM55YHPTthN54i18drZmk1+9ykvw3fTWLHMEw3jnema7EWSc9rjNqolTWAzMYEtbp7ZA54A9HE4G/bqEapifCbwDi3fLCo2U5qbaSIjqUsORByVujzZvLemOWXOPYu/KEEw+40tsblDlDbox1nk0PLkLgX0PyG6qxN0NWa9yff7P76ckxJpo7Ca9jX78Gzu"
 )
 
@@ -81,7 +82,7 @@ func getThoughtSignature(funcName, toolCallID string, msg, tm map[string]interfa
 	return latestTs
 }
 
-func anigravityRequest(w http.ResponseWriter, r *http.Request, model string, rawBody map[string]interface{}, accessToken string, isStream bool, providerID, providerName, keyID, keyName string) {
+func anigravityRequest(w http.ResponseWriter, r *http.Request, model string, rawBody map[string]interface{}, accessToken string, isStream bool, providerID, providerName, keyID, keyName string, reqDump *RequestDump) {
 	startTime := time.Now()
 	messages, _ := rawBody["messages"].([]interface{})
 	var contents []map[string]interface{}
@@ -231,17 +232,16 @@ func anigravityRequest(w http.ResponseWriter, r *http.Request, model string, raw
 		})
 	}
 
-	// Build Gemini request
-	geminiReq := map[string]interface{}{
-		"contents": contents,
-		"generationConfig": map[string]interface{}{
-			"temperature":     1.0,
-			"topP":            0.95,
-			"maxOutputTokens": 64000,
-			"thinkingConfig": map[string]interface{}{
-				"includeThoughts": true,
-			},
+	// Build Gemini request — transparent pass-through of client sampling params
+	gc := map[string]interface{}{
+		"thinkingConfig": map[string]interface{}{
+			"includeThoughts": true,
 		},
+	}
+	applyClientSampling(rawBody, gc, geminiSamplingMappings)
+	geminiReq := map[string]interface{}{
+		"contents":         contents,
+		"generationConfig": gc,
 	}
 
 	if systemInstruction != "" {
@@ -339,6 +339,7 @@ func anigravityRequest(w http.ResponseWriter, r *http.Request, model string, raw
 		action = "streamGenerateContent?alt=sse"
 	}
 	upstreamURL := fmt.Sprintf("https://daily-cloudcode-pa.googleapis.com/v1internal:%s", action)
+	reqDump.SetUpstream(providerName, upstreamURL, geminiReq)
 
 	req, _ := http.NewRequest("POST", upstreamURL, bytes.NewReader(bodyBytes))
 	req.Header.Set("Content-Type", "application/json")
@@ -376,10 +377,10 @@ func anigravityRequest(w http.ResponseWriter, r *http.Request, model string, raw
 					var retryEmail string
 					db.DB.QueryRow("SELECT COALESCE(email, name, '') FROM provider_connections WHERE id=?", connID).Scan(&retryEmail)
 					if isStream {
-						handleAnigravityStreaming(w, retryResp, providerID, providerName, model, connID, retryEmail, startTime)
+						handleAnigravityStreaming(w, retryResp, providerID, providerName, model, connID, retryEmail, startTime, reqDump)
 					} else {
 						latencyMs := time.Since(startTime).Milliseconds()
-						handleAnigravityNonStreaming(w, retryResp, providerID, providerName, model, connID, retryEmail, latencyMs)
+						handleAnigravityNonStreaming(w, retryResp, providerID, providerName, model, connID, retryEmail, latencyMs, reqDump)
 					}
 					return
 				}
@@ -394,10 +395,10 @@ func anigravityRequest(w http.ResponseWriter, r *http.Request, model string, raw
 	if resp.StatusCode == 200 {
 		autoDisableKey(keyID, keyName, 200, "")
 		if isStream {
-			handleAnigravityStreaming(w, resp, providerID, providerName, model, keyID, keyName, startTime)
+			handleAnigravityStreaming(w, resp, providerID, providerName, model, keyID, keyName, startTime, reqDump)
 		} else {
 			latencyMs := time.Since(startTime).Milliseconds()
-			handleAnigravityNonStreaming(w, resp, providerID, providerName, model, keyID, keyName, latencyMs)
+			handleAnigravityNonStreaming(w, resp, providerID, providerName, model, keyID, keyName, latencyMs, reqDump)
 		}
 		return
 	}
@@ -447,10 +448,10 @@ func anigravityRequest(w http.ResponseWriter, r *http.Request, model string, raw
 			defer resp2.Body.Close()
 			autoDisableKey(nextID, nextName, 200, "")
 			if isStream {
-				handleAnigravityStreaming(w, resp2, providerID, providerName, model, nextID, nextName, startTime)
+				handleAnigravityStreaming(w, resp2, providerID, providerName, model, nextID, nextName, startTime, reqDump)
 			} else {
 				latencyMs := time.Since(startTime).Milliseconds()
-				handleAnigravityNonStreaming(w, resp2, providerID, providerName, model, nextID, nextName, latencyMs)
+				handleAnigravityNonStreaming(w, resp2, providerID, providerName, model, nextID, nextName, latencyMs, reqDump)
 			}
 			return
 		}
@@ -710,18 +711,94 @@ type geminiCandidate struct {
 	FinishReason string `json:"finishReason"`
 }
 
+// geminiUsageMetadata is the Gemini usage block.
+//
+// Two Gemini-specific quirks drive the mapping below:
+//   - thoughtsTokenCount is reported SEPARATELY from candidatesTokenCount, and
+//     totalTokenCount = promptTokenCount + candidatesTokenCount + thoughtsTokenCount.
+//     Thinking tokens are billable output.
+//   - promptTokenCount ALREADY INCLUDES cachedContentTokenCount, so fresh input
+//     is promptTokenCount - cachedContentTokenCount (never negative).
+type geminiUsageMetadata struct {
+	PromptTokenCount        int `json:"promptTokenCount"`
+	CandidatesTokenCount    int `json:"candidatesTokenCount"`
+	TotalTokenCount         int `json:"totalTokenCount"`
+	ThoughtsTokenCount      int `json:"thoughtsTokenCount"`
+	CachedContentTokenCount int `json:"cachedContentTokenCount"`
+}
+
 type geminiResponse struct {
-	Candidates    []geminiCandidate `json:"candidates"`
-	UsageMetadata *struct {
-		PromptTokenCount     int `json:"promptTokenCount"`
-		CandidatesTokenCount int `json:"candidatesTokenCount"`
-		TotalTokenCount      int `json:"totalTokenCount"`
-		ThoughtsTokenCount   int `json:"thoughtsTokenCount"`
-	} `json:"usageMetadata"`
+	Candidates    []geminiCandidate    `json:"candidates"`
+	UsageMetadata *geminiUsageMetadata `json:"usageMetadata"`
+}
+
+// geminiTokenCounts maps a Gemini usage block onto the split token counters used
+// for logging and pricing. Reasoning tokens are kept out of Out so they can be
+// priced separately; cached prompt tokens are moved out of InFresh.
+func geminiTokenCounts(u *geminiUsageMetadata) tokenCounts {
+	if u == nil {
+		return tokenCounts{}
+	}
+	inFresh := u.PromptTokenCount - u.CachedContentTokenCount
+	if inFresh < 0 {
+		inFresh = 0
+	}
+	return tokenCounts{
+		InFresh:   inFresh,
+		CacheRead: u.CachedContentTokenCount,
+		Out:       u.CandidatesTokenCount,
+		Reasoning: u.ThoughtsTokenCount,
+	}
+}
+
+// geminiUsageMap builds the client-facing OpenAI-shaped usage object.
+// completion_tokens includes thinking tokens so it reconciles with total_tokens;
+// completion_tokens_details.reasoning_tokens lets clients split it back out.
+func geminiUsageMap(u *geminiUsageMetadata) map[string]interface{} {
+	if u == nil {
+		return nil
+	}
+	usageMap := map[string]interface{}{
+		"prompt_tokens":     u.PromptTokenCount,
+		"completion_tokens": u.CandidatesTokenCount + u.ThoughtsTokenCount,
+		"total_tokens":      u.TotalTokenCount,
+	}
+	if u.ThoughtsTokenCount > 0 {
+		usageMap["completion_tokens_details"] = map[string]interface{}{
+			"reasoning_tokens": u.ThoughtsTokenCount,
+		}
+	}
+	if u.CachedContentTokenCount > 0 {
+		usageMap["prompt_tokens_details"] = map[string]interface{}{
+			"cached_tokens": u.CachedContentTokenCount,
+		}
+	}
+	return usageMap
+}
+
+// geminiUsageReconciles reports whether prompt + candidates + thoughts adds up
+// to totalTokenCount. An absent block or a zero total is treated as reconciled
+// because there is nothing to check.
+func geminiUsageReconciles(u *geminiUsageMetadata) bool {
+	if u == nil || u.TotalTokenCount <= 0 {
+		return true
+	}
+	return u.PromptTokenCount+u.CandidatesTokenCount+u.ThoughtsTokenCount == u.TotalTokenCount
+}
+
+// warnGeminiUsageMismatch logs a warning when the usage numbers do not add up.
+// It never fails the request: the upstream answer is already valid.
+func warnGeminiUsageMismatch(modelID string, u *geminiUsageMetadata) {
+	if geminiUsageReconciles(u) {
+		return
+	}
+	log.Printf("[anigravity] usage reconciliation mismatch model=%s prompt=%d candidates=%d thoughts=%d cached=%d sum=%d totalTokenCount=%d",
+		modelID, u.PromptTokenCount, u.CandidatesTokenCount, u.ThoughtsTokenCount, u.CachedContentTokenCount,
+		u.PromptTokenCount+u.CandidatesTokenCount+u.ThoughtsTokenCount, u.TotalTokenCount)
 }
 
 // handleAnigravityNonStreaming converts Gemini response to OpenAI format and logs it
-func handleAnigravityNonStreaming(w http.ResponseWriter, resp *http.Response, providerID, providerName, modelID, keyID, keyName string, latencyMs int64) {
+func handleAnigravityNonStreaming(w http.ResponseWriter, resp *http.Response, providerID, providerName, modelID, keyID, keyName string, latencyMs int64, reqDump *RequestDump) {
 	body, _ := io.ReadAll(resp.Body)
 
 	var wrapper struct {
@@ -820,30 +897,18 @@ func handleAnigravityNonStreaming(w http.ResponseWriter, resp *http.Response, pr
 	}
 
 	if geminiResp.UsageMetadata != nil {
-		usageMap := map[string]interface{}{
-			"prompt_tokens":     geminiResp.UsageMetadata.PromptTokenCount,
-			"completion_tokens": geminiResp.UsageMetadata.CandidatesTokenCount,
-			"total_tokens":      geminiResp.UsageMetadata.TotalTokenCount,
-		}
-		if geminiResp.UsageMetadata.ThoughtsTokenCount > 0 {
-			usageMap["completion_tokens_details"] = map[string]interface{}{
-				"reasoning_tokens": geminiResp.UsageMetadata.ThoughtsTokenCount,
-			}
-		}
-		openaiResp["usage"] = usageMap
+		warnGeminiUsageMismatch(modelID, geminiResp.UsageMetadata)
+		openaiResp["usage"] = geminiUsageMap(geminiResp.UsageMetadata)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(openaiResp)
 
 	// Log the request accurately with actual connection email/name and model
-	promptTokens, completionTokens := 0, 0
-	if geminiResp.UsageMetadata != nil {
-		promptTokens = geminiResp.UsageMetadata.PromptTokenCount
-		completionTokens = geminiResp.UsageMetadata.CandidatesTokenCount
-	}
-	logProxyRequest(providerID, providerName, modelID, keyID, keyName, "", "",
-		200, promptTokens, completionTokens, latencyMs, "", nil)
+	counts := geminiTokenCounts(geminiResp.UsageMetadata)
+	logProxyRequestSplit(providerID, providerName, modelID, keyID, keyName, "", "",
+		200, counts, latencyMs, "", nil, "", "", 0, 0)
+	reqDump.Finish(200, latencyMs, counts.TotalIn(), counts.TotalOut(), nil)
 	TrafficLog(TrafficEntry{
 		Model:        modelID,
 		Provider:     providerName,
@@ -851,13 +916,13 @@ func handleAnigravityNonStreaming(w http.ResponseWriter, resp *http.Response, pr
 		LatencyMs:    latencyMs,
 		CompressMode: "off",
 		IsStream:     false,
-		TokensIn:     promptTokens,
-		TokensOut:    completionTokens,
+		TokensIn:     counts.TotalIn(),
+		TokensOut:    counts.TotalOut(),
 	})
 }
 
 // handleAnigravityStreaming converts Gemini SSE to OpenAI SSE format and logs it
-func handleAnigravityStreaming(w http.ResponseWriter, resp *http.Response, providerID, providerName, modelID, keyID, keyName string, startTime time.Time) {
+func handleAnigravityStreaming(w http.ResponseWriter, resp *http.Response, providerID, providerName, modelID, keyID, keyName string, startTime time.Time, reqDump *RequestDump) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -872,12 +937,7 @@ func handleAnigravityStreaming(w http.ResponseWriter, resp *http.Response, provi
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
 
-	var lastUsage *struct {
-		PromptTokenCount     int
-		CandidatesTokenCount int
-		TotalTokenCount      int
-		ThoughtsTokenCount   int
-	}
+	var lastUsage *geminiUsageMetadata
 	var lastFinishReason string
 	var streamThoughtSig string
 	toolCallIdx := 0
@@ -908,17 +968,8 @@ func handleAnigravityStreaming(w http.ResponseWriter, resp *http.Response, provi
 		}
 
 		if geminiChunk.UsageMetadata != nil {
-			lastUsage = &struct {
-				PromptTokenCount     int
-				CandidatesTokenCount int
-				TotalTokenCount      int
-				ThoughtsTokenCount   int
-			}{
-				PromptTokenCount:     geminiChunk.UsageMetadata.PromptTokenCount,
-				CandidatesTokenCount: geminiChunk.UsageMetadata.CandidatesTokenCount,
-				TotalTokenCount:      geminiChunk.UsageMetadata.TotalTokenCount,
-				ThoughtsTokenCount:   geminiChunk.UsageMetadata.ThoughtsTokenCount,
-			}
+			usageCopy := *geminiChunk.UsageMetadata
+			lastUsage = &usageCopy
 		}
 
 		// Convert finish_reason - only used in the final chunk
@@ -1040,17 +1091,8 @@ func handleAnigravityStreaming(w http.ResponseWriter, resp *http.Response, provi
 				},
 			}
 			if lastUsage != nil {
-				usageMap := map[string]interface{}{
-					"prompt_tokens":     lastUsage.PromptTokenCount,
-					"completion_tokens": lastUsage.CandidatesTokenCount,
-					"total_tokens":      lastUsage.TotalTokenCount,
-				}
-				if lastUsage.ThoughtsTokenCount > 0 {
-					usageMap["completion_tokens_details"] = map[string]interface{}{
-						"reasoning_tokens": lastUsage.ThoughtsTokenCount,
-					}
-				}
-				finalChunk["usage"] = usageMap
+				warnGeminiUsageMismatch(modelID, lastUsage)
+				finalChunk["usage"] = geminiUsageMap(lastUsage)
 			}
 			chunkBytes, _ := json.Marshal(finalChunk)
 			fmt.Fprintf(w, "data: %s\n\n", string(chunkBytes))
@@ -1063,14 +1105,11 @@ func handleAnigravityStreaming(w http.ResponseWriter, resp *http.Response, provi
 	flusher.Flush()
 
 	// Log the streaming request
-	promptTokens, completionTokens := 0, 0
-	if lastUsage != nil {
-		promptTokens = lastUsage.PromptTokenCount
-		completionTokens = lastUsage.CandidatesTokenCount
-	}
+	counts := geminiTokenCounts(lastUsage)
 	latencyMs := time.Since(startTime).Milliseconds()
-	logProxyRequest(providerID, providerName, modelID, keyID, keyName, "", "",
-		200, promptTokens, completionTokens, latencyMs, "", nil)
+	logProxyRequestSplit(providerID, providerName, modelID, keyID, keyName, "", "",
+		200, counts, latencyMs, "", nil, "", "", 0, 0)
+	reqDump.Finish(200, latencyMs, counts.TotalIn(), counts.TotalOut(), nil)
 	TrafficLog(TrafficEntry{
 		Model:        modelID,
 		Provider:     providerName,
@@ -1078,8 +1117,8 @@ func handleAnigravityStreaming(w http.ResponseWriter, resp *http.Response, provi
 		LatencyMs:    latencyMs,
 		CompressMode: "off",
 		IsStream:     true,
-		TokensIn:     promptTokens,
-		TokensOut:    completionTokens,
+		TokensIn:     counts.TotalIn(),
+		TokensOut:    counts.TotalOut(),
 	})
 }
 

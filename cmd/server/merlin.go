@@ -16,6 +16,7 @@ import (
 	"golang.org/x/net/websocket"
 
 	"github.com/dolvin/paap/internal/db"
+	"github.com/dolvin/paap/internal/tokens"
 )
 
 // ── Merlin Auth ─────────────────────────────────────────
@@ -248,7 +249,12 @@ func generateUUID() string {
 	return hex.EncodeToString(b)
 }
 
-// convertToMerlinBody converts OpenAI request body to Merlin format
+// convertToMerlinBody converts OpenAI request body to Merlin format.
+// ponytail: Merlin's API is a browser-based chat proxy that flattens all
+// messages into a single content string. It has no concept of sampling params
+// (temperature, top_p, etc.) — those are controlled by Merlin's own UI settings.
+// Client sampling params will appear in param_diff.dropped so they're visible
+// rather than silently swallowed.
 func convertToMerlinBody(rawBody map[string]interface{}, modelID string) map[string]interface{} {
 	// Flatten messages into single content string
 	messages, _ := rawBody["messages"].([]interface{})
@@ -316,8 +322,22 @@ func convertToMerlinBody(rawBody map[string]interface{}, modelID string) map[str
 	}
 }
 
-// handleMerlinStreaming proxies Merlin SSE → OpenAI SSE format
-func handleMerlinStreaming(w http.ResponseWriter, upstreamResp *http.Response, modelID string) {
+// merlinEstimatedInput estimates prompt tokens from the flattened Merlin request
+// body. Merlin reports no usage at all, so estimation is the only option here —
+// every count derived from it must carry Estimated=true.
+func merlinEstimatedInput(upstreamBody map[string]interface{}) int {
+	msg, ok := upstreamBody["message"].(map[string]interface{})
+	if !ok {
+		return 0
+	}
+	content, _ := msg["content"].(string)
+	return tokens.Estimate(content)
+}
+
+// handleMerlinStreaming proxies Merlin SSE → OpenAI SSE format.
+// Merlin never reports token usage, so the returned counts are estimates
+// (Estimated=true) derived from the request and the accumulated output text.
+func handleMerlinStreaming(w http.ResponseWriter, upstreamResp *http.Response, modelID string, inputTokens int) tokenCounts {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -327,12 +347,24 @@ func handleMerlinStreaming(w http.ResponseWriter, upstreamResp *http.Response, m
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		log.Println("Warning: ResponseWriter does not support Flushing")
-		return
+		return tokenCounts{InFresh: inputTokens, Estimated: true}
 	}
 
 	reader := bufio.NewReader(upstreamResp.Body)
 	currentEvent := ""
 	chatID := fmt.Sprintf("chatcmpl-merlin-%d", time.Now().Unix())
+
+	// Merlin sends no usage, so output tokens are estimated from the text and
+	// reasoning we relay to the client.
+	var outText, reasoningText strings.Builder
+	estimated := func() tokenCounts {
+		return tokenCounts{
+			InFresh:   inputTokens,
+			Out:       tokens.Estimate(outText.String()),
+			Reasoning: tokens.Estimate(reasoningText.String()),
+			Estimated: true,
+		}
+	}
 
 	for {
 		line, err := reader.ReadString('\n')
@@ -377,7 +409,7 @@ func handleMerlinStreaming(w http.ResponseWriter, upstreamResp *http.Response, m
 			errBytes, _ := json.Marshal(errChunk)
 			fmt.Fprintf(w, "data: %s\n\n", errBytes)
 			flusher.Flush()
-			return
+			return estimated()
 		}
 
 		if currentEvent == "message" {
@@ -401,7 +433,7 @@ func handleMerlinStreaming(w http.ResponseWriter, upstreamResp *http.Response, m
 						fmt.Fprintf(w, "data: %s\n\n", doneBytes)
 						fmt.Fprintf(w, "data: [DONE]\n\n")
 						flusher.Flush()
-						return
+						return estimated()
 					}
 				}
 				continue
@@ -416,8 +448,10 @@ func handleMerlinStreaming(w http.ResponseWriter, upstreamResp *http.Response, m
 			delta := map[string]interface{}{}
 			if text, ok := msgData["text"].(string); ok && text != "" {
 				delta["content"] = text
+				outText.WriteString(text)
 			} else if reasoning, ok := msgData["reasoning"].(string); ok && reasoning != "" {
 				delta["reasoning_content"] = reasoning
+				reasoningText.WriteString(reasoning)
 			} else {
 				continue
 			}
@@ -455,10 +489,12 @@ func handleMerlinStreaming(w http.ResponseWriter, upstreamResp *http.Response, m
 	fmt.Fprintf(w, "data: %s\n\n", doneBytes)
 	fmt.Fprintf(w, "data: [DONE]\n\n")
 	flusher.Flush()
+	return estimated()
 }
 
-// handleMerlinNonStreaming proxies Merlin non-streaming → OpenAI format
-func handleMerlinNonStreaming(w http.ResponseWriter, upstreamResp *http.Response, modelID string) {
+// handleMerlinNonStreaming proxies Merlin non-streaming → OpenAI format.
+// Merlin reports no usage, so the returned counts are estimates.
+func handleMerlinNonStreaming(w http.ResponseWriter, upstreamResp *http.Response, modelID string, inputTokens int) tokenCounts {
 	// Read full SSE response and extract text
 	bodyBytes, _ := io.ReadAll(upstreamResp.Body)
 	scanner := bufio.NewScanner(bytes.NewReader(bodyBytes))
@@ -505,7 +541,8 @@ func handleMerlinNonStreaming(w http.ResponseWriter, upstreamResp *http.Response
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(200)
 			w.Write(respBytes)
-			return
+			// No output was produced, so only the (estimated) input counts.
+			return tokenCounts{InFresh: inputTokens, Estimated: true}
 		}
 
 		if msgData, ok := data["data"].(map[string]interface{}); ok {
@@ -515,7 +552,14 @@ func handleMerlinNonStreaming(w http.ResponseWriter, upstreamResp *http.Response
 		}
 	}
 
-	// Build OpenAI response
+	// Build OpenAI response. Merlin sends no usage, so the counts reported to the
+	// client are estimates derived from the request and the relayed text.
+	outputText := strings.Join(textParts, "")
+	counts := tokenCounts{
+		InFresh:   inputTokens,
+		Out:       tokens.Estimate(outputText),
+		Estimated: true,
+	}
 	response := map[string]interface{}{
 		"id":      fmt.Sprintf("chatcmpl-merlin-%d", time.Now().Unix()),
 		"object":  "chat.completion",
@@ -525,14 +569,14 @@ func handleMerlinNonStreaming(w http.ResponseWriter, upstreamResp *http.Response
 			"index": 0,
 			"message": map[string]interface{}{
 				"role":    "assistant",
-				"content": strings.Join(textParts, ""),
+				"content": outputText,
 			},
 			"finish_reason": "stop",
 		}},
 		"usage": map[string]interface{}{
-			"prompt_tokens":     0,
-			"completion_tokens": 0,
-			"total_tokens":      0,
+			"prompt_tokens":     counts.TotalIn(),
+			"completion_tokens": counts.TotalOut(),
+			"total_tokens":      counts.TotalIn() + counts.TotalOut(),
 		},
 	}
 
@@ -540,4 +584,5 @@ func handleMerlinNonStreaming(w http.ResponseWriter, upstreamResp *http.Response
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(200)
 	w.Write(respBytes)
+	return counts
 }

@@ -68,6 +68,13 @@ func anthropicMessagesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Begin per-request dump
+	clientKey := ""
+	if k := r.Context().Value("gateway_key_name"); k != nil {
+		clientKey, _ = k.(string)
+	}
+	reqDump := BeginRequestDump(r.Method, r.URL.Path, clientKey, rawBody)
+
 	// Compress tool results in Anthropic format
 	messages = compressAnthropicToolResults(messages, modelName)
 	rawBody["messages"] = messages
@@ -134,7 +141,7 @@ func anthropicMessagesHandler(w http.ResponseWriter, r *http.Request) {
 
 	if supportsAnthropic == 0 {
 		// Provider does NOT support Anthropic — translate via OpenAI
-		handleAnthropicTranslated(w, r, rawBody, providerID, providerName, baseURL, modelID, keyID, keyName, keyValue, keyAccountID, isStream, startTime, toolUsed, originalModel)
+		handleAnthropicTranslated(w, r, rawBody, providerID, providerName, baseURL, modelID, keyID, keyName, keyValue, keyAccountID, isStream, startTime, toolUsed, originalModel, reqDump)
 		return
 	}
 
@@ -156,6 +163,7 @@ func anthropicMessagesHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Build upstream URL — convert OpenAI base to Anthropic endpoint
 	upstreamURL := resolveAnthropicUpstreamURL(baseURL)
+	reqDump.SetUpstream(providerName, upstreamURL, upstreamBody)
 
 	req, err := http.NewRequest("POST", upstreamURL, bytes.NewReader(bodyBytes))
 	if err != nil {
@@ -173,7 +181,7 @@ func anthropicMessagesHandler(w http.ResponseWriter, r *http.Request) {
 	var proxyUsed string
 	if proxyURL := getProviderProxy(providerID); proxyURL != "" {
 		proxyUsed = proxyURL
-		if transport, err := makeProxyTransport(proxyURL); err == nil {
+		if transport, err := cachedProxyTransport(proxyURL); err == nil {
 			proxyClient := *sharedHTTPClient
 			proxyClient.Transport = transport
 			client = &proxyClient
@@ -257,6 +265,7 @@ func anthropicMessagesHandler(w http.ResponseWriter, r *http.Request) {
 		tokensIn, tokensOut = handleAnthropicNonStreaming(w, resp)
 	}
 	logProxyRequestWithTool(providerID, providerName, modelID, keyID, keyName, "", proxyUsed, 200, tokensIn, tokensOut, latencyMs, "", nil, toolUsed, originalModel, 0, 0)
+	reqDump.Finish(200, latencyMs, tokensIn, tokensOut, nil)
 	// Add tool header in response if tool was used
 	if toolUsed != "" {
 		w.Header().Set("X-PAAP-Tool", toolUsed)
@@ -642,7 +651,7 @@ func handleAnthropicNonStreaming(w http.ResponseWriter, upstreamResp *http.Respo
 func handleAnthropicTranslated(w http.ResponseWriter, r *http.Request,
 	rawBody map[string]interface{},
 	providerID, providerName, baseURL, modelID, keyID, keyName, keyValue, keyAccountID string,
-	isStream bool, startTime time.Time, toolUsed, originalModel string) {
+	isStream bool, startTime time.Time, toolUsed, originalModel string, reqDump *RequestDump) {
 
 	// Convert Anthropic request to OpenAI format
 	openaiBody, err := translator.AnthropicToOpenAIRequest(rawBody)
@@ -672,6 +681,7 @@ func handleAnthropicTranslated(w http.ResponseWriter, r *http.Request,
 
 	// Build OpenAI-style upstream URL
 	upstreamURL := resolveUpstreamURL(baseURL, keyAccountID)
+	reqDump.SetUpstream(providerName, upstreamURL, openaiBody)
 	log.Printf("[TRANSLATE] Anthropic→OpenAI: %s %s (model=%s)", providerName, upstreamURL, modelID)
 
 	req, err := http.NewRequest("POST", upstreamURL, bytes.NewReader(bodyBytes))
@@ -688,7 +698,7 @@ func handleAnthropicTranslated(w http.ResponseWriter, r *http.Request,
 	var proxyUsed string
 	if proxyURL := getProviderProxy(providerID); proxyURL != "" {
 		proxyUsed = proxyURL
-		if transport, terr := makeProxyTransport(proxyURL); terr == nil {
+		if transport, terr := cachedProxyTransport(proxyURL); terr == nil {
 			proxyClient := *sharedHTTPClient
 			proxyClient.Transport = transport
 			client = &proxyClient
@@ -742,9 +752,11 @@ func handleAnthropicTranslated(w http.ResponseWriter, r *http.Request,
 				if isStream {
 					tIn, tOut, _ := handleTranslatedStreaming(w, resp2, modelID, estimatedInputTokens)
 					logProxyRequestWithTool(providerID, providerName, modelID, nextKeyID, nextKeyName, "", proxyUsed, 200, tIn, tOut, latencyMs, "", nil, toolUsed, originalModel, 0, 0)
+					reqDump.Finish(200, latencyMs, tIn, tOut, nil)
 				} else {
 					tIn, tOut := handleTranslatedNonStreaming(w, resp2)
 					logProxyRequestWithTool(providerID, providerName, modelID, nextKeyID, nextKeyName, "", proxyUsed, 200, tIn, tOut, latencyMs, "", nil, toolUsed, originalModel, 0, 0)
+					reqDump.Finish(200, latencyMs, tIn, tOut, nil)
 				}
 				return
 			}
@@ -763,9 +775,11 @@ func handleAnthropicTranslated(w http.ResponseWriter, r *http.Request,
 	if isStream {
 		tIn, tOut, _ := handleTranslatedStreaming(w, resp, modelID, estimatedInputTokens)
 		logProxyRequestWithTool(providerID, providerName, modelID, keyID, keyName, "", proxyUsed, 200, tIn, tOut, latencyMs, "", nil, toolUsed, originalModel, 0, 0)
+		reqDump.Finish(200, latencyMs, tIn, tOut, nil)
 	} else {
 		tIn, tOut := handleTranslatedNonStreaming(w, resp)
 		logProxyRequestWithTool(providerID, providerName, modelID, keyID, keyName, "", proxyUsed, 200, tIn, tOut, latencyMs, "", nil, toolUsed, originalModel, 0, 0)
+		reqDump.Finish(200, latencyMs, tIn, tOut, nil)
 	}
 }
 

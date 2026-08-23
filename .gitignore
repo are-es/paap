@@ -2,6 +2,7 @@
 bin/
 web/out/
 web/.next/
+.gocache/
 *.exe
 *.dll
 *.so
@@ -18,7 +19,10 @@ vendor/
 
 # Logs
 *.log
-logs/
+# Anchored to the repo root: an unanchored "logs/" also matched
+# web/src/app/logs/, silently excluding the entire logs dashboard page
+# from version control.
+/logs/
 
 # Environment
 .env

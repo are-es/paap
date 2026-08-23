@@ -6,25 +6,27 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/dolvin/paap/internal/tokens"
 )
 
 // StreamTranslator converts OpenAI SSE streaming chunks to Anthropic SSE format.
 // It maintains state across chunks to emit proper Anthropic event sequences.
 type StreamTranslator struct {
-	writer     io.Writer
-	flusher    func()
-	model      string
+	writer      io.Writer
+	flusher     func()
+	model       string
 	inputTokens int
 
-	started        bool
+	started          bool
 	messageStartSent bool
-	blockStarted   bool
-	blockIndex     int
-	hasToolCalls   bool
-	toolCallIndex  int
-	currentToolID  string
-	currentToolName string
-	currentToolArgs strings.Builder
+	blockStarted     bool
+	blockIndex       int
+	hasToolCalls     bool
+	toolCallIndex    int
+	currentToolID    string
+	currentToolName  string
+	currentToolArgs  strings.Builder
 }
 
 // NewStreamTranslator creates a new streaming translator
@@ -42,13 +44,14 @@ func (st *StreamTranslator) SetInputTokens(n int) {
 }
 
 // EstimateInputTokens estimates input tokens from an OpenAI request body.
-// Uses ~4 chars per token as a rough heuristic (works for English + code).
-// Better than showing 0 to the client.
+// This is a HEURISTIC used only to give message_start a non-zero placeholder
+// before the provider's real prompt_tokens arrives at the end of the stream.
+// Never use it for billing.
 func EstimateInputTokens(body map[string]interface{}) int {
-	var totalChars int
+	var sb strings.Builder
 
 	if system, ok := body["system"].(string); ok {
-		totalChars += len(system)
+		sb.WriteString(system)
 	}
 
 	if messages, ok := body["messages"].([]interface{}); ok {
@@ -59,15 +62,15 @@ func EstimateInputTokens(body map[string]interface{}) int {
 			}
 			switch content := msgMap["content"].(type) {
 			case string:
-				totalChars += len(content)
+				sb.WriteString(content)
 			case []interface{}:
 				for _, block := range content {
 					if blockMap, ok := block.(map[string]interface{}); ok {
 						if text, ok := blockMap["text"].(string); ok {
-							totalChars += len(text)
+							sb.WriteString(text)
 						}
 						if tc, ok := blockMap["content"].(string); ok {
-							totalChars += len(tc)
+							sb.WriteString(tc)
 						}
 					}
 				}
@@ -75,12 +78,11 @@ func EstimateInputTokens(body map[string]interface{}) int {
 		}
 	}
 
-	// ~4 chars per token is a reasonable estimate
-	tokens := totalChars / 4
-	if tokens < 100 {
-		tokens = 100 // minimum floor
+	t := tokens.Estimate(sb.String())
+	if t < 100 {
+		t = 100 // minimum floor so clients never see a suspiciously tiny prompt
 	}
-	return tokens
+	return t
 }
 
 // ProcessChunk processes a single OpenAI SSE chunk and emits Anthropic events.
@@ -289,8 +291,8 @@ func (st *StreamTranslator) emitMessageStart() {
 
 func (st *StreamTranslator) emitContentBlockStart(blockType string) {
 	st.writeEvent("content_block_start", map[string]interface{}{
-		"type":       "content_block_start",
-		"index":      0,
+		"type":  "content_block_start",
+		"index": 0,
 		"content_block": map[string]interface{}{
 			"type": blockType,
 			"text": "",
@@ -330,7 +332,7 @@ func (st *StreamTranslator) emitToolInputDelta(args string) {
 		"type":  "content_block_delta",
 		"index": st.blockIndex,
 		"delta": map[string]interface{}{
-			"type":        "input_json_delta",
+			"type":         "input_json_delta",
 			"partial_json": args,
 		},
 	})

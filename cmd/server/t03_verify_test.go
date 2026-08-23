@@ -10,10 +10,16 @@ import (
 	"github.com/dolvin/paap/internal/db"
 )
 
+// testSharedDBDir is the data dir backing the package-wide test database opened
+// by TestMain. Tests that need an isolated DB (see setupPricingDB) must reopen
+// this directory when they finish so later tests still have a live handle.
+var testSharedDBDir string
+
 func TestMain(m *testing.M) {
 	dir := filepath.Join(os.TempDir(), "paap-test-t03")
 	os.MkdirAll(dir, 0755)
 	defer os.RemoveAll(dir)
+	testSharedDBDir = dir
 	db.Init(dir)
 	code := m.Run()
 	db.Close()

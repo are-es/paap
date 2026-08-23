@@ -3,6 +3,8 @@ package compression
 import (
 	"log"
 	"strings"
+
+	"github.com/dolvin/paap/internal/tokens"
 )
 
 // ChatMessage mirrors the minimal proxy message structure.
@@ -164,11 +166,17 @@ func CompressRawMessages(messages []map[string]interface{}, level Level, modelNa
 			}
 		}
 
+		// Size guard: if compressed size >= original size, retain original content
+		if len(compressedContent) >= size {
+			compressedContent = content
+		}
+
 		if compressedContent != content {
 			c.msg["content"] = compressedContent
 			compressed++
-			origTokens := size / 4
-			newTokens := len(compressedContent) / 4
+			// Estimated token counts — used for savings reporting only, never billing.
+			origTokens := tokens.Estimate(content)
+			newTokens := tokens.Estimate(compressedContent)
 			log.Printf("[compression] msg[%d] role=%s %s %d→%d tokens (saved %d)",
 				c.idx, role, level.String(), origTokens, newTokens, origTokens-newTokens)
 		}
@@ -187,30 +195,38 @@ func CompressRawMessages(messages []map[string]interface{}, level Level, modelNa
 	return results
 }
 
-// compressLite: ANSI strip, whitespace collapse, dedup baris identik
+// compressLite: ANSI strip, whitespace collapse, consecutive duplicate collapsing
 func compressLite(content string, cfg levelConfig) string {
+	orig := content
 	if cfg.RunANSI {
 		content = StripAnsi(content)
 	}
 	if cfg.RunBlankCollapse {
 		content = CollapseBlanks(content)
 	}
-	// Dedup identical lines
+	// Collapse consecutive duplicate lines
 	lines := strings.Split(content, "\n")
-	seen := make(map[string]bool)
 	var result []string
+	var prev string
+	var hasPrev bool
 	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || !seen[trimmed] {
-			seen[trimmed] = true
-			result = append(result, line)
+		if hasPrev && line == prev {
+			continue
 		}
+		result = append(result, line)
+		prev = line
+		hasPrev = true
 	}
-	return strings.TrimSpace(strings.Join(result, "\n"))
+	res := strings.TrimSpace(strings.Join(result, "\n"))
+	if len(res) >= len(orig) {
+		return orig
+	}
+	return res
 }
 
 // compressMedium: structural (JSON minify, tabular, dedup)
 func compressMedium(content string, cfg levelConfig) string {
+	orig := content
 	// Phase 1: safe transforms
 	if cfg.RunANSI {
 		content = StripAnsi(content)
@@ -228,12 +244,17 @@ func compressMedium(content string, cfg levelConfig) string {
 		compressed = CollapseBlanks(compressed)
 	}
 
-	return strings.TrimSpace(compressed)
+	res := strings.TrimSpace(compressed)
+	if len(res) >= len(orig) {
+		return orig
+	}
+	return res
 }
 
 // compressMediumAssistant: Medium pass for assistant messages (stop at Bloat Offload)
 // No FlintChipper, BM25, Pattern Collapse, Code Dedup, List Compaction, Cross-msg Dedup
 func compressMediumAssistant(content string, cfg levelConfig) string {
+	orig := content
 	// Phase 1: safe transforms
 	if cfg.RunANSI {
 		content = StripAnsi(content)
@@ -254,11 +275,16 @@ func compressMediumAssistant(content string, cfg levelConfig) string {
 		offloaded = CollapseBlanks(offloaded)
 	}
 
-	return strings.TrimSpace(offloaded)
+	res := strings.TrimSpace(offloaded)
+	if len(res) >= len(orig) {
+		return orig
+	}
+	return res
 }
 
 // compressHigh: full pipeline (Headroom + SmartCrusher + Cache Stability + BM25)
 func compressHigh(content string, cfg levelConfig, role ...string) string {
+	orig := content
 	// Step 1: Threshold gate (size-based)
 	size := len(content)
 	if size < 50 {
@@ -337,7 +363,11 @@ func compressHigh(content string, cfg levelConfig, role ...string) string {
 		dedupedFields = CollapseBlanks(dedupedFields)
 	}
 
-	return strings.TrimSpace(dedupedFields)
+	res := strings.TrimSpace(dedupedFields)
+	if len(res) >= len(orig) {
+		return orig
+	}
+	return res
 }
 
 // CompressInterfaceMessages compresses messages via interface (for pipeline compat).
@@ -361,6 +391,9 @@ func CompressInterfaceMessages(messages []ChatMessage, level Level, modelName st
 		}
 
 		compressed := compressMedium(content, cfg)
+		if len(compressed) >= len(content) {
+			compressed = content
+		}
 		if compressed != content {
 			msg.SetContent(compressed)
 		}
