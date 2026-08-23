@@ -202,6 +202,7 @@ func anthropicMessagesHandler(w http.ResponseWriter, r *http.Request) {
 	// Handle auth failure — auto-disable key + fallback
 	if resp.StatusCode == 401 || resp.StatusCode == 403 || resp.StatusCode == 402 {
 		db.DB.Exec("UPDATE api_keys SET is_active = 0 WHERE id = ?", keyID)
+		invalidateRoutingCache()
 		log.Printf("[PAAP] Auto-disabled key %s (%s) — status %d", keyName, keyID, resp.StatusCode)
 
 		tried := map[string]bool{keyID: true}
@@ -244,6 +245,7 @@ func anthropicMessagesHandler(w http.ResponseWriter, r *http.Request) {
 			resp2.Body.Close()
 			if resp2.StatusCode == 401 || resp2.StatusCode == 403 || resp2.StatusCode == 402 {
 				db.DB.Exec("UPDATE api_keys SET is_active = 0 WHERE id = ?", nextKeyID)
+				invalidateRoutingCache()
 			}
 		}
 	}

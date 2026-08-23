@@ -37,13 +37,136 @@ func getProviderRRCounter(providerID string) *atomic.Int64 {
 // Reads round_robin_enabled (UI toggle) OR round_robin (direct DB)
 // Safe default: round-robin on DB error (spread load, not concentrate)
 func isProviderRoundRobin(providerID string) bool {
-	var rr, rrEnabled int
-	err := db.DB.QueryRow("SELECT COALESCE(round_robin,0), COALESCE(round_robin_enabled,0) FROM providers WHERE id = ?", providerID).Scan(&rr, &rrEnabled)
-	if err != nil {
-		log.Printf("[PAAP] isProviderRoundRobin DB error for %s: %v — defaulting to round-robin", providerID, err)
-		return true // safe default: spread load
+	return providerRouting(providerID).roundRobin
+}
+
+// ── Provider routing cache ──────────────────────────────────
+//
+// routeByModel and the key pickers run on every request; uncached they issue
+// 5-7 queries plus a last_used UPDATE (a SQLite write lock) per request.
+// This cache holds the read-only inputs — round-robin flag, active api_keys,
+// active OAuth connections — with a 30s TTL. Every API write path that
+// touches providers, api_keys, or provider_connections MUST call
+// invalidateRoutingCache() so a disabled key stops being picked immediately;
+// the TTL is only a safety net.
+
+type cachedKey struct {
+	id        string
+	name      string
+	value     string
+	accountID string
+	keyType   string // "apikey" | "oauth"
+	expiresAt string // oauth_expires_at, empty when unknown
+}
+
+type cachedConn struct {
+	id      string
+	name    string
+	email   string
+	token   string
+	refresh string
+	expires int64
+}
+
+type providerRoutingEntry struct {
+	roundRobin bool
+	keys       []cachedKey
+	conns      []cachedConn
+}
+
+var (
+	routingMu        sync.RWMutex
+	routingCache     map[string]providerRoutingEntry
+	routingCacheTime time.Time
+)
+
+const routingCacheTTL = 30 * time.Second
+
+func invalidateRoutingCache() {
+	routingMu.Lock()
+	routingCache = nil
+	routingMu.Unlock()
+}
+
+// loadRoutingCache reads every provider's routing inputs in 3 queries total,
+// replacing whatever was cached before.
+func loadRoutingCache() map[string]providerRoutingEntry {
+	out := map[string]providerRoutingEntry{}
+	if db.DB == nil {
+		return out
 	}
-	return rr == 1 || rrEnabled == 1
+
+	rrRows, err := db.DB.Query(`SELECT id, COALESCE(round_robin,0), COALESCE(round_robin_enabled,0)
+		FROM providers WHERE is_active = 1`)
+	if err != nil {
+		log.Printf("[PAAP] routing cache: provider query failed: %v", err)
+		return out
+	}
+	for rrRows.Next() {
+		var id string
+		var rr, rre int
+		if rrRows.Scan(&id, &rr, &rre) == nil {
+			out[id] = providerRoutingEntry{roundRobin: rr == 1 || rre == 1}
+		}
+	}
+	rrRows.Close()
+
+	keyRows, err := db.DB.Query(`SELECT provider_id, id, name, key_encrypted, COALESCE(account_id,''),
+		COALESCE(key_type,'apikey'), COALESCE(oauth_expires_at,'')
+		FROM api_keys WHERE is_active = 1 ORDER BY created_at ASC`)
+	if err != nil {
+		log.Printf("[PAAP] routing cache: api_keys query failed: %v", err)
+	} else {
+		for keyRows.Next() {
+			var provID string
+			var k cachedKey
+			if keyRows.Scan(&provID, &k.id, &k.name, &k.value, &k.accountID, &k.keyType, &k.expiresAt) == nil {
+				e := out[provID]
+				e.keys = append(e.keys, k)
+				out[provID] = e
+			}
+		}
+		keyRows.Close()
+	}
+
+	connRows, err := db.DB.Query(`SELECT provider_id, id, COALESCE(name,''), COALESCE(email,''),
+		access_token, COALESCE(refresh_token,''), COALESCE(expires_at,0)
+		FROM provider_connections WHERE is_active = 1 ORDER BY created_at ASC`)
+	if err != nil {
+		log.Printf("[PAAP] routing cache: provider_connections query failed: %v", err)
+	} else {
+		for connRows.Next() {
+			var provID string
+			var c cachedConn
+			if connRows.Scan(&provID, &c.id, &c.name, &c.email, &c.token, &c.refresh, &c.expires) == nil {
+				e := out[provID]
+				e.conns = append(e.conns, c)
+				out[provID] = e
+			}
+		}
+		connRows.Close()
+	}
+
+	routingMu.Lock()
+	routingCache = out
+	routingCacheTime = time.Now()
+	routingMu.Unlock()
+	log.Printf("[PAAP] Routing cache loaded: %d providers", len(out))
+	return out
+}
+
+func providerRouting(providerID string) providerRoutingEntry {
+	routingMu.RLock()
+	cache := routingCache
+	fresh := cache != nil && time.Since(routingCacheTime) < routingCacheTTL
+	routingMu.RUnlock()
+	if !fresh {
+		cache = loadRoutingCache()
+	}
+	if e, ok := cache[providerID]; ok {
+		return e
+	}
+	return providerRoutingEntry{roundRobin: true} // safe default: spread load
 }
 
 // autoDisableKey handles non-2xx responses.
@@ -71,6 +194,7 @@ func autoDisableKey(keyID, keyName string, statusCode int, errBody string) bool 
 		db.DB.Exec("UPDATE api_keys SET fail_count=3, last_error=?, last_tested_at=strftime('%s','now'), is_active=0 WHERE id=?",
 			trimmed, keyID)
 		log.Printf("[PAAP] Auto-disabled key %s (%s) — billing/quota exhausted (%d: %s)", keyName, keyID, statusCode, trimmed)
+		invalidateRoutingCache()
 		return true
 	}
 
@@ -82,6 +206,7 @@ func autoDisableKey(keyID, keyName string, statusCode int, errBody string) bool 
 	if fc >= 3 {
 		db.DB.Exec("UPDATE api_keys SET is_active=0 WHERE id=?", keyID)
 		log.Printf("[PAAP] Auto-disabled key %s (%s) — exceeded 3 consecutive failures (fail_count=%d, status=%d)", keyName, keyID, fc, statusCode)
+		invalidateRoutingCache()
 		return true
 	}
 
@@ -130,6 +255,7 @@ func autoDisableConnection(connID, connName string, statusCode int, errBody stri
 		db.DB.Exec("UPDATE provider_connections SET fail_count=3, last_error=?, test_status='failed', is_active=0, updated_at=? WHERE id=?",
 			trimmed, time.Now().Unix(), connID)
 		log.Printf("[PAAP] Auto-disabled connection %s (%s) — billing/quota exhausted (%d)", connName, connID, statusCode)
+		invalidateRoutingCache()
 		return true
 	}
 
@@ -140,6 +266,7 @@ func autoDisableConnection(connID, connName string, statusCode int, errBody stri
 		db.DB.Exec("UPDATE provider_connections SET fail_count=3, last_error=?, test_status='failed', is_active=0, updated_at=? WHERE id=?",
 			trimmed, time.Now().Unix(), connID)
 		log.Printf("[PAAP] Auto-disabled connection %s (%s) — account verification required (403)", connName, connID)
+		invalidateRoutingCache()
 		return true
 	}
 
@@ -151,6 +278,7 @@ func autoDisableConnection(connID, connName string, statusCode int, errBody stri
 	if fc >= 3 {
 		db.DB.Exec("UPDATE provider_connections SET is_active=0 WHERE id=?", connID)
 		log.Printf("[PAAP] Auto-disabled connection %s (%s) — exceeded 3 consecutive failures (fail_count=%d, status=%d)", connName, connID, fc, statusCode)
+		invalidateRoutingCache()
 		return true
 	}
 
@@ -1161,17 +1289,20 @@ func routeByModel(model string) (providerID, providerName, baseURL, modelID, key
 		}
 	}
 
-	// Auto-refresh OAuth key if expired
-	var keyType string
-	db.DB.QueryRow("SELECT COALESCE(key_type,'apikey') FROM api_keys WHERE id=?", keyID).Scan(&keyType)
-	if keyType == "oauth" {
-		var expiresAt string
-		db.DB.QueryRow("SELECT COALESCE(oauth_expires_at,'') FROM api_keys WHERE id=?", keyID).Scan(&expiresAt)
-		refreshed, refreshErr := GetOAuthKeyValue(keyID, keyValue, expiresAt)
-		if refreshErr != nil {
-			return "", "", "", "", "", "", "", "", fmt.Errorf("OAuth key '%s' expired and refresh failed: %v", keyName, refreshErr)
+	// Auto-refresh OAuth key if expired. Key type and expiry come from the
+	// routing cache — no extra queries on the hot path.
+	for _, k := range providerRouting(providerID).keys {
+		if k.id != keyID {
+			continue
 		}
-		keyValue = refreshed
+		if k.keyType == "oauth" {
+			refreshed, refreshErr := GetOAuthKeyValue(keyID, keyValue, k.expiresAt)
+			if refreshErr != nil {
+				return "", "", "", "", "", "", "", "", fmt.Errorf("OAuth key '%s' expired and refresh failed: %v", keyName, refreshErr)
+			}
+			keyValue = refreshed
+		}
+		break
 	}
 
 	return providerID, providerName, baseURL, modelID, keyID, keyName, keyValue, keyAccountID, nil
@@ -1257,33 +1388,13 @@ func routeByGroup(groupName string) (providerID, providerName, baseURL, modelID,
 // If round_robin is ON: rotate between all keys
 // If round_robin is OFF: fill-first (use first key until exhausted)
 func getNextActiveKey(providerID string) (keyID, keyName, keyValue, accountID string, err error) {
-	roundRobin := isProviderRoundRobin(providerID)
-
-	// Always order by created_at ASC for consistent ordering
-	rows, err := db.DB.Query("SELECT id, name, key_encrypted, COALESCE(account_id,'') FROM api_keys WHERE provider_id = ? AND is_active = 1 ORDER BY created_at ASC", providerID)
-	if err != nil {
-		return "", "", "", "", err
-	}
-	defer rows.Close()
-	type apiKey struct {
-		id        string
-		name      string
-		value     string
-		accountID string
-	}
-	var keys []apiKey
-	for rows.Next() {
-		var k apiKey
-		rows.Scan(&k.id, &k.name, &k.value, &k.accountID)
-		keys = append(keys, k)
-	}
-
+	keys := providerRouting(providerID).keys
 	if len(keys) == 0 {
 		return "", "", "", "", fmt.Errorf("no active keys")
 	}
 
-	var selected apiKey
-	if roundRobin {
+	var selected cachedKey
+	if providerRouting(providerID).roundRobin {
 		// Round-robin: use atomic counter
 		counter := getProviderRRCounter(providerID + "_keys")
 		idx := int(counter.Add(1)-1) % len(keys)
@@ -1293,45 +1404,21 @@ func getNextActiveKey(providerID string) (keyID, keyName, keyValue, accountID st
 		selected = keys[0]
 	}
 
-	// Update last_used timestamp
-	db.DB.Exec("UPDATE api_keys SET last_used = CURRENT_TIMESTAMP WHERE id = ?", selected.id)
-
 	return selected.id, selected.name, selected.value, selected.accountID, nil
 }
 
 // getNextActiveConnection gets next active OAuth connection with round-robin.
 // Used for providers that use provider_connections instead of api_keys (e.g. Codex multi-account).
 func getNextActiveConnection(providerID string) (connID, connName, connToken, connRefresh string, connExpires int64, err error) {
-	roundRobin := isProviderRoundRobin(providerID)
-
-	rows, err := db.DB.Query(`SELECT id, COALESCE(name,''), COALESCE(email,''), access_token, COALESCE(refresh_token,''), COALESCE(expires_at,0)
-		FROM provider_connections WHERE provider_id=? AND is_active=1 ORDER BY created_at ASC`, providerID)
-	if err != nil {
-		return "", "", "", "", 0, err
-	}
-	defer rows.Close()
-
-	type conn struct {
-		id      string
-		name    string
-		email   string
-		token   string
-		refresh string
-		expires int64
-	}
-	var conns []conn
-	for rows.Next() {
-		var c conn
-		rows.Scan(&c.id, &c.name, &c.email, &c.token, &c.refresh, &c.expires)
-		conns = append(conns, c)
-	}
+	entry := providerRouting(providerID)
+	conns := entry.conns
 
 	if len(conns) == 0 {
 		return "", "", "", "", 0, fmt.Errorf("no active connections")
 	}
 
-	var selected conn
-	if roundRobin {
+	var selected cachedConn
+	if entry.roundRobin {
 		counter := getProviderRRCounter(providerID + "_conns")
 		idx := int(counter.Add(1)-1) % len(conns)
 		selected = conns[idx]
@@ -1350,43 +1437,27 @@ func getNextActiveConnection(providerID string) (connID, connName, connToken, co
 
 // getNextActiveConnectionExcluding gets next active OAuth connection, skipping already-tried IDs
 func getNextActiveConnectionExcluding(providerID string, exclude map[string]bool) (connID, connName, connToken, connRefresh string, connExpires int64, err error) {
-	roundRobin := isProviderRoundRobin(providerID)
+	entry := providerRouting(providerID)
+	conns := entry.conns
 
-	rows, err := db.DB.Query(`SELECT id, COALESCE(name,''), COALESCE(email,''), access_token, COALESCE(refresh_token,''), COALESCE(expires_at,0)
-		FROM provider_connections WHERE provider_id=? AND is_active=1 ORDER BY created_at ASC`, providerID)
-	if err != nil {
-		return "", "", "", "", 0, err
-	}
-	defer rows.Close()
-
-	type conn struct {
-		id      string
-		name    string
-		email   string
-		token   string
-		refresh string
-		expires int64
-	}
-	var conns []conn
-	for rows.Next() {
-		var c conn
-		rows.Scan(&c.id, &c.name, &c.email, &c.token, &c.refresh, &c.expires)
+	var available []cachedConn
+	for _, c := range conns {
 		if !exclude[c.id] {
-			conns = append(conns, c)
+			available = append(available, c)
 		}
 	}
 
-	if len(conns) == 0 {
+	if len(available) == 0 {
 		return "", "", "", "", 0, fmt.Errorf("no active connections")
 	}
 
-	var selected conn
-	if roundRobin {
+	var selected cachedConn
+	if entry.roundRobin {
 		counter := getProviderRRCounter(providerID + "_conns")
-		idx := int(counter.Add(1)-1) % len(conns)
-		selected = conns[idx]
+		idx := int(counter.Add(1)-1) % len(available)
+		selected = available[idx]
 	} else {
-		selected = conns[0]
+		selected = available[0]
 	}
 
 	displayName := selected.name
@@ -1399,47 +1470,29 @@ func getNextActiveConnectionExcluding(providerID string, exclude map[string]bool
 
 // getNextActiveKeyExcluding gets next active key, skipping already-tried IDs
 func getNextActiveKeyExcluding(providerID string, exclude map[string]bool) (keyID, keyName, keyValue, accountID string, err error) {
-	roundRobin := isProviderRoundRobin(providerID)
+	entry := providerRouting(providerID)
 
-	// Always order by created_at ASC for consistent ordering
-	rows, err := db.DB.Query("SELECT id, name, key_encrypted, COALESCE(account_id,'') FROM api_keys WHERE provider_id = ? AND is_active = 1 ORDER BY created_at ASC", providerID)
-	if err != nil {
-		return "", "", "", "", err
-	}
-	defer rows.Close()
-
-	type apiKey struct {
-		id        string
-		name      string
-		value     string
-		accountID string
-	}
-	var keys []apiKey
-	for rows.Next() {
-		var k apiKey
-		rows.Scan(&k.id, &k.name, &k.value, &k.accountID)
+	var available []cachedKey
+	for _, k := range entry.keys {
 		if !exclude[k.id] {
-			keys = append(keys, k)
+			available = append(available, k)
 		}
 	}
 
-	if len(keys) == 0 {
+	if len(available) == 0 {
 		return "", "", "", "", fmt.Errorf("no active keys")
 	}
 
-	var selected apiKey
-	if roundRobin {
+	var selected cachedKey
+	if entry.roundRobin {
 		// Round-robin: use atomic counter
 		counter := getProviderRRCounter(providerID + "_keys")
-		idx := int(counter.Add(1)-1) % len(keys)
-		selected = keys[idx]
+		idx := int(counter.Add(1)-1) % len(available)
+		selected = available[idx]
 	} else {
 		// Fill-first: always pick the first non-excluded key
-		selected = keys[0]
+		selected = available[0]
 	}
-
-	// Update last_used timestamp
-	db.DB.Exec("UPDATE api_keys SET last_used = CURRENT_TIMESTAMP WHERE id = ?", selected.id)
 
 	return selected.id, selected.name, selected.value, selected.accountID, nil
 }

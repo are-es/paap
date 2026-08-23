@@ -542,6 +542,7 @@ func handleGroupRaceKeys(w http.ResponseWriter, r *http.Request, modelName, grou
 				errBody, _ := io.ReadAll(resp.Body)
 				if resp.StatusCode == 401 || resp.StatusCode == 403 || resp.StatusCode == 402 {
 					db.DB.Exec("UPDATE api_keys SET is_active=0 WHERE id=?", t.keyID)
+					invalidateRoutingCache()
 					log.Printf("[PAAP] Race auto-disabled key %s — status %d", t.keyName, resp.StatusCode)
 				}
 				resultCh <- raceResult{task: t, statusCode: resp.StatusCode, latencyMs: lat, proxyUsed: proxyUsed, err: fmt.Errorf("status %d: %s", resp.StatusCode, string(errBody))}
@@ -715,6 +716,7 @@ func handleGroupRoundRobinModel(w http.ResponseWriter, r *http.Request, groupNam
 		}
 		if resp.StatusCode == 401 || resp.StatusCode == 403 || resp.StatusCode == 402 {
 			db.DB.Exec("UPDATE api_keys SET is_active=0 WHERE id=?", keyID)
+			invalidateRoutingCache()
 		}
 		logProxyRequest(selected.providerID, selected.providerName, selected.modelID, keyID, keyName, groupName, proxyUsed, resp.StatusCode, 0, 0, latencyMs, errStr, nil)
 		failures = append(failures, fmt.Sprintf("%s/%s: HTTP %d", selected.providerName, selected.modelID, resp.StatusCode))
@@ -828,6 +830,7 @@ func handleGroupFailFirst(w http.ResponseWriter, r *http.Request, groupName stri
 		}
 		if resp.StatusCode == 401 || resp.StatusCode == 403 || resp.StatusCode == 402 {
 			db.DB.Exec("UPDATE api_keys SET is_active=0 WHERE id=?", keyID)
+			invalidateRoutingCache()
 		}
 		log.Printf("[PAAP] Fail First '%s': %s/%s returned %d — %s", groupName, rt.providerName, rt.modelID, resp.StatusCode, errStr)
 		logProxyRequest(rt.providerID, rt.providerName, rt.modelID, keyID, keyName, groupName, proxyUsed, resp.StatusCode, 0, 0, latencyMs, errStr, nil)
@@ -962,6 +965,7 @@ func handleGroupRRRaceKeys(w http.ResponseWriter, r *http.Request, groupName str
 				errBody, _ := io.ReadAll(resp.Body)
 				if resp.StatusCode == 401 || resp.StatusCode == 403 || resp.StatusCode == 402 {
 					db.DB.Exec("UPDATE api_keys SET is_active=0 WHERE id=?", t.keyID)
+					invalidateRoutingCache()
 					log.Printf("[PAAP] RR+Race auto-disabled key %s — status %d", t.keyName, resp.StatusCode)
 				}
 				resultCh <- raceResult{task: t, statusCode: resp.StatusCode, latencyMs: lat, proxyUsed: proxyUsed, err: fmt.Errorf("status %d: %s", resp.StatusCode, string(errBody))}

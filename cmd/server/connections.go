@@ -101,6 +101,7 @@ func connectionCreate(w http.ResponseWriter, r *http.Request, providerID string)
 		return
 	}
 
+	invalidateRoutingCache()
 	writeJSON(w, map[string]interface{}{
 		"id":        id,
 		"auth_type": body.AuthType,
@@ -121,6 +122,7 @@ func connectionDelete(w http.ResponseWriter, r *http.Request, providerID, connID
 		writeError(w, 404, "connection not found")
 		return
 	}
+	invalidateRoutingCache()
 	writeJSON(w, map[string]string{"status": "disconnected", "id": connID})
 }
 
@@ -140,6 +142,7 @@ func connectionToggle(w http.ResponseWriter, r *http.Request, providerID, connID
 	if newVal == 1 {
 		db.DB.Exec("UPDATE provider_connections SET fail_count=0, last_error='', test_status='connected' WHERE id=? AND provider_id=?", connID, providerID)
 	}
+	invalidateRoutingCache()
 	writeJSON(w, map[string]interface{}{"id": connID, "is_active": newVal == 1})
 }
 
@@ -151,6 +154,7 @@ func connectionEnableAll(w http.ResponseWriter, r *http.Request, providerID stri
 		return
 	}
 	n, _ := result.RowsAffected()
+	invalidateRoutingCache()
 	writeJSON(w, map[string]interface{}{"status": "ok", "enabled": n})
 }
 
@@ -162,5 +166,6 @@ func connectionDeleteDisabled(w http.ResponseWriter, r *http.Request, providerID
 		return
 	}
 	n, _ := result.RowsAffected()
+	invalidateRoutingCache()
 	writeJSON(w, map[string]interface{}{"status": "ok", "deleted": n})
 }

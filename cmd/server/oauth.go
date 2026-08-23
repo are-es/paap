@@ -245,33 +245,35 @@ func oauthDeviceCodePoll(w http.ResponseWriter, r *http.Request) {
 	}
 
 	expiresAt := time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second).UTC().Format(time.RFC3339)
+	expiresUnix := time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second).Unix()
 
-	// Check if this email already exists as a key for this provider
+	// Store as a provider_connection (matching the anigravity/codex pattern) so
+	// the account appears in the Connections card and is picked up by the
+	// connection-based routing path.
 	var existingID string
-	err = db.DB.QueryRow("SELECT id FROM api_keys WHERE provider_id=? AND name=? AND key_type='oauth'", providerID, email).Scan(&existingID)
+	err = db.DB.QueryRow("SELECT id FROM provider_connections WHERE provider_id=? AND email=?", providerID, email).Scan(&existingID)
 	if err == nil {
-		// Update existing key
-		_, err = db.DB.Exec(`UPDATE api_keys SET
-			key_encrypted=?, oauth_refresh_token=?, oauth_expires_at=?, is_active=1
+		_, err = db.DB.Exec(`UPDATE provider_connections SET
+			name=?, access_token=?, refresh_token=?, expires_at=?, is_active=1, fail_count=0, last_error='', updated_at=strftime('%s','now')
 			WHERE id=?`,
-			tokenResp.AccessToken, tokenResp.RefreshToken, expiresAt, existingID)
+			email, tokenResp.AccessToken, tokenResp.RefreshToken, expiresUnix, existingID)
 	} else {
-		// Insert new key
-		keyID := genID()
-		_, err = db.DB.Exec(`INSERT INTO api_keys
-			(id, provider_id, name, key_encrypted, key_type, oauth_refresh_token, oauth_expires_at, is_active)
-			VALUES (?, ?, ?, ?, 'oauth', ?, ?, 1)`,
-			keyID, providerID, email, tokenResp.AccessToken, tokenResp.RefreshToken, expiresAt)
+		connID := genID()
+		_, err = db.DB.Exec(`INSERT INTO provider_connections
+			(id, provider_id, auth_type, name, email, access_token, refresh_token, expires_at, test_status, is_active, created_at, updated_at)
+			VALUES (?, ?, 'oauth', ?, ?, ?, ?, ?, 'connected', 1, strftime('%s','now'), strftime('%s','now'))`,
+			connID, providerID, email, email, tokenResp.AccessToken, tokenResp.RefreshToken, expiresUnix)
 	}
 
 	// Clear pending device code data
 	db.DB.Exec("UPDATE providers SET oauth_data='' WHERE id=?", providerID)
 
 	if err != nil {
-		writeError(w, 500, "failed to store key: "+err.Error())
+		writeError(w, 500, "failed to store connection: "+err.Error())
 		return
 	}
 
+	invalidateRoutingCache()
 	log.Printf("[PAAP] OAuth: %s connected as %s (expires: %s)", providerID, email, expiresAt)
 
 	writeJSON(w, map[string]interface{}{
@@ -342,6 +344,7 @@ func oauthDisconnect(w http.ResponseWriter, r *http.Request) {
 		db.DB.Exec("DELETE FROM api_keys WHERE provider_id=? AND key_type='oauth'", providerID)
 	}
 
+	invalidateRoutingCache()
 	writeJSON(w, map[string]interface{}{"status": "disconnected", "provider": providerID})
 }
 
@@ -548,6 +551,7 @@ func oauthAnigravityCallback(w http.ResponseWriter, r *http.Request) {
 	// Clear state
 	db.DB.Exec("UPDATE providers SET oauth_data='' WHERE id=?", "builtin-anigravity")
 
+	invalidateRoutingCache()
 	log.Printf("[PAAP] Anigravity connected as %s (project: %s, tier: %s)", email, projectID, tierID)
 
 	// Redirect back to provider setup page
@@ -745,6 +749,7 @@ func ensureAnigravityToken(connID, connToken, refreshToken string, expiresAt int
 	newAccess, newRefresh, expiresIn, err := RefreshAnigravityToken(refreshToken)
 	if err != nil {
 		db.DB.Exec("UPDATE provider_connections SET is_active=0 WHERE id=?", connID)
+		invalidateRoutingCache()
 		return "", fmt.Errorf("refresh token failed: %v", err)
 	}
 	newExpires := time.Now().Add(time.Duration(expiresIn) * time.Second).Unix()
@@ -941,6 +946,7 @@ func oauthCodexDeviceCodePoll(w http.ResponseWriter, r *http.Request) {
 
 	db.DB.Exec("UPDATE providers SET oauth_data='' WHERE id=?", "builtin-openai-codex")
 
+	invalidateRoutingCache()
 	log.Printf("[PAAP] OpenAI Codex OAuth: connected (token len=%d)", len(tokenData.AccessToken))
 
 	writeJSON(w, map[string]interface{}{

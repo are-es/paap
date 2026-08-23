@@ -438,6 +438,7 @@ func providerRoutes(w http.ResponseWriter, r *http.Request) {
 				writeError(w, 500, err.Error())
 				return
 			}
+			invalidateRoutingCache()
 			n, _ := result.RowsAffected()
 			writeJSON(w, map[string]interface{}{"enabled": n})
 			return
@@ -1065,6 +1066,14 @@ func providerTestPrompt(w http.ResponseWriter, r *http.Request, providerID strin
 				req.Header.Set("User-Agent", "kimchi/0.1.50")
 			}
 		}
+		// grok-cli: proxy requires the CLI client headers or it rejects with
+		// 401 "no auth context" even when the bearer token is valid.
+		if strings.Contains(strings.ToLower(baseURL), "cli-chat-proxy.grok.com") {
+			req.Header.Set("User-Agent", grokUserAgent)
+			req.Header.Set("x-xai-token-auth", "xai-grok-cli")
+			req.Header.Set("x-grok-client-identifier", grokClientIdentifier)
+			req.Header.Set("x-grok-client-version", grokClientVersion)
+		}
 		if isMerlin {
 			req.Header.Set("x-merlin-version", "web-merlin")
 			req.Header.Set("x-request-timestamp", time.Now().Format("2006-01-02T15:04:05.000-07:00"))
@@ -1361,6 +1370,14 @@ func providerTestPromptStream(w http.ResponseWriter, r *http.Request, providerID
 		if strings.Contains(baseURL, "kimchi") {
 			req.Header.Set("User-Agent", "kimchi/0.1.50")
 		}
+		// grok-cli: proxy requires the CLI client headers or it rejects with
+		// 401 "no auth context" even when the bearer token is valid.
+		if strings.Contains(strings.ToLower(baseURL), "cli-chat-proxy.grok.com") {
+			req.Header.Set("User-Agent", grokUserAgent)
+			req.Header.Set("x-xai-token-auth", "xai-grok-cli")
+			req.Header.Set("x-grok-client-identifier", grokClientIdentifier)
+			req.Header.Set("x-grok-client-version", grokClientVersion)
+		}
 
 		client := sharedHTTPClient
 		proxyUsed := ""
@@ -1522,6 +1539,7 @@ func providerKeyBulkCreate(w http.ResponseWriter, r *http.Request, providerID st
 		}
 		created = append(created, map[string]interface{}{"id": id, "name": name, "key": keyVal})
 	}
+	invalidateRoutingCache()
 	writeJSON(w, map[string]interface{}{"created": len(created), "keys": created})
 }
 
@@ -1536,6 +1554,7 @@ func providerKeyDelete(w http.ResponseWriter, r *http.Request, providerID, keyID
 		writeError(w, 404, "key not found")
 		return
 	}
+	invalidateRoutingCache()
 	writeJSON(w, map[string]string{"status": "deleted"})
 }
 
@@ -1570,6 +1589,7 @@ func providerKeyToggleActive(w http.ResponseWriter, r *http.Request, providerID,
 		writeError(w, 500, err.Error())
 		return
 	}
+	invalidateRoutingCache()
 	writeJSON(w, map[string]interface{}{"id": keyID, "is_active": newVal == 1})
 }
 
@@ -2295,6 +2315,7 @@ func providerKeyCreate(w http.ResponseWriter, r *http.Request, providerID string
 		writeError(w, 500, err.Error())
 		return
 	}
+	invalidateRoutingCache()
 	writeJSON(w, map[string]interface{}{
 		"id": id, "provider_id": providerID, "name": body.Name, "account_id": body.AccountID, "is_active": true,
 	})

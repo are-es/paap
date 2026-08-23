@@ -169,6 +169,7 @@ func merlinCapture(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	invalidateRoutingCache()
 	writeJSON(w, map[string]interface{}{
 		"status":    "ok",
 		"message":   "Merlin account added successfully!",
