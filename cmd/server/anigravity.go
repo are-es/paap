@@ -304,7 +304,7 @@ func anigravityRequest(w http.ResponseWriter, r *http.Request, model string, raw
 	model = resolveAnigravityModelWithEffort(model, effort)
 
 	// Build outer wrapper
-	projectID := getAnigravityProjectID()
+	projectID := getAnigravityProjectID(keyID)
 	if projectID == "" {
 		writeError(w, 400, "Anigravity provider has no Google Cloud Project ID configured. Please reconnect your account via Google OAuth at /providers/setup?id=builtin-anigravity")
 		return
@@ -431,7 +431,21 @@ func anigravityRequest(w http.ResponseWriter, r *http.Request, model string, raw
 			continue
 		}
 
-		req2, _ := http.NewRequest("POST", upstreamURL, bytes.NewReader(bodyBytes))
+		nextProjectID := getAnigravityProjectID(nextID)
+		if nextProjectID == "" {
+			nextProjectID = projectID
+		}
+		fallbackBody := map[string]interface{}{
+			"project":     nextProjectID,
+			"model":       model,
+			"userAgent":   "antigravity",
+			"requestType": "chat",
+			"requestId":   fmt.Sprintf("agent/%s/%d/%s/%d", convUUID, time.Now().UnixMilli(), trajUUID, step),
+			"request":     geminiReq,
+		}
+		fallbackBytes, _ := json.Marshal(fallbackBody)
+
+		req2, _ := http.NewRequest("POST", upstreamURL, bytes.NewReader(fallbackBytes))
 		req2.Header.Set("Content-Type", "application/json")
 		req2.Header.Set("Authorization", "Bearer "+validToken)
 		req2.Header.Set("User-Agent", "antigravity/ide/2.1.1 linux/amd64")
@@ -598,9 +612,11 @@ func resolveAnigravityModelWithEffort(model, effort string) string {
 }
 
 // testAnigravityRequest makes a simple test request to Anigravity and returns content + latency
-func testAnigravityRequest(model, prompt, accessToken string) (string, int64, error) {
+func testAnigravityRequest(model, prompt, accessToken, projectID string) (string, int64, error) {
 	model = resolveAnigravityModelWithEffort(model, "")
-	projectID := getAnigravityProjectID()
+	if projectID == "" {
+		projectID = getAnigravityProjectID("")
+	}
 	if projectID == "" {
 		return "", 0, fmt.Errorf("no Google Cloud Project ID configured — please reconnect your account via Google OAuth")
 	}
@@ -1163,10 +1179,19 @@ func cleanGeminiSchema(schema map[string]interface{}) map[string]interface{} {
 	return schema
 }
 
-// getAnigravityProjectID returns the stored project ID for Anigravity
-func getAnigravityProjectID() string {
+// getAnigravityProjectID returns the stored project ID for a specific connection or active connection
+func getAnigravityProjectID(connID string) string {
 	var projectID string
-	db.DB.QueryRow(`SELECT COALESCE(project_id, '') FROM provider_connections 
-		WHERE provider_id='builtin-anigravity' AND is_active=1 ORDER BY created_at DESC LIMIT 1`).Scan(&projectID)
+	if connID != "" {
+		db.DB.QueryRow(`SELECT COALESCE(project_id, '') FROM provider_connections WHERE id=?`, connID).Scan(&projectID)
+	}
+	if projectID == "" {
+		db.DB.QueryRow(`SELECT COALESCE(project_id, '') FROM provider_connections 
+			WHERE provider_id='builtin-anigravity' AND is_active=1 ORDER BY created_at DESC LIMIT 1`).Scan(&projectID)
+	}
+	if projectID == "" {
+		db.DB.QueryRow(`SELECT COALESCE(project_id, '') FROM provider_connections 
+			WHERE provider_id='builtin-anigravity' ORDER BY created_at DESC LIMIT 1`).Scan(&projectID)
+	}
 	return projectID
 }

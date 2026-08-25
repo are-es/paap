@@ -264,10 +264,14 @@ func providerList(w http.ResponseWriter, r *http.Request) {
 		COALESCE(p.provider_type,'custom'), COALESCE(p.auth_type,'apikey'), COALESCE(p.builtin_id,''),
 		COALESCE(p.round_robin_enabled,0), COALESCE(p.supports_anthropic,0),
 		COALESCE(p.billing_mode,'per_token'),
-		(SELECT COUNT(*) FROM api_keys WHERE provider_id=p.id) +
-			CASE WHEN COALESCE(p.auth_type,'apikey')='connection' THEN (SELECT COUNT(*) FROM provider_connections WHERE provider_id=p.id) ELSE 0 END as total_keys,
-		(SELECT COUNT(*) FROM api_keys WHERE provider_id=p.id AND is_active=1) +
-			CASE WHEN COALESCE(p.auth_type,'apikey')='connection' THEN (SELECT COUNT(*) FROM provider_connections WHERE provider_id=p.id AND is_active=1) ELSE 0 END as active_keys,
+		CASE WHEN COALESCE(p.auth_type,'apikey')='connection'
+			THEN (SELECT COUNT(*) FROM provider_connections WHERE provider_id=p.id)
+			ELSE (SELECT COUNT(*) FROM api_keys WHERE provider_id=p.id)
+		END as total_keys,
+		CASE WHEN COALESCE(p.auth_type,'apikey')='connection'
+			THEN (SELECT COUNT(*) FROM provider_connections WHERE provider_id=p.id AND is_active=1)
+			ELSE (SELECT COUNT(*) FROM api_keys WHERE provider_id=p.id AND is_active=1)
+		END as active_keys,
 		(SELECT COUNT(*) FROM models WHERE provider_id=p.id AND is_selected=1) as model_count
 		FROM providers p ORDER BY p.name`)
 	if err != nil {
@@ -650,18 +654,15 @@ func providerGet(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 
-	// Get key counts (api_keys + provider_connections for connection-type providers)
+	// Get key counts — connection-type providers only count provider_connections;
+	// api_keys entries are stale OAuth leftovers for those providers.
 	var totalKeys, activeKeys int
-	db.DB.QueryRow("SELECT COUNT(*) FROM api_keys WHERE provider_id=?", id).Scan(&totalKeys)
-	db.DB.QueryRow("SELECT COUNT(*) FROM api_keys WHERE provider_id=? AND is_active=1", id).Scan(&activeKeys)
-
-	// Also count connections for connection-type providers
 	if authType == "connection" {
-		var connTotal, connActive int
-		db.DB.QueryRow("SELECT COUNT(*) FROM provider_connections WHERE provider_id=?", id).Scan(&connTotal)
-		db.DB.QueryRow("SELECT COUNT(*) FROM provider_connections WHERE provider_id=? AND is_active=1", id).Scan(&connActive)
-		totalKeys += connTotal
-		activeKeys += connActive
+		db.DB.QueryRow("SELECT COUNT(*) FROM provider_connections WHERE provider_id=?", id).Scan(&totalKeys)
+		db.DB.QueryRow("SELECT COUNT(*) FROM provider_connections WHERE provider_id=? AND is_active=1", id).Scan(&activeKeys)
+	} else {
+		db.DB.QueryRow("SELECT COUNT(*) FROM api_keys WHERE provider_id=?", id).Scan(&totalKeys)
+		db.DB.QueryRow("SELECT COUNT(*) FROM api_keys WHERE provider_id=? AND is_active=1", id).Scan(&activeKeys)
 	}
 
 	writeJSON(w, map[string]interface{}{
@@ -926,10 +927,10 @@ func providerTestPrompt(w http.ResponseWriter, r *http.Request, providerID strin
 		var connQuery string
 		var connArgs []interface{}
 		if keyIDStr != "" {
-			connQuery = "SELECT id, COALESCE(name,''), COALESCE(email,''), COALESCE(access_token, COALESCE(api_key,'')), COALESCE(refresh_token,''), COALESCE(expires_at,0) FROM provider_connections WHERE id=? AND provider_id=? AND is_active=1"
+			connQuery = "SELECT id, COALESCE(name,''), COALESCE(email,''), COALESCE(access_token, COALESCE(api_key,'')), COALESCE(refresh_token,''), COALESCE(strftime('%s', expires_at), 0) FROM provider_connections WHERE id=? AND provider_id=? AND is_active=1"
 			connArgs = []interface{}{keyIDStr, providerID}
 		} else {
-			connQuery = "SELECT id, COALESCE(name,''), COALESCE(email,''), COALESCE(access_token, COALESCE(api_key,'')), COALESCE(refresh_token,''), COALESCE(expires_at,0) FROM provider_connections WHERE provider_id=? AND is_active=1 ORDER BY created_at ASC"
+			connQuery = "SELECT id, COALESCE(name,''), COALESCE(email,''), COALESCE(access_token, COALESCE(api_key,'')), COALESCE(refresh_token,''), COALESCE(strftime('%s', expires_at), 0) FROM provider_connections WHERE provider_id=? AND is_active=1 ORDER BY created_at ASC"
 			connArgs = []interface{}{providerID}
 		}
 		connRows, connErr := db.DB.Query(connQuery, connArgs...)
@@ -945,6 +946,8 @@ func providerTestPrompt(w http.ResponseWriter, r *http.Request, providerID strin
 				// Refresh token if expired
 				if isCodexOAuthProviderID(providerID) {
 					connToken = refreshCodexConnection(connID, connToken, connExpires)
+				} else if isGrokProviderID(providerID) {
+					connToken = refreshGrokConnection(connID, connToken, connRefresh, connExpires)
 				} else if providerID == "builtin-anigravity" {
 					if refreshed, rErr := ensureAnigravityToken(connID, connToken, connRefresh, connExpires); rErr == nil && refreshed != "" {
 						connToken = refreshed
@@ -1012,6 +1015,30 @@ func providerTestPrompt(w http.ResponseWriter, r *http.Request, providerID strin
 			result["response"] = raw[:min(len(raw), 500)]
 			if recorder.Code != http.StatusOK {
 				autoDisableKey(keyID, keyName, recorder.Code, "")
+			}
+			results = append(results, result)
+			continue
+		}
+
+		if providerID == "builtin-anigravity" {
+			connID := strings.TrimPrefix(keyID, "conn:")
+			projectID := getAnigravityProjectID(connID)
+			content, latency, err := testAnigravityRequest(body.ModelID, body.Prompt, keyVal, projectID)
+			result := map[string]interface{}{
+				"key_id":     keyID,
+				"key_name":   keyName,
+				"latency_ms": latency,
+			}
+			if err != nil {
+				result["status"] = 500
+				result["error"] = err.Error()
+				result["response"] = err.Error()
+				autoDisableKey(keyID, keyName, 500, err.Error())
+			} else {
+				result["status"] = 200
+				result["content"] = content
+				result["response"] = content
+				autoDisableKey(keyID, keyName, 200, "")
 			}
 			results = append(results, result)
 			continue
@@ -1288,10 +1315,10 @@ func providerTestPromptStream(w http.ResponseWriter, r *http.Request, providerID
 		var connQuery string
 		var connArgs []interface{}
 		if keyIDStr != "" {
-			connQuery = "SELECT id, COALESCE(name,''), COALESCE(email,''), COALESCE(access_token, COALESCE(api_key,'')), COALESCE(refresh_token,''), COALESCE(expires_at,0) FROM provider_connections WHERE id=? AND provider_id=? AND is_active=1"
+			connQuery = "SELECT id, COALESCE(name,''), COALESCE(email,''), COALESCE(access_token, COALESCE(api_key,'')), COALESCE(refresh_token,''), COALESCE(strftime('%s', expires_at), 0) FROM provider_connections WHERE id=? AND provider_id=? AND is_active=1"
 			connArgs = []interface{}{keyIDStr, providerID}
 		} else {
-			connQuery = "SELECT id, COALESCE(name,''), COALESCE(email,''), COALESCE(access_token, COALESCE(api_key,'')), COALESCE(refresh_token,''), COALESCE(expires_at,0) FROM provider_connections WHERE provider_id=? AND is_active=1 ORDER BY created_at ASC"
+			connQuery = "SELECT id, COALESCE(name,''), COALESCE(email,''), COALESCE(access_token, COALESCE(api_key,'')), COALESCE(refresh_token,''), COALESCE(strftime('%s', expires_at), 0) FROM provider_connections WHERE provider_id=? AND is_active=1 ORDER BY created_at ASC"
 			connArgs = []interface{}{providerID}
 		}
 		connRows, connErr := db.DB.Query(connQuery, connArgs...)
@@ -1307,6 +1334,8 @@ func providerTestPromptStream(w http.ResponseWriter, r *http.Request, providerID
 				// Refresh token if expired
 				if isCodexOAuthProviderID(providerID) {
 					connToken = refreshCodexConnection(connID, connToken, connExpires)
+				} else if isGrokProviderID(providerID) {
+					connToken = refreshGrokConnection(connID, connToken, connRefresh, connExpires)
 				} else if providerID == "builtin-anigravity" {
 					if refreshed, rErr := ensureAnigravityToken(connID, connToken, connRefresh, connExpires); rErr == nil && refreshed != "" {
 						connToken = refreshed
@@ -1363,20 +1392,59 @@ func providerTestPromptStream(w http.ResponseWriter, r *http.Request, providerID
 	// Stream each key sequentially
 	for ki, k := range keys {
 		start := time.Now()
-		upstreamURL := resolveUpstreamURL(baseURL, k.accountID)
-		req, _ := http.NewRequest("POST", upstreamURL, bytes.NewReader(reqBodyBytes))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+k.value)
-		if strings.Contains(baseURL, "kimchi") {
-			req.Header.Set("User-Agent", "kimchi/0.1.50")
-		}
-		// grok-cli: proxy requires the CLI client headers or it rejects with
-		// 401 "no auth context" even when the bearer token is valid.
-		if strings.Contains(strings.ToLower(baseURL), "cli-chat-proxy.grok.com") {
-			req.Header.Set("User-Agent", grokUserAgent)
-			req.Header.Set("x-xai-token-auth", "xai-grok-cli")
-			req.Header.Set("x-grok-client-identifier", grokClientIdentifier)
-			req.Header.Set("x-grok-client-version", grokClientVersion)
+		var req *http.Request
+		if providerID == "builtin-anigravity" {
+			connID := strings.TrimPrefix(k.id, "conn:")
+			projectID := getAnigravityProjectID(connID)
+			convUUID := generateUUID()
+			trajUUID := generateUUID()
+			requestID := fmt.Sprintf("agent/%s/%d/%s/1", convUUID, time.Now().UnixMilli(), trajUUID)
+			sessionID := generateUUID()
+			fullBody := map[string]interface{}{
+				"project":     projectID,
+				"model":       resolveAnigravityModelWithEffort(body.ModelID, ""),
+				"userAgent":   "antigravity",
+				"requestType": "chat",
+				"requestId":   requestID,
+				"request": map[string]interface{}{
+					"sessionId": sessionID,
+					"contents": []map[string]interface{}{
+						{"role": "user", "parts": []map[string]interface{}{{"text": body.Prompt}}},
+					},
+					"generationConfig": map[string]interface{}{
+						"temperature":     1.0,
+						"topP":            0.95,
+						"maxOutputTokens": 4000,
+						"thinkingConfig": map[string]interface{}{
+							"includeThoughts": true,
+						},
+					},
+				},
+			}
+			bodyBytes, _ := json.Marshal(fullBody)
+			upstreamURL := "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse"
+			req, _ = http.NewRequest("POST", upstreamURL, bytes.NewReader(bodyBytes))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer "+k.value)
+			req.Header.Set("User-Agent", "antigravity/ide/2.1.1 linux/amd64")
+			req.Header.Set("X-Goog-Api-Client", "google-cloud-sdk vscode_cloudshelleditor/0.1")
+			req.Header.Set("Client-Metadata", `{"ideType":9,"platform":2,"pluginType":2}`)
+		} else {
+			upstreamURL := resolveUpstreamURL(baseURL, k.accountID)
+			req, _ = http.NewRequest("POST", upstreamURL, bytes.NewReader(reqBodyBytes))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer "+k.value)
+			if strings.Contains(baseURL, "kimchi") {
+				req.Header.Set("User-Agent", "kimchi/0.1.50")
+			}
+			// grok-cli: proxy requires the CLI client headers or it rejects with
+			// 401 "no auth context" even when the bearer token is valid.
+			if strings.Contains(strings.ToLower(baseURL), "cli-chat-proxy.grok.com") {
+				req.Header.Set("User-Agent", grokUserAgent)
+				req.Header.Set("x-xai-token-auth", "xai-grok-cli")
+				req.Header.Set("x-grok-client-identifier", grokClientIdentifier)
+				req.Header.Set("x-grok-client-version", grokClientVersion)
+			}
 		}
 
 		client := sharedHTTPClient
@@ -1443,6 +1511,32 @@ func providerTestPromptStream(w http.ResponseWriter, r *http.Request, providerID
 			data = strings.TrimSpace(data)
 			if data == "[DONE]" {
 				break
+			}
+
+			if providerID == "builtin-anigravity" {
+				var wrapper struct {
+					Response geminiResponse `json:"response"`
+				}
+				if json.Unmarshal([]byte(data), &wrapper) == nil {
+					geminiChunk := wrapper.Response
+					if len(geminiChunk.Candidates) > 0 {
+						for _, part := range geminiChunk.Candidates[0].Content.Parts {
+							if !part.Thought && part.Text != "" {
+								fullContent.WriteString(part.Text)
+								chunkData, _ := json.Marshal(map[string]interface{}{
+									"type":    "content",
+									"content": part.Text,
+								})
+								fmt.Fprintf(w, "data: %s\n\n", chunkData)
+								flusher.Flush()
+							}
+						}
+					}
+					if geminiChunk.UsageMetadata != nil {
+						totalTokens = geminiChunk.UsageMetadata.TotalTokenCount
+					}
+				}
+				continue
 			}
 
 			var chunk map[string]interface{}
