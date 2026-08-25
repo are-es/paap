@@ -130,7 +130,7 @@ func loadRoutingCache() map[string]providerRoutingEntry {
 	}
 
 	connRows, err := db.DB.Query(`SELECT provider_id, id, COALESCE(name,''), COALESCE(email,''),
-		access_token, COALESCE(refresh_token,''), COALESCE(expires_at,0)
+		access_token, COALESCE(refresh_token,''), COALESCE(strftime('%s', expires_at), 0)
 		FROM provider_connections WHERE is_active = 1 ORDER BY created_at ASC`)
 	if err != nil {
 		log.Printf("[PAAP] routing cache: provider_connections query failed: %v", err)
@@ -1201,7 +1201,7 @@ func routeByModel(model string) (providerID, providerName, baseURL, modelID, key
 			keyID, keyName, keyValue, keyAccountID, err = getNextActiveKey(providerID)
 			if err != nil {
 				// Fallback: check provider_connections for OAuth tokens (round-robin)
-				connID, connName, connToken, _, connExpires, connErr := getNextActiveConnection(providerID)
+				connID, connName, connToken, connRefresh, connExpires, connErr := getNextActiveConnection(providerID)
 				if connErr != nil {
 					return "", "", "", "", "", "", "", "", fmt.Errorf("no active API keys or connections for provider '%s'", providerName)
 				}
@@ -1209,10 +1209,12 @@ func routeByModel(model string) (providerID, providerName, baseURL, modelID, key
 				keyName = connName
 				keyAccountID = ""
 				if isCodexOAuthProviderID(providerID) {
-					keyValue = refreshCodexConnection(connID, connToken, connExpires)
-				} else {
-					keyValue = connToken
-				}
+				keyValue = refreshCodexConnection(connID, connToken, connExpires)
+			} else if isGrokProviderID(providerID) {
+				keyValue = refreshGrokConnection(connID, connToken, connRefresh, connExpires)
+			} else {
+				keyValue = connToken
+			}
 				err = nil
 			}
 
@@ -1280,6 +1282,8 @@ func routeByModel(model string) (providerID, providerName, baseURL, modelID, key
 
 		if isCodexOAuthProviderID(providerID) {
 			keyValue = refreshCodexConnection(connID, connToken, connExpires)
+		} else if isGrokProviderID(providerID) {
+			keyValue = refreshGrokConnection(connID, connToken, connRefresh, connExpires)
 		} else {
 			var refreshErr error
 			keyValue, refreshErr = ensureAnigravityToken(connID, connToken, connRefresh, connExpires)
@@ -1364,9 +1368,10 @@ func routeByGroup(groupName string) (providerID, providerName, baseURL, modelID,
 	if err != nil {
 		// Fallback: check provider_connections for OAuth tokens
 		var connID, connEmail, connToken string
+		var connRefresh string
 		var connExpires int64
-		connErr := db.DB.QueryRow(`SELECT id, COALESCE(email,''), access_token, COALESCE(expires_at,0) FROM provider_connections 
-			WHERE provider_id=? AND is_active=1 ORDER BY created_at DESC LIMIT 1`, selected.providerID).Scan(&connID, &connEmail, &connToken, &connExpires)
+		connErr := db.DB.QueryRow(`SELECT id, COALESCE(email,''), access_token, COALESCE(refresh_token,''), COALESCE(strftime('%s', expires_at), 0) FROM provider_connections 
+			WHERE provider_id=? AND is_active=1 ORDER BY created_at DESC LIMIT 1`, selected.providerID).Scan(&connID, &connEmail, &connToken, &connRefresh, &connExpires)
 		if connErr != nil {
 			return "", "", "", "", "", "", "", "", fmt.Errorf("no active API keys or connections for provider '%s'", selected.providerName)
 		}
@@ -1375,6 +1380,8 @@ func routeByGroup(groupName string) (providerID, providerName, baseURL, modelID,
 		keyAccountID = ""
 		if isCodexOAuthProviderID(selected.providerID) {
 			keyValue = refreshCodexConnection(connID, connToken, connExpires)
+		} else if isGrokProviderID(selected.providerID) {
+			keyValue = refreshGrokConnection(connID, connToken, connRefresh, connExpires)
 		} else {
 			keyValue = connToken
 		}
