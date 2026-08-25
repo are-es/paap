@@ -534,14 +534,23 @@ func oauthAnigravityCallback(w http.ResponseWriter, r *http.Request) {
 
 	expiresAt := time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second).Unix()
 
-	// Store as connection
-	connID := genID()
-	_, err = db.DB.Exec(`INSERT INTO provider_connections
-		(id, provider_id, auth_type, name, email, access_token, refresh_token, expires_at, project_id, test_status, is_active, created_at, updated_at)
-		VALUES (?, ?, 'oauth', ?, ?, ?, ?, ?, ?, 'connected', 1, ?, ?)`,
-		connID, "builtin-anigravity", email, email,
-		tokenResp.AccessToken, tokenResp.RefreshToken, expiresAt, projectID,
-		time.Now().Unix(), time.Now().Unix())
+	// Store as connection (upsert by provider_id and email to prevent duplicate accounts)
+	var existingID string
+	err = db.DB.QueryRow("SELECT id FROM provider_connections WHERE provider_id=? AND email=?", "builtin-anigravity", email).Scan(&existingID)
+	if err == nil && existingID != "" {
+		_, err = db.DB.Exec(`UPDATE provider_connections SET
+			name=?, access_token=?, refresh_token=?, expires_at=?, project_id=?, is_active=1, fail_count=0, last_error='', test_status='connected', updated_at=?
+			WHERE id=?`,
+			email, tokenResp.AccessToken, tokenResp.RefreshToken, expiresAt, projectID, time.Now().Unix(), existingID)
+	} else {
+		connID := genID()
+		_, err = db.DB.Exec(`INSERT INTO provider_connections
+			(id, provider_id, auth_type, name, email, access_token, refresh_token, expires_at, project_id, test_status, is_active, created_at, updated_at)
+			VALUES (?, ?, 'oauth', ?, ?, ?, ?, ?, ?, 'connected', 1, ?, ?)`,
+			connID, "builtin-anigravity", email, email,
+			tokenResp.AccessToken, tokenResp.RefreshToken, expiresAt, projectID,
+			time.Now().Unix(), time.Now().Unix())
+	}
 
 	if err != nil {
 		writeError(w, 500, "failed to store connection: "+err.Error())
@@ -757,6 +766,89 @@ func ensureAnigravityToken(connID, connToken, refreshToken string, expiresAt int
 		newAccess, newRefresh, newExpires, time.Now().Unix(), connID)
 	log.Printf("[PAAP] Anigravity access token refreshed successfully for %s (valid for %ds)", connID[:min(8, len(connID))], expiresIn)
 	return newAccess, nil
+}
+
+// isGrokProviderID reports whether the provider uses grok-cli OAuth connections.
+func isGrokProviderID(providerID string) bool {
+	return strings.Contains(providerID, "grok-cli")
+}
+
+// RefreshGrokConnection refreshes a grok-cli OAuth connection token if expired.
+// Returns the (possibly unchanged) access token. Deactivates the connection
+// only on invalid_grant (refresh revoked); transient errors keep it active.
+func refreshGrokConnection(connID, currentToken string, refreshToken string, expiresAtUnix int64) string {
+	if expiresAtUnix == 0 || currentToken == "" {
+		// Unknown expiry or no token yet — try to use as-is; refresh only when we know it expired.
+		if currentToken != "" && (expiresAtUnix == 0 || time.Now().Unix() < expiresAtUnix-60) {
+			return currentToken
+		}
+	}
+	if currentToken != "" && time.Now().Unix() < expiresAtUnix-300 {
+		return currentToken
+	}
+	if refreshToken == "" {
+		return currentToken
+	}
+
+	form := url.Values{
+		"grant_type":    {"refresh_token"},
+		"client_id":     {grokClientID},
+		"refresh_token": {refreshToken},
+	}
+	req, err := http.NewRequest(http.MethodPost, grokTokenURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		log.Printf("[PAAP] Grok refresh request error for %s: %v", connID[:min(8, len(connID))], err)
+		return currentToken
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := sharedHTTPClient.Do(req)
+	if err != nil {
+		log.Printf("[PAAP] Grok refresh network error for %s: %v", connID[:min(8, len(connID))], err)
+		return currentToken
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	var tokenResp struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		ExpiresIn    int    `json:"expires_in"`
+		Error        string `json:"error"`
+		ErrorDesc    string `json:"error_description"`
+	}
+	json.Unmarshal(body, &tokenResp)
+
+	if resp.StatusCode == 429 {
+		log.Printf("[PAAP] Grok refresh rate limited for %s — retrying later", connID[:min(8, len(connID))])
+		return currentToken
+	}
+	if tokenResp.Error != "" {
+		if tokenResp.Error == "invalid_grant" {
+			db.DB.Exec("UPDATE provider_connections SET is_active=0, last_error=? WHERE id=?",
+				"grok refresh token revoked: "+tokenResp.ErrorDesc, connID)
+			invalidateRoutingCache()
+			log.Printf("[PAAP] Grok connection %s deactivated: refresh token revoked", connID[:min(8, len(connID))])
+			return ""
+		}
+		log.Printf("[PAAP] Grok refresh error for %s: %s %s", connID[:min(8, len(connID))], tokenResp.Error, tokenResp.ErrorDesc)
+		return currentToken
+	}
+
+	newAccess := tokenResp.AccessToken
+	if newAccess == "" {
+		return currentToken
+	}
+	newRefresh := tokenResp.RefreshToken
+	if newRefresh == "" {
+		newRefresh = refreshToken
+	}
+	newExpires := time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second).Unix()
+	db.DB.Exec("UPDATE provider_connections SET access_token=?, refresh_token=?, expires_at=?, fail_count=0, updated_at=strftime('%s','now') WHERE id=?",
+		newAccess, newRefresh, newExpires, connID)
+	invalidateRoutingCache()
+	log.Printf("[PAAP] Grok connection %s refreshed (expires: %d)", connID[:min(8, len(connID))], newExpires)
+	return newAccess
 }
 
 // ── OpenAI Codex Device Code Flow ──────────────────────────────────────────

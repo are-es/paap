@@ -15,11 +15,12 @@ bash web/scripts/gen-static-params.sh
 
 # 2. Build Next.js
 echo "[2/3] Building Next.js..."
-cd web && npm run build && cd ..
+(cd "$PROJECT_DIR/web" && npm run build)
 
 # 3. Build Go binary
 echo "[3/3] Building Go binary..."
-go build -o bin/paap-server ./cmd/server
+cd "$PROJECT_DIR"
+CGO_ENABLED=1 go build -o bin/paap-server ./cmd/server
 
 echo ""
 echo "=== Build Complete ==="

@@ -876,6 +876,7 @@ const queryClient = useQueryClient();
   const deleteMutation = useMutation({ mutationFn: (id: number | string) => api.deleteProvider(id), onSuccess: () => { window.location.href = "/providers"; } });
 
 const keysQuery = useQuery({ queryKey: ["keys", providerId], queryFn: () => api.getKeys(providerId) });
+const connectionsQuery = useQuery({ queryKey: ["connections", providerId], queryFn: () => api.getConnections(providerId) });
 const modelsQuery = useQuery({ queryKey: ["models", providerId], queryFn: () => api.getModels(providerId) });
 
 const testMutation = useMutation({
@@ -891,7 +892,23 @@ setResults([{ status: data.status, latency_ms: data.latency_ms, res: data.res, k
 onError: (err: Error) => { setError(err.message); setResults(null); },
 });
 
-const activeKeys = keysQuery.data?.filter((k) => k.is_active) ?? [];
+const activeKeys = (keysQuery.data?.filter((k) => k.is_active && k.source !== "connection") ?? []).map((k) => ({
+  id: String(k.id),
+  name: k.name || (k.key ? k.key.slice(0, 12) + "..." : String(k.id)),
+  key: k.key || "",
+  key_masked: k.key_masked || "",
+  is_active: true,
+  source: "apikey" as const,
+}));
+const activeConns = (connectionsQuery.data?.filter((c) => c.is_active) ?? []).map((c) => ({
+  id: `conn:${c.id}`,
+  name: c.email || c.name || `Connection ${c.id}`,
+  key: "",
+  key_masked: "",
+  is_active: true,
+  source: "connection" as const,
+}));
+const allActiveKeys = [...activeKeys, ...activeConns];
 const selectedModels = modelsQuery.data?.filter((m) => m.selected) ?? [];
 const availableModels = selectedModels.length > 0 ? selectedModels : (modelsQuery.data ?? []);
 
@@ -905,7 +922,7 @@ onChange={(e) => setKeyId(e.target.value || undefined)}
 className="px-3 py-2 rounded-lg border border-input bg-background text-sm focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:outline-none"
 >
 <option value="">All Keys</option>
-{activeKeys.map((k) => <option key={k.id} value={k.id}>{k.name || k.key.slice(0, 12) + "..."}</option>)}
+{allActiveKeys.map((k) => <option key={k.id} value={k.id}>{k.name || (k.key ? k.key.slice(0, 12) + "..." : k.id)}</option>)}
 </select>
           <select
             value={model}
