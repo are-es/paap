@@ -82,6 +82,17 @@ func getThoughtSignature(funcName, toolCallID string, msg, tm map[string]interfa
 	return latestTs
 }
 
+// setAntigravityHeaders sets standard Antigravity IDE headers on upstream requests to Google Cloud Code
+// This ensures that regardless of which client connects to PAAP, the upstream request to Google
+// ALWAYS and EXCLUSIVELY uses the official Antigravity IDE headers.
+func setAntigravityHeaders(req *http.Request, accessToken string) {
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("User-Agent", "antigravity/ide/2.1.1 linux/amd64")
+	req.Header.Set("X-Goog-Api-Client", "google-cloud-sdk vscode_cloudshelleditor/0.1")
+	req.Header.Set("Client-Metadata", `{"ideType":9,"platform":2,"pluginType":2}`)
+}
+
 func anigravityRequest(w http.ResponseWriter, r *http.Request, model string, rawBody map[string]interface{}, accessToken string, isStream bool, providerID, providerName, keyID, keyName string, reqDump *RequestDump) {
 	startTime := time.Now()
 	messages, _ := rawBody["messages"].([]interface{})
@@ -342,11 +353,7 @@ func anigravityRequest(w http.ResponseWriter, r *http.Request, model string, raw
 	reqDump.SetUpstream(providerName, upstreamURL, geminiReq)
 
 	req, _ := http.NewRequest("POST", upstreamURL, bytes.NewReader(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-	req.Header.Set("User-Agent", "antigravity/ide/2.1.1 linux/amd64")
-	req.Header.Set("X-Goog-Api-Client", "google-cloud-sdk vscode_cloudshelleditor/0.1")
-	req.Header.Set("Client-Metadata", `{"ideType":9,"platform":2,"pluginType":2}`)
+	setAntigravityHeaders(req, accessToken)
 
 	client := sharedHTTPClient
 	if isStream {
@@ -366,11 +373,7 @@ func anigravityRequest(w http.ResponseWriter, r *http.Request, model string, raw
 		if connRefresh != "" {
 			if refreshedToken, rErr := ensureAnigravityToken(connID, "", connRefresh, 0); rErr == nil && refreshedToken != "" {
 				retryReq, _ := http.NewRequest("POST", upstreamURL, bytes.NewReader(bodyBytes))
-				retryReq.Header.Set("Content-Type", "application/json")
-				retryReq.Header.Set("Authorization", "Bearer "+refreshedToken)
-				retryReq.Header.Set("User-Agent", "antigravity/ide/2.1.1 linux/amd64")
-				retryReq.Header.Set("X-Goog-Api-Client", "google-cloud-sdk vscode_cloudshelleditor/0.1")
-				retryReq.Header.Set("Client-Metadata", `{"ideType":9,"platform":2,"pluginType":2}`)
+				setAntigravityHeaders(retryReq, refreshedToken)
 				retryResp, retryErr := client.Do(retryReq)
 				if retryErr == nil && retryResp.StatusCode == 200 {
 					defer retryResp.Body.Close()
@@ -446,11 +449,7 @@ func anigravityRequest(w http.ResponseWriter, r *http.Request, model string, raw
 		fallbackBytes, _ := json.Marshal(fallbackBody)
 
 		req2, _ := http.NewRequest("POST", upstreamURL, bytes.NewReader(fallbackBytes))
-		req2.Header.Set("Content-Type", "application/json")
-		req2.Header.Set("Authorization", "Bearer "+validToken)
-		req2.Header.Set("User-Agent", "antigravity/ide/2.1.1 linux/amd64")
-		req2.Header.Set("X-Goog-Api-Client", "google-cloud-sdk vscode_cloudshelleditor/0.1")
-		req2.Header.Set("Client-Metadata", `{"ideType":9,"platform":2,"pluginType":2}`)
+		setAntigravityHeaders(req2, validToken)
 
 		resp2, err2 := client.Do(req2)
 		if err2 != nil {
@@ -651,11 +650,7 @@ func testAnigravityRequest(model, prompt, accessToken, projectID string) (string
 	upstreamURL := "https://daily-cloudcode-pa.googleapis.com/v1internal:generateContent"
 
 	req, _ := http.NewRequest("POST", upstreamURL, bytes.NewReader(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-	req.Header.Set("User-Agent", "antigravity/ide/2.1.1 linux/amd64")
-	req.Header.Set("X-Goog-Api-Client", "google-cloud-sdk vscode_cloudshelleditor/0.1")
-	req.Header.Set("Client-Metadata", `{"ideType":9,"platform":2,"pluginType":2}`)
+	setAntigravityHeaders(req, accessToken)
 
 	startTime := time.Now()
 	client := sharedHTTPClient

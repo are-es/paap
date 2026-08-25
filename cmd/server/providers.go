@@ -1424,11 +1424,7 @@ func providerTestPromptStream(w http.ResponseWriter, r *http.Request, providerID
 			bodyBytes, _ := json.Marshal(fullBody)
 			upstreamURL := "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse"
 			req, _ = http.NewRequest("POST", upstreamURL, bytes.NewReader(bodyBytes))
-			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set("Authorization", "Bearer "+k.value)
-			req.Header.Set("User-Agent", "antigravity/ide/2.1.1 linux/amd64")
-			req.Header.Set("X-Goog-Api-Client", "google-cloud-sdk vscode_cloudshelleditor/0.1")
-			req.Header.Set("Client-Metadata", `{"ideType":9,"platform":2,"pluginType":2}`)
+			setAntigravityHeaders(req, k.value)
 		} else {
 			upstreamURL := resolveUpstreamURL(baseURL, k.accountID)
 			req, _ = http.NewRequest("POST", upstreamURL, bytes.NewReader(reqBodyBytes))
@@ -1916,10 +1912,7 @@ func providerDetectModels(w http.ResponseWriter, r *http.Request, providerID str
 		db.DB.QueryRow("SELECT access_token FROM provider_connections WHERE provider_id=? AND is_active=1 ORDER BY created_at DESC LIMIT 1", providerID).Scan(&connToken)
 		if connToken != "" {
 			req, _ := http.NewRequest("POST", "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels", strings.NewReader("{}"))
-			req.Header.Set("Authorization", "Bearer "+connToken)
-			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set("User-Agent", "antigravity/ide/2.1.1 linux/amd64")
-			req.Header.Set("X-Goog-Api-Client", "google-cloud-sdk vscode_cloudshelleditor/0.1")
+			setAntigravityHeaders(req, connToken)
 			client := &http.Client{Timeout: 10 * time.Second}
 			resp, err := client.Do(req)
 			if err == nil && resp.StatusCode == 200 {
