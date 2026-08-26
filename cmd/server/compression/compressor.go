@@ -39,14 +39,17 @@ func levelBatchSize(level Level) int {
 }
 
 // levelRoles returns which roles to compress for each level.
+// System messages are never compressed: lossy truncation silently drops
+// instructions and invalidates provider prompt cache. User messages only get
+// lossless transforms (Lite pass); the full lossy pipeline is reserved for tool.
 func levelRoles(level Level) map[string]bool {
 	switch level {
 	case LevelLite:
 		return map[string]bool{"tool": true}
 	case LevelMedium:
-		return map[string]bool{"tool": true, "user": true, "system": true}
+		return map[string]bool{"tool": true, "user": true}
 	case LevelHigh:
-		return map[string]bool{"tool": true, "user": true, "system": true}
+		return map[string]bool{"tool": true}
 	default:
 		return map[string]bool{"tool": true}
 	}
@@ -131,6 +134,7 @@ func CompressRawMessages(messages []map[string]interface{}, level Level, modelNa
 	for _, c := range batch {
 		content, _ := c.msg["content"].(string)
 		role, _ := c.msg["role"].(string)
+		toolName, _ := c.msg["name"].(string)
 		size := len(content)
 
 		var compressedContent string
@@ -161,8 +165,8 @@ func CompressRawMessages(messages []map[string]interface{}, level Level, modelNa
 				// Assistant: max Medium pass (don't break reasoning)
 				compressedContent = compressMedium(content, cfg)
 			} else {
-				// Tool/User/System: full pipeline
-				compressedContent = compressHigh(content, cfg, role)
+				// Tool/User: full pipeline
+				compressedContent = compressHigh(content, cfg, toolName)
 			}
 		}
 
@@ -283,7 +287,8 @@ func compressMediumAssistant(content string, cfg levelConfig) string {
 }
 
 // compressHigh: full pipeline (Headroom + SmartCrusher + Cache Stability + BM25)
-func compressHigh(content string, cfg levelConfig, role ...string) string {
+// toolName selects the FlintChipper line budget; empty means skip truncation.
+func compressHigh(content string, cfg levelConfig, toolName string) string {
 	orig := content
 	// Step 1: Threshold gate (size-based)
 	size := len(content)
@@ -332,20 +337,19 @@ func compressHigh(content string, cfg levelConfig, role ...string) string {
 	compacted := compactLists(deduped)
 
 	// Step 11: FlintChipper head+tail
+	// Only when a real per-tool budget exists; empty toolName would silently
+	// apply the 40-line fallback to everything.
 	if cfg.RunFlintChipper {
-		chipped := FlintChipper(compacted, "")
-		if len(chipped) < len(compacted) {
-			compacted = chipped
+		if _, known := DefaultToolBudgets[toolName]; known {
+			chipped := FlintChipper(compacted, toolName)
+			if len(chipped) < len(compacted) {
+				compacted = chipped
+			}
 		}
 	}
 
-	// Step 12: Reasoning trim (for assistant messages)
-	if len(role) > 0 && role[0] == "assistant" {
-		trimmed := trimReasoning(compacted)
-		if len(trimmed) < len(compacted) {
-			compacted = trimmed
-		}
-	}
+	// ponytail: Step 12 reasoning trim removed — compressHigh is never called
+	// for assistant messages (caller routes them to compressMedium).
 
 	// Step 13: BM25 extractive
 	if cfg.RunBM25 {

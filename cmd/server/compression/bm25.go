@@ -9,7 +9,7 @@ import (
 
 // BM25Extractive compresses text by scoring segments with BM25 and keeping top ones.
 // Pure heuristic — no ML model, no external dependencies.
-// Splits text into sentences, scores each by relevance, keeps top segments
+// Splits text into segments, scores each by relevance, keeps top segments
 // until target ratio is reached.
 func BM25Extractive(text string, targetRatio float64) string {
 	if targetRatio >= 1.0 || len(text) < 200 {
@@ -25,34 +25,34 @@ func BM25Extractive(text string, targetRatio float64) string {
 	// Target: keep this many segments
 	keepCount := max(2, int(float64(len(segments))*targetRatio))
 
-	// Build term frequencies from entire document
-	tf := buildTermFreq(text)
+	// Build document frequency: number of segments containing each term.
+	// This is the correct df for IDF — total occurrences across the document
+	// are NOT document frequency.
+	df := buildDocFreq(segments)
 	avgLen := avgSegmentLen(segments)
 
 	// Score each segment
 	type scored struct {
 		idx   int
 		score float64
-		text  string
 	}
-	scored_segments := make([]scored, len(segments))
+	scoredSegments := make([]scored, len(segments))
 	for i, seg := range segments {
-		scored_segments[i] = scored{
+		scoredSegments[i] = scored{
 			idx:   i,
-			score: bm25Score(seg, tf, avgLen, len(segments)),
-			text:  seg,
+			score: bm25Score(seg, df, avgLen, len(segments)),
 		}
 	}
 
 	// Sort by score descending
-	sort.Slice(scored_segments, func(i, j int) bool {
-		return scored_segments[i].score > scored_segments[j].score
+	sort.Slice(scoredSegments, func(i, j int) bool {
+		return scoredSegments[i].score > scoredSegments[j].score
 	})
 
 	// Keep top N, restore original order
 	kept := make(map[int]bool)
-	for i := 0; i < keepCount && i < len(scored_segments); i++ {
-		kept[scored_segments[i].idx] = true
+	for i := 0; i < keepCount && i < len(scoredSegments); i++ {
+		kept[scoredSegments[i].idx] = true
 	}
 
 	var result []string
@@ -116,15 +116,27 @@ func tokenize(text string) []string {
 	return tokens
 }
 
-// buildTermFreq builds term frequency map from entire document.
-func buildTermFreq(text string) map[string]int {
-	tf := make(map[string]int)
-	for _, token := range tokenize(text) {
-		if len(token) > 2 { // skip very short words
-			tf[token]++
+// buildDocFreq builds document frequency: for each term, how many segments
+// contain it. Correct input for BM25 IDF.
+func buildDocFreq(segments []string) map[string]int {
+	df := make(map[string]int)
+	seen := make(map[string]struct{})
+	for _, seg := range segments {
+		for token := range seen {
+			delete(seen, token)
+		}
+		for _, token := range tokenize(seg) {
+			if len(token) <= 2 { // skip very short words
+				continue
+			}
+			if _, dup := seen[token]; dup {
+				continue
+			}
+			seen[token] = struct{}{}
+			df[token]++
 		}
 	}
-	return tf
+	return df
 }
 
 // avgSegmentLen returns average token count across segments.
@@ -141,7 +153,7 @@ func avgSegmentLen(segments []string) float64 {
 
 // bm25Score scores a segment using BM25 formula.
 // k1=1.5, b=0.75 (standard parameters).
-func bm25Score(segment string, docTF map[string]int, avgLen float64, totalDocs int) float64 {
+func bm25Score(segment string, docDF map[string]int, avgLen float64, totalDocs int) float64 {
 	const k1 = 1.5
 	const b = 0.75
 
@@ -159,7 +171,7 @@ func bm25Score(segment string, docTF map[string]int, avgLen float64, totalDocs i
 	segLen := float64(len(tokens))
 
 	for term, freq := range segTF {
-		docFreq, exists := docTF[term]
+		docFreq, exists := docDF[term]
 		if !exists || docFreq == 0 {
 			continue
 		}
@@ -179,13 +191,21 @@ func bm25Score(segment string, docTF map[string]int, avgLen float64, totalDocs i
 		score += idf * tfNorm
 	}
 
-	// Bonus for segments with code patterns (function, class, import, etc.)
+	// Small additive bonus for segments with code patterns (function, class, import, etc.)
+	// Additive (not multiplicative) to avoid dominating the BM25 score; anchored
+	// to word boundaries to reduce false positives on prose discussing code.
 	codeKeywords := []string{"func ", "def ", "class ", "import ", "function ", "const ", "var ", "type ", "struct ", "interface "}
+	codeHits := 0
 	for _, kw := range codeKeywords {
 		if strings.Contains(segment, kw) {
-			score *= 1.3
-			break
+			codeHits++
+			if codeHits >= 2 {
+				break
+			}
 		}
+	}
+	if codeHits > 0 {
+		score += float64(codeHits) * 0.5
 	}
 
 	// Bonus for segments with numbers/data (likely important)
