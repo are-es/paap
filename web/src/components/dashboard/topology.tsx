@@ -307,8 +307,14 @@ export function ProviderTopology({ providers }: ProviderTopologyProps) {
     return pathStr;
   }, []);
 
-  // ─── 60fps Rhythmic ECG Cardiac Render Loop ───────────────
+  // ─── rAF loop: runs ONLY while a provider is active or mid-pulse ─────────
+  // Idle = static flatline paths, rendered once by React. Zero CPU when idle.
   useEffect(() => {
+    if (!hasActive) {
+      if (animRaf.current) cancelAnimationFrame(animRaf.current);
+      animRaf.current = null;
+      return;
+    }
     const cycleMs = 850; // ~70 BPM natural cardiac cycle
 
     function tick() {
@@ -325,26 +331,23 @@ export function ProviderTopology({ providers }: ProviderTopologyProps) {
       // Gateway beat contraction
       const gwCircleEl = container.querySelector("[data-gw-circle]") as HTMLElement | null;
       if (gwCircleEl) {
-        if (hasActive && cardiacPhase >= 0.18 && cardiacPhase <= 0.38) {
+        if (cardiacPhase >= 0.18 && cardiacPhase <= 0.38) {
           const beatNorm = (cardiacPhase - 0.18) / 0.20;
           const scale = 1 + Math.sin(Math.PI * beatNorm) * 0.07;
           gwCircleEl.style.transform = `scale(${scale})`;
           gwCircleEl.style.boxShadow = `0 0 36px rgba(16,185,129,0.7), 0 0 16px rgba(56,189,248,0.8)`;
         } else {
           gwCircleEl.style.transform = "scale(1)";
-          gwCircleEl.style.boxShadow = hasActive
-            ? "0 0 24px rgba(16,185,129,0.25)"
-            : "0 2px 10px rgba(0,0,0,0.3)";
+          gwCircleEl.style.boxShadow = "0 0 24px rgba(16,185,129,0.25)";
         }
       }
 
-      // Update SVG path geometries
+      // Update SVG path geometries + glow/core opacity + card pulse
       onlineProviders.forEach((prov, provIdx) => {
         const half = Math.ceil(onlineProviders.length / 2);
         const isLeft = provIdx < half;
         const provPos = getPos(`prov-${prov.id}`);
         const isActive = activeProviders.has(prov.name);
-        const color = providerColor(prov);
 
         const pts = getBezierEndpoints(provPos.x, provPos.y, isLeft);
         const d = generatePath(pts, cardiacPhase, isActive, isLeft);
@@ -384,6 +387,19 @@ export function ProviderTopology({ providers }: ProviderTopologyProps) {
       if (animRaf.current) cancelAnimationFrame(animRaf.current);
     };
   }, [hasActive, onlineProviders, getPos, getBezierEndpoints, generatePath, activeProviders]);
+
+  // Pause animation when tab hidden — browser throttles rAF anyway, but
+  // explicitly stop so returning to the tab restarts cleanly.
+  useEffect(() => {
+    const onVis = () => {
+      if (document.hidden && animRaf.current) {
+        cancelAnimationFrame(animRaf.current);
+        animRaf.current = null;
+      }
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, []);
 
   return (
     <section className="mb-7" aria-label="Live Activity">
