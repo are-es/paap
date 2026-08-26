@@ -516,14 +516,12 @@ func handleGroupRaceKeys(w http.ResponseWriter, r *http.Request, modelName, grou
 			}
 			setProviderAuth(req, t.baseURL, t.keyVal)
 
-			client := newGroupClient()
 			var proxyUsed string
-			if proxyURL := getProviderProxy(t.providerID); proxyURL != "" {
+			proxyURL := getProviderProxy(t.providerID)
+			if proxyURL != "" {
 				proxyUsed = proxyURL
-				if transport, perr := cachedProxyTransport(proxyURL); perr == nil {
-					client.Transport = transport
-				}
 			}
+			client := newGroupClient(t.providerID, proxyURL)
 
 			start := time.Now()
 			resp, err := client.Do(req)
@@ -676,14 +674,12 @@ func handleGroupRoundRobinModel(w http.ResponseWriter, r *http.Request, groupNam
 		}
 		setProviderAuth(req, selected.baseURL, keyValue)
 
-		client := newGroupClient()
 		var proxyUsed string
-		if proxyURL := getProviderProxy(selected.providerID); proxyURL != "" {
+		proxyURL := getProviderProxy(selected.providerID)
+		if proxyURL != "" {
 			proxyUsed = proxyURL
-			if transport, perr := cachedProxyTransport(proxyURL); perr == nil {
-				client.Transport = transport
-			}
 		}
+		client := newGroupClient(selected.providerID, proxyURL)
 		resp, err := client.Do(req)
 		latencyMs := time.Since(startTime).Milliseconds()
 		if err != nil {
@@ -789,14 +785,12 @@ func handleGroupFailFirst(w http.ResponseWriter, r *http.Request, groupName stri
 		}
 		setProviderAuth(req, rt.baseURL, keyValue)
 
-		client := newGroupClient()
 		var proxyUsed string
-		if proxyURL := getProviderProxy(rt.providerID); proxyURL != "" {
+		proxyURL := getProviderProxy(rt.providerID)
+		if proxyURL != "" {
 			proxyUsed = proxyURL
-			if transport, perr := cachedProxyTransport(proxyURL); perr == nil {
-				client.Transport = transport
-			}
 		}
+		client := newGroupClient(rt.providerID, proxyURL)
 
 		resp, err := client.Do(req)
 		latencyMs := time.Since(startTime).Milliseconds()
@@ -939,14 +933,12 @@ func handleGroupRRRaceKeys(w http.ResponseWriter, r *http.Request, groupName str
 			}
 			setProviderAuth(req, selected.baseURL, t.keyValue)
 
-			client := newGroupClient()
 			var proxyUsed string
-			if proxyURL := getProviderProxy(selected.providerID); proxyURL != "" {
+			proxyURL := getProviderProxy(selected.providerID)
+			if proxyURL != "" {
 				proxyUsed = proxyURL
-				if transport, perr := cachedProxyTransport(proxyURL); perr == nil {
-					client.Transport = transport
-				}
 			}
+			client := newGroupClient(selected.providerID, proxyURL)
 
 			start := time.Now()
 			resp, err := client.Do(req)

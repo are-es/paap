@@ -52,6 +52,7 @@ func gatewayKeyCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, err.Error())
 		return
 	}
+	invalidateGatewayKeyCache()
 	writeJSON(w, map[string]interface{}{"id": id, "name": body.Name, "key": key, "is_active": true})
 }
 
@@ -71,6 +72,7 @@ func gatewayKeyRoutes(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, err.Error())
 		return
 	}
+	invalidateGatewayKeyCache()
 	n, _ := result.RowsAffected()
 	if n == 0 {
 		writeError(w, 404, "not found")

@@ -541,12 +541,15 @@ func logProxyRequestSplit(providerID, providerName, modelID, keyID, keyName, gro
 			toolUsed, originalModel, pricingSource, t.Estimated)
 	}
 
-	// Auto-clear: keep only newest 500 logs (cost_summary untouched)
-	var count int
-	db.DB.QueryRow("SELECT COUNT(*) FROM logs").Scan(&count)
-	if count > 500 {
-		db.DB.Exec(`DELETE FROM logs WHERE id NOT IN (SELECT id FROM logs ORDER BY timestamp DESC LIMIT 500)`)
-		log.Printf("[PAAP] Auto-cleared logs: %d → 500", count)
+	// Auto-clear: keep only newest 500 logs (cost_summary untouched).
+	// Single conditional DELETE — no COUNT(*) round-trip on every request.
+	res2, err := db.DB.Exec(`DELETE FROM logs WHERE
+		(SELECT COUNT(*) FROM logs) > 500
+		AND id NOT IN (SELECT id FROM logs ORDER BY timestamp DESC LIMIT 500)`)
+	if err == nil {
+		if n, _ := res2.RowsAffected(); n > 0 {
+			log.Printf("[PAAP] Auto-cleared %d old log rows", n)
+		}
 	}
 
 	// Update usage_stats (existing — survives log clear)

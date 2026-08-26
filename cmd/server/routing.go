@@ -287,6 +287,52 @@ func autoDisableConnection(connID, connName string, statusCode int, errBody stri
 }
 
 // Auth middleware that validates gateway API keys
+// gatewayKeyCache caches active gateway keys (5s TTL) so the auth middleware
+// skips a DB round-trip on every proxied request. Invalidated on key create/delete.
+var (
+	gatewayKeyMu    sync.RWMutex
+	gatewayKeyCache map[string]string // key -> id
+	gatewayKeyAt    time.Time
+)
+
+const gatewayKeyTTL = 5 * time.Second
+
+func invalidateGatewayKeyCache() {
+	gatewayKeyMu.Lock()
+	gatewayKeyCache = nil
+	gatewayKeyMu.Unlock()
+}
+
+func lookupGatewayKey(key string) (string, bool) {
+	gatewayKeyMu.RLock()
+	if gatewayKeyCache != nil && time.Since(gatewayKeyAt) < gatewayKeyTTL {
+		id, ok := gatewayKeyCache[key]
+		gatewayKeyMu.RUnlock()
+		return id, ok
+	}
+	gatewayKeyMu.RUnlock()
+
+	rows, err := db.DB.Query("SELECT key, id FROM gateway_keys WHERE is_active=1")
+	if err != nil {
+		return "", false
+	}
+	defer rows.Close()
+	m := map[string]string{}
+	for rows.Next() {
+		var k, id string
+		if rows.Scan(&k, &id) == nil {
+			m[k] = id
+		}
+	}
+	gatewayKeyMu.Lock()
+	gatewayKeyCache = m
+	gatewayKeyAt = time.Now()
+	gatewayKeyMu.Unlock()
+
+	id, ok := m[key]
+	return id, ok
+}
+
 func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Skip auth for local connections if configured
@@ -320,10 +366,8 @@ func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 
 		apiKey := parts[1]
 
-		// Validate key exists and is active
-		var keyID string
-		err = db.DB.QueryRow("SELECT id FROM gateway_keys WHERE key=? AND is_active=1", apiKey).Scan(&keyID)
-		if err != nil {
+		// Validate key exists and is active (cached)
+		if _, ok := lookupGatewayKey(apiKey); !ok {
 			writeError(w, 401, "invalid or inactive API key")
 			return
 		}
@@ -1218,15 +1262,18 @@ func routeByModel(model string) (providerID, providerName, baseURL, modelID, key
 				err = nil
 			}
 
-			// Auto-refresh OAuth key if expired
-			var keyType string
-			db.DB.QueryRow("SELECT COALESCE(key_type,'apikey') FROM api_keys WHERE id=?", keyID).Scan(&keyType)
-			if keyType == "oauth" {
-				var expiresAt string
-				db.DB.QueryRow("SELECT COALESCE(oauth_expires_at,'') FROM api_keys WHERE id=?", keyID).Scan(&expiresAt)
-				if refreshed, refreshErr := GetOAuthKeyValue(keyID, keyValue, expiresAt); refreshErr == nil {
-					keyValue = refreshed
+			// Auto-refresh OAuth key if expired — keyType/expiresAt come from
+			// the routing cache, no extra queries on the hot path.
+			for _, k := range providerRouting(providerID).keys {
+				if k.id != keyID {
+					continue
 				}
+				if k.keyType == "oauth" {
+					if refreshed, refreshErr := GetOAuthKeyValue(keyID, keyValue, k.expiresAt); refreshErr == nil {
+						keyValue = refreshed
+					}
+				}
+				break
 			}
 			return
 		}

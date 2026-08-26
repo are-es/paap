@@ -19,7 +19,7 @@ func Init(dataDir string) error {
 		return err
 	}
 	dbPath := filepath.Join(dataDir, "paap.db")
-	conn, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	conn, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=5000")
 	if err != nil {
 		return err
 	}
