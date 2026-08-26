@@ -41,7 +41,7 @@ vendor/
 Thumbs.db
 
 # PAAP data
-~/.paap/
+**/.paap/
 
 # Agent development files
 .agent/
