@@ -356,7 +356,7 @@ func migrate() error {
 	// settings flag so an operator override is never re-applied on restart.
 	if getSettingRaw("billing_mode_seeded") != "1" {
 		DB.Exec(`UPDATE providers SET billing_mode='subscription'
-			WHERE builtin_id IN ('anigravity','openai-codex','grok-cli')`)
+			WHERE builtin_id IN ('anigravity','openai-codex','grok-cli','codebuddy')`)
 		DB.Exec(`INSERT OR REPLACE INTO system_settings (key, value) VALUES ('billing_mode_seeded','1')`)
 		log.Printf("[PAAP] Seeded billing_mode=subscription for OAuth/CLI providers")
 	}
@@ -441,6 +441,11 @@ func migrate() error {
 	DB.Exec(`INSERT OR IGNORE INTO providers (id, name, base_url, icon, is_active, round_robin, provider_type, auth_type, builtin_id, round_robin_enabled, supports_anthropic, created_at, updated_at)
 		VALUES ('builtin-openai-codex', 'OpenAI Codex (ChatGPT)', 'https://chatgpt.com/backend-api/codex', 'openai.svg', 1, 0, 'builtin', 'connection', 'openai-codex', 0, 0, ` + now + `, ` + now + `)`)
 	DB.Exec("UPDATE providers SET icon='openai.svg' WHERE id='builtin-openai-codex'")
+	DB.Exec(`INSERT OR IGNORE INTO providers (id, name, base_url, icon, is_active, round_robin, provider_type, auth_type, builtin_id, round_robin_enabled, supports_anthropic, created_at, updated_at)
+		VALUES ('builtin-codebuddy', 'CodeBuddy', 'https://www.codebuddy.ai', 'codebuddy.svg', 1, 0, 'builtin', 'connection', 'codebuddy', 0, 0, ` + now + `, ` + now + `)`)
+	// Idempotent: billing_mode_seeded guard skips the bulk subscription update for
+	// providers added after first boot, so force it here for CodeBuddy (OAuth/CLI).
+	DB.Exec("UPDATE providers SET billing_mode='subscription' WHERE builtin_id='codebuddy' AND billing_mode != 'subscription'")
 
 	// === Builtin compression skills REMOVED — use folder-based skills only ===
 	// Skills are loaded from ~/.paap/skills/ folder (JSON/MD files)

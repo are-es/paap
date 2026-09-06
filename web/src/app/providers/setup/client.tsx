@@ -573,6 +573,7 @@ function ConnectionsSection({ providerId }: { providerId: string }) {
 
   const isGoogleOAuth = providerId.includes("anigravity");
   const isCodexOAuth = providerId.includes("openai-codex");
+  const isCodebuddyOAuth = providerId.includes("codebuddy");
   const isRedirectOAuth = isGoogleOAuth;
 
   const startOAuth = async () => {
@@ -673,7 +674,7 @@ function ConnectionsSection({ providerId }: { providerId: string }) {
               className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] rounded border border-purple-500/20 text-purple-600 bg-purple-500/5 hover:bg-purple-500/10 transition-colors font-medium"
             >
               <Plus className="w-3 h-3" />
-              {isGoogleOAuth ? "Connect Google" : isCodexOAuth ? "Connect OpenAI" : "Connect"}
+              {isGoogleOAuth ? "Connect Google" : isCodexOAuth ? "Connect OpenAI" : isCodebuddyOAuth ? "Connect CodeBuddy" : "Connect"}
             </button>
           )}
         </div>
@@ -722,10 +723,12 @@ function ConnectionsSection({ providerId }: { providerId: string }) {
                 {oauthFlow.verification_uri}
               </a>
             </div>
-            <div>
-              <span className="text-xs text-muted-foreground">Code: </span>
-              <span className="text-lg font-mono font-bold tracking-wider text-primary">{oauthFlow.user_code}</span>
-            </div>
+            {oauthFlow.user_code && (
+              <div>
+                <span className="text-xs text-muted-foreground">Code: </span>
+                <span className="text-lg font-mono font-bold tracking-wider text-primary">{oauthFlow.user_code}</span>
+              </div>
+            )}
             {polling && (
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <Loader2 className="w-3 h-3 animate-spin text-primary" />

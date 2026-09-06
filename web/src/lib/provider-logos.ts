@@ -17,6 +17,7 @@ const PROVIDER_LOGOS: Record<string, string> = {
   stepfun: "/assets/stepfun.svg",
   hcnsec: "/assets/hcnsec.png",
   "openai-codex": "/assets/openai.svg",
+  codebuddy: "/assets/codebuddy.svg",
 };
 
 export function getProviderLogo(provider: { builtin_id?: string | null; name?: string; icon?: string }): string | null {

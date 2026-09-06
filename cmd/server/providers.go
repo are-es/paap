@@ -948,6 +948,8 @@ func providerTestPrompt(w http.ResponseWriter, r *http.Request, providerID strin
 					connToken = refreshCodexConnection(connID, connToken, connExpires)
 				} else if isGrokProviderID(providerID) {
 					connToken = refreshGrokConnection(connID, connToken, connRefresh, connExpires)
+				} else if isCodebuddyProviderID(providerID) {
+					connToken = refreshCodebuddyConnection(connID, connToken, connExpires)
 				} else if providerID == "builtin-anigravity" {
 					if refreshed, rErr := ensureAnigravityToken(connID, connToken, connRefresh, connExpires); rErr == nil && refreshed != "" {
 						connToken = refreshed
@@ -1039,6 +1041,47 @@ func providerTestPrompt(w http.ResponseWriter, r *http.Request, providerID strin
 				result["content"] = content
 				result["response"] = content
 				autoDisableKey(keyID, keyName, 200, "")
+			}
+			results = append(results, result)
+			continue
+		}
+
+		if isCodebuddyProviderID(providerID) {
+			start := time.Now()
+			var provName string
+			db.DB.QueryRow("SELECT name FROM providers WHERE id=?", providerID).Scan(&provName)
+			recorder := httptest.NewRecorder()
+			handleCodebuddyProxyBody(recorder, r, map[string]interface{}{
+				"model": body.ModelID,
+				"messages": []interface{}{
+					map[string]interface{}{"role": "user", "content": body.Prompt},
+				},
+				"stream": false,
+			}, keyVal, baseURL, providerID, provName, keyID, keyName, nil)
+
+			raw := recorder.Body.String()
+			result := map[string]interface{}{
+				"key_id":     keyID,
+				"key_name":   keyName,
+				"latency_ms": time.Since(start).Milliseconds(),
+				"status":     recorder.Code,
+			}
+			var parsed map[string]interface{}
+			if json.Unmarshal(recorder.Body.Bytes(), &parsed) == nil {
+				if choices, ok := parsed["choices"].([]interface{}); ok && len(choices) > 0 {
+					if choice, ok := choices[0].(map[string]interface{}); ok {
+						if message, ok := choice["message"].(map[string]interface{}); ok {
+							result["content"] = message["content"]
+						}
+					}
+				}
+				if usage, ok := parsed["usage"].(map[string]interface{}); ok {
+					result["usage"] = usage
+				}
+			}
+			result["response"] = raw[:min(len(raw), 500)]
+			if recorder.Code != http.StatusOK {
+				autoDisableKey(keyID, keyName, recorder.Code, "")
 			}
 			results = append(results, result)
 			continue
@@ -1336,6 +1379,8 @@ func providerTestPromptStream(w http.ResponseWriter, r *http.Request, providerID
 					connToken = refreshCodexConnection(connID, connToken, connExpires)
 				} else if isGrokProviderID(providerID) {
 					connToken = refreshGrokConnection(connID, connToken, connRefresh, connExpires)
+				} else if isCodebuddyProviderID(providerID) {
+					connToken = refreshCodebuddyConnection(connID, connToken, connExpires)
 				} else if providerID == "builtin-anigravity" {
 					if refreshed, rErr := ensureAnigravityToken(connID, connToken, connRefresh, connExpires); rErr == nil && refreshed != "" {
 						connToken = refreshed
@@ -1425,6 +1470,25 @@ func providerTestPromptStream(w http.ResponseWriter, r *http.Request, providerID
 			upstreamURL := "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse"
 			req, _ = http.NewRequest("POST", upstreamURL, bytes.NewReader(bodyBytes))
 			setAntigravityHeaders(req, k.value)
+		} else if isCodebuddyProviderID(providerID) {
+			// CodeBuddy: system-first + fingerprint headers + /v2/chat/completions
+			cbReqBody, _ := json.Marshal(map[string]interface{}{
+				"model": body.ModelID,
+				"messages": []interface{}{
+					map[string]interface{}{"role": "system", "content": "You are a helpful assistant."},
+					map[string]interface{}{"role": "user", "content": body.Prompt},
+				},
+				"stream":         true,
+				"stream_options": map[string]interface{}{"include_usage": true},
+			})
+			upstreamURL := strings.TrimRight(baseURL, "/") + "/v2/chat/completions"
+			req, _ = http.NewRequest("POST", upstreamURL, bytes.NewReader(cbReqBody))
+			for hk, hv := range codebuddyFingerprintHeaders() {
+				req.Header.Set(hk, hv)
+			}
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer "+k.value)
+			req.Header.Set("Accept", "text/event-stream")
 		} else {
 			upstreamURL := resolveUpstreamURL(baseURL, k.accountID)
 			req, _ = http.NewRequest("POST", upstreamURL, bytes.NewReader(reqBodyBytes))
@@ -1904,6 +1968,29 @@ func providerDetectModels(w http.ResponseWriter, r *http.Request, providerID str
 			}
 		}
 		writeJSON(w, map[string]interface{}{"detected": len(codexModels), "added": added})
+		return
+	case "codebuddy":
+		// Model catalog lives in /v3/config (no /v2/models endpoint). Requires
+		// an OAuth connection token.
+		var connToken string
+		db.DB.QueryRow("SELECT access_token FROM provider_connections WHERE provider_id=? AND is_active=1 ORDER BY created_at DESC LIMIT 1", providerID).Scan(&connToken)
+		cbModels := detectCodebuddyModels(connToken)
+		if len(cbModels) == 0 {
+			// Fallback catalog if live detection fails (offline / no connection).
+			cbModels = []string{"glm-5.2", "glm-5.3", "kimi-k3", "kimi-k2.6", "minimax-m3"}
+		}
+		added := 0
+		for _, m := range cbModels {
+			result, err := db.DB.Exec(`INSERT INTO models (id, provider_id, model_id, is_free, is_selected, created_at)
+				VALUES (?, ?, ?, 0, 1, ?)
+				ON CONFLICT(provider_id, model_id) DO UPDATE SET is_selected=1`, genID(), providerID, m, time.Now().Unix())
+			if err == nil {
+				if changed, _ := result.RowsAffected(); changed == 1 {
+					added++
+				}
+			}
+		}
+		writeJSON(w, map[string]interface{}{"detected": len(cbModels), "added": added})
 		return
 	case "anigravity":
 		// Dynamic model detection via fetchAvailableModels if OAuth connection exists

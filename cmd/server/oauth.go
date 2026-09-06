@@ -44,6 +44,42 @@ const (
 	codexBaseURL       = "https://chatgpt.com/backend-api/codex"
 )
 
+// CodeBuddy (Tencent CodeBuddy CLI) OAuth constants.
+// Flow: external-link login — POST /v2/plugin/auth/state → browser opens authUrl →
+// poll GET /v2/plugin/auth/token?state= until code:0 → tokens. Refresh via
+// POST /v2/plugin/auth/token/refresh with X-Refresh-Token header.
+const (
+	codebuddyBaseURL    = "https://www.codebuddy.ai"
+	codebuddyIDEVersion = "2.137.1"
+	codebuddyUserAgent  = "CLI/" + codebuddyIDEVersion + " CodeBuddy/" + codebuddyIDEVersion
+)
+
+// codebuddyFingerprintHeaders returns the IDE-fingerprint headers the CodeBuddy
+// edge gateway requires on every request (chat, config, auth). Without a valid
+// User-Agent the upstream returns code:12403 "check ua".
+func codebuddyFingerprintHeaders() map[string]string {
+	return map[string]string{
+		"User-Agent":     codebuddyUserAgent,
+		"X-Product":      "CodeBuddy",
+		"X-IDE-Type":     "CLI",
+		"X-IDE-Name":     "CLI",
+		"X-IDE-Version":  codebuddyIDEVersion,
+		"X-Domain":       "www.codebuddy.ai",
+	}
+}
+
+// codebuddyNoAuthHeaders returns fingerprint headers plus the X-No-* suppression
+// flags required on pre-auth endpoints (auth/state, auth/token polling) so the
+// upstream does not try to resolve an identity from the request.
+func codebuddyNoAuthHeaders() map[string]string {
+	h := codebuddyFingerprintHeaders()
+	h["X-No-Authorization"] = "true"
+	h["X-No-User-Id"] = "true"
+	h["X-No-Enterprise-Id"] = "true"
+	h["X-No-Department-Info"] = "true"
+	return h
+}
+
 func marshalCodexOAuthData(deviceAuthID, userCode, expiresAt string) (string, error) {
 	data, err := json.Marshal(struct {
 		DeviceAuthID string `json:"device_auth_id"`
@@ -1127,6 +1163,253 @@ func refreshCodexConnection(connID, currentToken string, expiresAtUnix int64) st
 	return tokenData.AccessToken
 }
 
+// ── CodeBuddy (Tencent CodeBuddy CLI) External-Link OAuth Flow ──────────────
+
+func isCodebuddyProviderID(providerID string) bool {
+	return providerID == "codebuddy" || providerID == "builtin-codebuddy"
+}
+
+// oauthCodebuddyStart initiates a browser login. The upstream returns a state
+// token and an authUrl the user opens in a browser. We store the state in
+// providers.oauth_data and return the authUrl as verification_uri so the
+// existing frontend device-code UI can render it as a clickable link.
+func oauthCodebuddyStart(w http.ResponseWriter, r *http.Request) {
+	req, err := http.NewRequest("POST", codebuddyBaseURL+"/v2/plugin/auth/state?platform=CLI", nil)
+	if err != nil {
+		writeError(w, 500, "failed to create auth state request: "+err.Error())
+		return
+	}
+	for k, v := range codebuddyNoAuthHeaders() {
+		req.Header.Set(k, v)
+	}
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		writeError(w, 502, "failed to request auth state: "+err.Error())
+		return
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		writeError(w, resp.StatusCode, fmt.Sprintf("CodeBuddy auth/state returned %d: %s", resp.StatusCode, string(body)))
+		return
+	}
+	var stateResp struct {
+		Code int `json:"code"`
+		Msg  string `json:"msg"`
+		Data struct {
+			State   string `json:"state"`
+			AuthURL string `json:"authUrl"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &stateResp); err != nil {
+		writeError(w, 502, "invalid auth state response: "+err.Error())
+		return
+	}
+	if stateResp.Data.State == "" || stateResp.Data.AuthURL == "" {
+		writeError(w, 502, fmt.Sprintf("CodeBuddy auth/state missing state/authUrl: %s", string(body)))
+		return
+	}
+	oauthData, _ := json.Marshal(map[string]string{"state": stateResp.Data.State, "auth_url": stateResp.Data.AuthURL})
+	if _, err := db.DB.Exec(`UPDATE providers SET oauth_data = ? WHERE id = ?`, string(oauthData), "builtin-codebuddy"); err != nil {
+		writeError(w, 500, "failed to store auth state: "+err.Error())
+		return
+	}
+	writeJSON(w, map[string]interface{}{
+		"verification_uri": stateResp.Data.AuthURL,
+		"state":            stateResp.Data.State,
+		"interval":         2,
+	})
+}
+
+// oauthCodebuddyPoll polls the upstream for the OAuth tokens. While the user
+// has not yet completed browser login, the upstream returns code:11217
+// ("login ing..."); on success it returns code:0 with the token object. We
+// then fetch the account email via /v2/plugin/login/account and store a
+// provider_connections row (multi-account, INSERT always).
+func oauthCodebuddyPoll(w http.ResponseWriter, r *http.Request) {
+	var oauthData string
+	db.DB.QueryRow("SELECT COALESCE(oauth_data,'') FROM providers WHERE id=?", "builtin-codebuddy").Scan(&oauthData)
+	var stored struct {
+		State   string `json:"state"`
+		AuthURL string `json:"auth_url"`
+	}
+	if err := json.Unmarshal([]byte(oauthData), &stored); err != nil || stored.State == "" {
+		writeError(w, 400, "no pending CodeBuddy login flow")
+		return
+	}
+	pollReq, err := http.NewRequest("GET", codebuddyBaseURL+"/v2/plugin/auth/token?state="+stored.State, nil)
+	if err != nil {
+		writeError(w, 500, "failed to create poll request: "+err.Error())
+		return
+	}
+	for k, v := range codebuddyNoAuthHeaders() {
+		pollReq.Header.Set(k, v)
+	}
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(pollReq)
+	if err != nil {
+		writeError(w, 502, "poll failed: "+err.Error())
+		return
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		writeError(w, resp.StatusCode, fmt.Sprintf("CodeBuddy auth/token returned %d: %s", resp.StatusCode, string(body)))
+		return
+	}
+	var pollResp struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+		Data struct {
+			AccessToken      string `json:"accessToken"`
+			RefreshToken     string `json:"refreshToken"`
+			ExpiresIn        int    `json:"expiresIn"`
+			RefreshExpiresIn int    `json:"refreshExpiresIn"`
+			TokenType        string `json:"tokenType"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &pollResp); err != nil {
+		writeError(w, 502, "invalid poll response: "+err.Error())
+		return
+	}
+	// 11217 = login still pending
+	if pollResp.Code == 11217 || pollResp.Data.AccessToken == "" {
+		writeJSON(w, map[string]interface{}{"status": "pending"})
+		return
+	}
+	if pollResp.Code != 0 {
+		writeError(w, 502, fmt.Sprintf("CodeBuddy auth/token error code=%d: %s", pollResp.Code, pollResp.Msg))
+		return
+	}
+	// Fetch account email/nickname for connection labeling.
+	connName := "codebuddy"
+	connEmail := ""
+	if acct, err := codebuddyFetchAccount(stored.State, pollResp.Data.AccessToken); err == nil && acct != nil {
+		if nick, ok := acct["nickname"].(string); ok && nick != "" {
+			connName = nick
+		}
+		if email, ok := acct["email"].(string); ok && email != "" {
+			connEmail = email
+		} else if uid, ok := acct["uid"].(string); ok && uid != "" {
+			connEmail = uid
+		}
+	}
+	expiresAt := ""
+	if pollResp.Data.ExpiresIn > 0 {
+		expiresAt = time.Now().Add(time.Duration(pollResp.Data.ExpiresIn) * time.Second).UTC().Format(time.RFC3339)
+	}
+	connID := genID()
+	now := time.Now().Unix()
+	db.DB.Exec(`INSERT INTO provider_connections
+		(id, provider_id, auth_type, name, email, access_token, refresh_token, expires_at, test_status, is_active, created_at, updated_at)
+		VALUES (?, ?, 'oauth', ?, ?, ?, ?, ?, 'connected', 1, ?, ?)`,
+		connID, "builtin-codebuddy", connName, connEmail, pollResp.Data.AccessToken, pollResp.Data.RefreshToken, expiresAt, now, now)
+	db.DB.Exec("UPDATE providers SET oauth_data='' WHERE id=?", "builtin-codebuddy")
+	invalidateRoutingCache()
+	log.Printf("[PAAP] CodeBuddy OAuth: connected (token len=%d, name=%s)", len(pollResp.Data.AccessToken), connName)
+	writeJSON(w, map[string]interface{}{
+		"status":     "connected",
+		"expires_in": pollResp.Data.ExpiresIn,
+	})
+}
+
+// codebuddyFetchAccount calls /v2/plugin/login/account?state= to get the
+// logged-in user's nickname/uid/email for connection labeling.
+func codebuddyFetchAccount(state, accessToken string) (map[string]interface{}, error) {
+	req, err := http.NewRequest("GET", codebuddyBaseURL+"/v2/plugin/login/account?state="+state, nil)
+	if err != nil {
+		return nil, err
+	}
+	for k, v := range codebuddyFingerprintHeaders() {
+		req.Header.Set(k, v)
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("X-No-User-Id", "true")
+	req.Header.Set("X-No-Enterprise-Id", "true")
+	req.Header.Set("X-No-Department-Info", "true")
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("account endpoint returned %d", resp.StatusCode)
+	}
+	var wrapper struct {
+		Code int                    `json:"code"`
+		Data map[string]interface{} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &wrapper); err != nil {
+		return nil, err
+	}
+	if wrapper.Code != 0 {
+		return nil, fmt.Errorf("account endpoint code=%d", wrapper.Code)
+	}
+	return wrapper.Data, nil
+}
+
+// refreshCodebuddyConnection refreshes a CodeBuddy OAuth connection's access
+// token when it is within 5 minutes of expiry. Returns the (possibly refreshed)
+// access token. On 401/403 (refresh token invalid) the current token is
+// returned unchanged so the auto-disable path can flag the connection.
+func refreshCodebuddyConnection(connID, currentToken string, expiresAtUnix int64) string {
+	if expiresAtUnix == 0 {
+		return currentToken
+	}
+	if time.Now().Unix() < expiresAtUnix-300 {
+		return currentToken
+	}
+	var refreshToken string
+	db.DB.QueryRow("SELECT COALESCE(refresh_token,'') FROM provider_connections WHERE id=?", connID).Scan(&refreshToken)
+	if refreshToken == "" {
+		return currentToken
+	}
+	req, err := http.NewRequest("POST", codebuddyBaseURL+"/v2/plugin/auth/token/refresh", nil)
+	if err != nil {
+		return currentToken
+	}
+	for k, v := range codebuddyFingerprintHeaders() {
+		req.Header.Set(k, v)
+	}
+	req.Header.Set("X-Refresh-Token", refreshToken)
+	req.Header.Set("X-Auth-Refresh-Source", "plugin")
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil || resp.StatusCode != 200 {
+		if resp != nil {
+			resp.Body.Close()
+		}
+		return currentToken
+	}
+	defer resp.Body.Close()
+	var wrapper struct {
+		Code int `json:"code"`
+		Data struct {
+			AccessToken  string `json:"accessToken"`
+			RefreshToken string `json:"refreshToken"`
+			ExpiresIn    int    `json:"expiresIn"`
+		} `json:"data"`
+	}
+	json.NewDecoder(resp.Body).Decode(&wrapper)
+	if wrapper.Code != 0 || wrapper.Data.AccessToken == "" {
+		log.Printf("[PAAP] CodeBuddy connection %s refresh failed (code=%d)", connID[:8], wrapper.Code)
+		return currentToken
+	}
+	newRefresh := wrapper.Data.RefreshToken
+	if newRefresh == "" {
+		newRefresh = refreshToken
+	}
+	newExpires := time.Now().Add(time.Duration(wrapper.Data.ExpiresIn) * time.Second).Unix()
+	db.DB.Exec("UPDATE provider_connections SET access_token=?, refresh_token=?, expires_at=?, updated_at=? WHERE id=?",
+		wrapper.Data.AccessToken, newRefresh, newExpires, time.Now().Unix(), connID)
+	invalidateRoutingCache()
+	log.Printf("[PAAP] CodeBuddy connection %s refreshed (expires: %d)", connID[:8], newExpires)
+	return wrapper.Data.AccessToken
+}
+
 func oauthRoutes(w http.ResponseWriter, r *http.Request) {
 	trimmed := strings.TrimPrefix(r.URL.Path, "/api/oauth/")
 
@@ -1149,6 +1432,18 @@ func oauthRoutes(w http.ResponseWriter, r *http.Request) {
 	providerID = strings.TrimSuffix(trimmed, "/poll")
 	if isCodexOAuthProviderID(providerID) && r.Method == "POST" {
 		oauthCodexDeviceCodePoll(w, r)
+		return
+	}
+
+	// CodeBuddy external-link OAuth flow
+	providerID = strings.TrimSuffix(trimmed, "/device-code")
+	if isCodebuddyProviderID(providerID) && r.Method == "POST" {
+		oauthCodebuddyStart(w, r)
+		return
+	}
+	providerID = strings.TrimSuffix(trimmed, "/poll")
+	if isCodebuddyProviderID(providerID) && r.Method == "POST" {
+		oauthCodebuddyPoll(w, r)
 		return
 	}
 

@@ -58,3 +58,42 @@ func TestMarshalCodexOAuthDataEscapesExternalValues(t *testing.T) {
 		t.Errorf("stored values = %#v", got)
 	}
 }
+
+func TestIsCodebuddyProviderID(t *testing.T) {
+	for _, providerID := range []string{"codebuddy", "builtin-codebuddy"} {
+		if !isCodebuddyProviderID(providerID) {
+			t.Fatalf("%q must route to CodeBuddy OAuth", providerID)
+		}
+	}
+	for _, providerID := range []string{"openai-codex", "builtin-openai-codex", "builtin-grok-cli", "builtin-anigravity"} {
+		if isCodebuddyProviderID(providerID) {
+			t.Fatalf("%q must NOT route to CodeBuddy OAuth", providerID)
+		}
+	}
+}
+
+func TestCodebuddyFingerprintHeaders(t *testing.T) {
+	h := codebuddyFingerprintHeaders()
+	required := []string{"User-Agent", "X-Product", "X-IDE-Type", "X-IDE-Name", "X-IDE-Version", "X-Domain"}
+	for _, k := range required {
+		if v, ok := h[k]; !ok || v == "" {
+			t.Errorf("missing/empty header %q", k)
+		}
+	}
+	if v := h["X-Product"]; v != "CodeBuddy" {
+		t.Errorf("X-Product = %q, want CodeBuddy", v)
+	}
+}
+
+func TestCodebuddyNoAuthHeaders(t *testing.T) {
+	h := codebuddyNoAuthHeaders()
+	for _, k := range []string{"X-No-Authorization", "X-No-User-Id", "X-No-Enterprise-Id", "X-No-Department-Info"} {
+		if h[k] != "true" {
+			t.Errorf("%q = %q, want true", k, h[k])
+		}
+	}
+	// Fingerprint headers must still be present on no-auth endpoints.
+	if h["User-Agent"] == "" {
+		t.Error("fingerprint User-Agent must be present on no-auth endpoints too")
+	}
+}

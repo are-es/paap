@@ -647,6 +647,12 @@ func chatCompletionsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ── CodeBuddy: force system-first + stream upstream, OpenAI SSE ──
+	if providerID == "builtin-codebuddy" {
+		handleCodebuddyProxyBody(w, r, rawBody, keyValue, baseURL, providerID, providerName, keyID, keyName, reqDump)
+		return
+	}
+
 	// ── Anthropic-native providers: translate OpenAI → Anthropic format ──
 	log.Printf("[PAAP] [ANTH-CHECK] model=%s providerID=%s providerName=%s", modelID, providerID, providerName)
 	var supAnthRouting int
@@ -1331,6 +1337,8 @@ func routeByModel(model string) (providerID, providerName, baseURL, modelID, key
 			keyValue = refreshCodexConnection(connID, connToken, connExpires)
 		} else if isGrokProviderID(providerID) {
 			keyValue = refreshGrokConnection(connID, connToken, connRefresh, connExpires)
+		} else if isCodebuddyProviderID(providerID) {
+			keyValue = refreshCodebuddyConnection(connID, connToken, connExpires)
 		} else {
 			var refreshErr error
 			keyValue, refreshErr = ensureAnigravityToken(connID, connToken, connRefresh, connExpires)
@@ -1429,6 +1437,8 @@ func routeByGroup(groupName string) (providerID, providerName, baseURL, modelID,
 			keyValue = refreshCodexConnection(connID, connToken, connExpires)
 		} else if isGrokProviderID(selected.providerID) {
 			keyValue = refreshGrokConnection(connID, connToken, connRefresh, connExpires)
+		} else if isCodebuddyProviderID(selected.providerID) {
+			keyValue = refreshCodebuddyConnection(connID, connToken, connExpires)
 		} else {
 			keyValue = connToken
 		}
